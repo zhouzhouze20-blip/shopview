@@ -174,7 +174,7 @@ function SystemOverview() {
             <div className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer">
               <Building2 className="w-8 h-8 text-blue-600 mb-2" />
               <h3 className="font-semibold">铺位资源管理</h3>
-              <p className="text-sm text-slate-600">楼层平面图、房间管理、空间资产</p>
+              <p className="text-sm text-slate-600">楼层平面图、厅房管理、空间资产</p>
             </div>
             <div className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer">
               <Users className="w-8 h-8 text-green-600 mb-2" />

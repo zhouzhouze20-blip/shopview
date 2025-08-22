@@ -223,6 +223,22 @@ export const activities = pgTable("activities", {
   createdAt: timestamp("created_at").defaultNow()
 });
 
+// 用户在楼层平面图上标记的厅房
+export const userMarkedRooms = pgTable("user_marked_rooms", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeId: integer("store_id").references(() => stores.storeId),
+  floorPlanId: varchar("floor_plan_id").references(() => floorPlans.id),
+  name: text("name").notNull(),
+  type: text("type").notNull().default("rectangle"), // rectangle, polygon
+  x: decimal("x", { precision: 10, scale: 2 }).notNull(),
+  y: decimal("y", { precision: 10, scale: 2 }).notNull(),
+  width: decimal("width", { precision: 10, scale: 2 }),
+  height: decimal("height", { precision: 10, scale: 2 }),
+  polygonPoints: json("polygon_points"), // Array<{x: number, y: number}>
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
 // ==================== TypeScript 类型定义 ====================
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -258,6 +274,8 @@ export type FloorPlan = typeof floorPlans.$inferSelect;
 export type NewFloorPlan = typeof floorPlans.$inferInsert;
 export type Activity = typeof activities.$inferSelect;
 export type NewActivity = typeof activities.$inferInsert;
+export type UserMarkedRoom = typeof userMarkedRooms.$inferSelect;
+export type NewUserMarkedRoom = typeof userMarkedRooms.$inferInsert;
 
 // ==================== Zod 插入模式 ====================
 // 系统管理
@@ -352,6 +370,12 @@ export const insertFloorPlanSchema = createInsertSchema(floorPlans).omit({
 export const insertActivitySchema = createInsertSchema(activities).omit({
   id: true,
   createdAt: true
+});
+
+export const insertUserMarkedRoomSchema = createInsertSchema(userMarkedRooms).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
 });
 
 // 用于插入操作的类型

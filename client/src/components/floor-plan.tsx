@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
-import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff, Plus, Edit } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff, Plus, Edit, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Room } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
+import { toast } from "@/hooks/use-toast";
 
 interface FloorPlanProps {
   onRoomClick: (room: Room) => void;
@@ -35,6 +37,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
   const [userRooms, setUserRooms] = useState<RoomSelection[]>([]);
   const [currentSelection, setCurrentSelection] = useState<RoomSelection | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
   const { data: rooms, isLoading } = useQuery<Room[]>({
     queryKey: selectedStoreId ? ["/api/rooms", selectedStoreId] : ["/api/rooms"],
@@ -48,6 +51,49 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
 
   const { data: floorPlan } = useQuery({
     queryKey: ["/api/floor-plans/active"]
+  });
+
+  // 获取用户标记的厅房
+  const { data: markedRooms } = useQuery({
+    queryKey: ["/api/marked-rooms", selectedStoreId, floorPlan?.id],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
+      if (floorPlan?.id) params.set('floorPlanId', floorPlan.id);
+      
+      const response = await fetch(`/api/marked-rooms?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch marked rooms');
+      return response.json();
+    },
+    enabled: !!floorPlan?.id
+  });
+
+  // 保存标记厅房的mutation
+  const saveMarkedRoom = useMutation({
+    mutationFn: async (roomData: any) => {
+      return apiRequest('POST', '/api/marked-rooms', roomData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/marked-rooms"] });
+      toast({ title: "成功", description: "厅房标记已保存" });
+    },
+    onError: () => {
+      toast({ title: "错误", description: "保存厅房标记失败", variant: "destructive" });
+    }
+  });
+
+  // 删除标记厅房的mutation
+  const deleteMarkedRoom = useMutation({
+    mutationFn: async (roomId: string) => {
+      return apiRequest('DELETE', `/api/marked-rooms/${roomId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/marked-rooms"] });
+      toast({ title: "成功", description: "厅房标记已删除" });
+    },
+    onError: () => {
+      toast({ title: "错误", description: "删除厅房标记失败", variant: "destructive" });
+    }
   });
 
   useEffect(() => {
@@ -64,6 +110,23 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
       setFilteredRooms(filtered);
     }
   }, [rooms, searchQuery]);
+
+  // 加载保存的标记厅房
+  useEffect(() => {
+    if (markedRooms && Array.isArray(markedRooms)) {
+      const convertedRooms: RoomSelection[] = markedRooms.map((room: any) => ({
+        id: room.id,
+        x: parseFloat(room.x),
+        y: parseFloat(room.y), 
+        width: parseFloat(room.width),
+        height: parseFloat(room.height),
+        name: room.name,
+        type: room.type,
+        points: room.polygonPoints || undefined
+      }));
+      setUserRooms(convertedRooms);
+    }
+  }, [markedRooms]);
 
   const handleZoomIn = () => {
     setZoom(prev => Math.min(prev + 0.25, 3));
@@ -173,7 +236,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     
     // 只有当选择区域足够大时才添加
     if (currentSelection.width > 2 && currentSelection.height > 2) {
-      const roomName = prompt('请输入房间名称:') || `房间 ${userRooms.length + 1}`;
+      const roomName = prompt('请输入厅房名称:') || `厅房 ${userRooms.length + 1}`;
       const newRoom: RoomSelection = {
         ...currentSelection,
         id: `user-room-${Date.now()}`,
@@ -181,22 +244,35 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
         type: 'rectangle'
       };
       setUserRooms(prev => [...prev, newRoom]);
+
+      // 保存到服务器
+      if (selectedStoreId && floorPlan?.id) {
+        saveMarkedRoom.mutate({
+          storeId: selectedStoreId,
+          floorPlanId: floorPlan.id,
+          name: roomName,
+          type: 'rectangle',
+          x: currentSelection.x,
+          y: currentSelection.y,
+          width: currentSelection.width,
+          height: currentSelection.height
+        });
+      }
     }
     
     setIsDrawing(false);
     setDrawingStart(null);
     setCurrentSelection(null);
-    setDrawingType('none');
   };
 
   // 完成多边形绘制
-  const finishPolygon = () => {
+  const finishPolygon = async () => {
     if (polygonPoints.length < 3) {
       alert('多边形至少需要3个顶点');
       return;
     }
     
-    const roomName = prompt('请输入房间名称:') || `房间 ${userRooms.length + 1}`;
+    const roomName = prompt('请输入厅房名称:') || `厅房 ${userRooms.length + 1}`;
     
     // 计算边界框
     const minX = Math.min(...polygonPoints.map(p => p.x));
@@ -216,6 +292,26 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     };
     
     setUserRooms(prev => [...prev, newRoom]);
+
+    // 保存到服务器
+    if (selectedStoreId && floorPlan?.id) {
+      try {
+        await saveMarkedRoom.mutateAsync({
+          storeId: selectedStoreId,
+          floorPlanId: floorPlan.id,
+          name: roomName,
+          type: 'polygon',
+          x: minX,
+          y: minY,
+          width: maxX - minX,
+          height: maxY - minY,
+          polygonPoints: polygonPoints
+        });
+      } catch (error) {
+        console.error('Failed to save marked room:', error);
+      }
+    }
+    
     setPolygonPoints([]);
     setDrawingType('none');
   };

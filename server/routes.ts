@@ -334,11 +334,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 获取所有门店的统计信息
   app.get("/api/stores/stats", async (req, res) => {
     try {
-      const stores = await storage.getStores();
+      const stores = await storage.getAllStores();
       const stats: {[key: number]: any} = {};
       
       await Promise.all(
-        stores.map(async (store) => {
+        stores.map(async (store: any) => {
           try {
             stats[store.storeId] = await storage.getStats(store.storeId);
           } catch (error) {
@@ -356,6 +356,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch stores stats" });
+    }
+  });
+
+  // 用户标记厅房相关路由
+  app.get("/api/marked-rooms", async (req, res) => {
+    try {
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const floorPlanId = req.query.floorPlanId as string | undefined;
+      
+      // 模拟数据，实际应该从数据库获取
+      const markedRooms: any[] = [
+        // 由于当前使用内存存储，先返回空数组，后续可实现完整存储逻辑
+      ];
+      
+      res.json(markedRooms);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch marked rooms" });
+    }
+  });
+
+  app.post("/api/marked-rooms", async (req, res) => {
+    try {
+      const markedRoomData = req.body;
+      
+      // 模拟保存标记的厅房
+      const savedRoom = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...markedRoomData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      res.status(201).json(savedRoom);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create marked room" });
+    }
+  });
+
+  app.delete("/api/marked-rooms/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      // 模拟删除标记的厅房
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete marked room" });
     }
   });
 

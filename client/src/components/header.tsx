@@ -66,7 +66,7 @@ export default function Header({ searchQuery, onSearchChange, selectedStoreId }:
               <i className="fas fa-building text-white text-sm"></i>
             </div>
             <h1 className="text-xl font-semibold text-slate-900" data-testid="text-app-title">
-              商场分析仪表板
+              百货柜位管理系统
               {selectedStoreId && (
                 <span className="text-sm font-normal text-slate-500 ml-2">
                   (门店ID: {selectedStoreId})
@@ -79,7 +79,7 @@ export default function Header({ searchQuery, onSearchChange, selectedStoreId }:
           <div className="relative">
             <Input
               type="text"
-              placeholder="搜索房间..."
+              placeholder="搜索厅房..."
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               className="pl-10 w-64"

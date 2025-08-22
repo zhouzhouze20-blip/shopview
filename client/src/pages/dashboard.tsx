@@ -39,7 +39,7 @@ export default function Dashboard({ selectedStoreId }: DashboardProps) {
             <div className="p-6 border-b border-slate-200 bg-white">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-slate-900" data-testid="text-floor-plan-title">
-                  楼层平面图可视化
+                  厅房平面图可视化
                 </h2>
                 <div className="flex items-center space-x-4">
                   <select 

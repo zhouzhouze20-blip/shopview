@@ -23,7 +23,7 @@ const navigationItems: NavigationItem[] = [
     icon: Building2,
     subItems: [
       { id: "floor-plan", name: "楼层平面图", icon: Home },
-      { id: "rooms", name: "房间管理", icon: Building2 },
+      { id: "rooms", name: "厅房管理", icon: Building2 },
       { id: "floors", name: "楼层管理", icon: Building2 },
       { id: "space-assets", name: "空间资产", icon: Building2 }
     ]

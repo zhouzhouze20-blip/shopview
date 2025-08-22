@@ -40,8 +40,10 @@ export default function TenantsPage({ selectedStoreId }: TenantsPageProps) {
 
   const displayTenants = searchQuery ? searchResults : tenants;
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('zh-CN');
+  const formatDate = (dateString: string | Date | null) => {
+    if (!dateString) return '未设置';
+    const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+    return date.toLocaleDateString('zh-CN');
   };
 
   return (

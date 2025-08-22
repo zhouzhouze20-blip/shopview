@@ -9,7 +9,8 @@ import {
   type Brand, type InsertBrand,
   type Contract, type InsertContract,
   type Floor, type InsertFloor,
-  type SpaceAsset, type InsertSpaceAsset
+  type SpaceAsset, type InsertSpaceAsset,
+  type UserMarkedRoom, type NewUserMarkedRoom
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -593,6 +594,7 @@ export class MemStorage implements IStorage {
     const hall: Hall = {
       ...insertHall,
       hallId,
+      status: insertHall.status || 'vacant',
       isActive: insertHall.isActive ?? true,
       floorId: insertHall.floorId ?? null,
       monthlyRent: insertHall.monthlyRent ?? null,
@@ -846,6 +848,7 @@ export class MemStorage implements IStorage {
     const newRoom: Room = {
       ...room,
       id,
+      storeId: room.storeId ?? null,
       status: room.status || "vacant",
       tenant: room.tenant ?? null,
       monthlyRevenue: room.monthlyRevenue ?? null,
@@ -914,6 +917,7 @@ export class MemStorage implements IStorage {
     const newFloorPlan: FloorPlan = {
       ...floorPlan,
       id,
+      storeId: floorPlan.storeId ?? null,
       imageUrl: floorPlan.imageUrl ?? null,
       isActive: floorPlan.isActive ?? null,
       createdAt: new Date(),
