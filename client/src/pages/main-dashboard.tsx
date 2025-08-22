@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import NavigationSidebar from "@/components/navigation-sidebar";
 import Dashboard from "./dashboard";
 import TenantsPage from "./tenants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StoreSelector } from "@/components/store-selector";
 import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft } from "lucide-react";
 
@@ -208,6 +210,155 @@ function SystemOverview() {
   );
 }
 
+// 厅房管理页面组件
+function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
+  const { data: halls, isLoading: isLoadingHalls } = useQuery({
+    queryKey: ["/api/halls", selectedStoreId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
+      const response = await fetch(`/api/halls?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch halls');
+      return response.json();
+    },
+    enabled: !!selectedStoreId
+  });
+
+  const { data: markedRooms, isLoading: isLoadingMarkedRooms } = useQuery({
+    queryKey: ["/api/marked-rooms", selectedStoreId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
+      const response = await fetch(`/api/marked-rooms?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch marked rooms');
+      return response.json();
+    },
+    enabled: !!selectedStoreId
+  });
+
+  const isLoading = isLoadingHalls || isLoadingMarkedRooms;
+
+  if (!selectedStoreId) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-lg text-slate-500">请先选择一个门店</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-lg">正在加载厅房信息...</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <h1 className="text-3xl font-bold text-slate-900 mb-6">厅房管理</h1>
+      
+      {/* 用户标记的厅房 */}
+      <div className="mb-8">
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+          <div className="p-4 border-b border-slate-200">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-blue-600" />
+              用户标记的厅房
+            </h2>
+            <p className="text-sm text-slate-600 mt-1">在楼层平面图中绘制的厅房</p>
+          </div>
+          <div className="divide-y divide-slate-200">
+            {markedRooms && markedRooms.length > 0 ? (
+              markedRooms.map((room: any) => (
+                <div key={room.id} className="p-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-blue-600">{room.name}</h3>
+                    <p className="text-sm text-slate-600">
+                      类型: {room.type === 'rectangle' ? '矩形' : '多边形'}
+                    </p>
+                    <p className="text-sm text-slate-500">
+                      位置: ({parseFloat(room.x).toFixed(1)}%, {parseFloat(room.y).toFixed(1)}%)
+                    </p>
+                    {room.width && room.height && (
+                      <p className="text-sm text-slate-500">
+                        尺寸: {parseFloat(room.width).toFixed(1)}% × {parseFloat(room.height).toFixed(1)}%
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                      用户绘制
+                    </Badge>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {new Date(room.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-8 text-center text-slate-500">
+                <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                <p>暂无用户标记的厅房</p>
+                <p className="text-sm mt-1">在楼层平面图中绘制厅房后会在这里显示</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 系统厅房 */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+        <div className="p-4 border-b border-slate-200">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-green-600" />
+            系统厅房
+          </h2>
+          <p className="text-sm text-slate-600 mt-1">系统预定义的厅房</p>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {halls && halls.length > 0 ? (
+            halls.map((hall: any) => (
+              <div key={hall.hallId} className="p-4 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-green-600">{hall.hallName}</h3>
+                  <p className="text-sm text-slate-600">
+                    编号: {hall.hallCode} | 面积: {parseFloat(hall.area).toFixed(0)} m²
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    月租金: ¥{hall.monthlyRent ? parseFloat(hall.monthlyRent).toLocaleString() : '未设定'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <Badge 
+                    variant={hall.status === 'occupied' ? 'default' : hall.status === 'vacant' ? 'secondary' : 'outline'}
+                    className={
+                      hall.status === 'occupied' ? 'bg-green-100 text-green-800 border-green-200' :
+                      hall.status === 'vacant' ? 'bg-gray-100 text-gray-800 border-gray-200' :
+                      'bg-yellow-100 text-yellow-800 border-yellow-200'
+                    }
+                  >
+                    {hall.status === 'occupied' ? '已占用' : hall.status === 'vacant' ? '空闲' : '维护中'}
+                  </Badge>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="p-8 text-center text-slate-500">
+              <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+              <p>暂无系统厅房数据</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
   const [selectedStoreId, setSelectedStoreId] = useState<number | undefined>(undefined);
@@ -238,6 +389,8 @@ export default function MainDashboard() {
         return <SystemOverview />;
       case "floor-plan":
         return <Dashboard selectedStoreId={selectedStoreId} />;
+      case "halls":
+        return <HallsPage selectedStoreId={selectedStoreId} />;
       case "tenants":
         return <TenantsPage selectedStoreId={selectedStoreId} />;
       case "brands":

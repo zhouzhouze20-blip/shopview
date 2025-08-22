@@ -365,13 +365,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
       const floorPlanId = req.query.floorPlanId as string | undefined;
       
-      // 模拟数据，实际应该从数据库获取
-      const markedRooms: any[] = [
-        // 由于当前使用内存存储，先返回空数组，后续可实现完整存储逻辑
-      ];
-      
+      const markedRooms = await storage.getUserMarkedRooms(storeId, floorPlanId);
       res.json(markedRooms);
     } catch (error) {
+      console.error("Failed to fetch marked rooms:", error);
       res.status(500).json({ message: "Failed to fetch marked rooms" });
     }
   });
@@ -379,17 +376,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/marked-rooms", async (req, res) => {
     try {
       const markedRoomData = req.body;
-      
-      // 模拟保存标记的厅房
-      const savedRoom = {
-        id: Math.random().toString(36).substr(2, 9),
-        ...markedRoomData,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      
+      const savedRoom = await storage.createUserMarkedRoom(markedRoomData);
       res.status(201).json(savedRoom);
     } catch (error) {
+      console.error("Failed to create marked room:", error);
       res.status(500).json({ message: "Failed to create marked room" });
     }
   });
@@ -397,9 +387,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/marked-rooms/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      // 模拟删除标记的厅房
+      await storage.deleteUserMarkedRoom(id);
       res.status(204).send();
     } catch (error) {
+      console.error("Failed to delete marked room:", error);
       res.status(500).json({ message: "Failed to delete marked room" });
     }
   });

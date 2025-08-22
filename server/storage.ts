@@ -90,6 +90,12 @@ export interface IStorage {
     vacant: number;
     avgRevenue: number;
   }>;
+
+  // User marked rooms methods (用户标记厅房)
+  getUserMarkedRooms(storeId?: number, floorPlanId?: string): Promise<UserMarkedRoom[]>;
+  createUserMarkedRoom(markedRoom: NewUserMarkedRoom): Promise<UserMarkedRoom>;
+  updateUserMarkedRoom(id: string, markedRoom: Partial<NewUserMarkedRoom>): Promise<UserMarkedRoom>;
+  deleteUserMarkedRoom(id: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -104,6 +110,7 @@ export class MemStorage implements IStorage {
   private rooms: Map<string, Room>;
   private floorPlans: Map<string, FloorPlan>;
   private activities: Map<string, Activity>;
+  private userMarkedRooms: Map<string, UserMarkedRoom>;
 
   constructor() {
     this.users = new Map();
@@ -117,6 +124,7 @@ export class MemStorage implements IStorage {
     this.rooms = new Map();
     this.floorPlans = new Map();
     this.activities = new Map();
+    this.userMarkedRooms = new Map();
     
     // Initialize with sample data
     this.initializeData();
@@ -989,6 +997,55 @@ export class MemStorage implements IStorage {
       vacant,
       avgRevenue: Math.round(avgRevenue)
     };
+  }
+
+  // User marked rooms methods implementation
+  async getUserMarkedRooms(storeId?: number, floorPlanId?: string): Promise<UserMarkedRoom[]> {
+    let markedRooms = Array.from(this.userMarkedRooms.values());
+    
+    if (storeId) {
+      markedRooms = markedRooms.filter(room => room.storeId === storeId);
+    }
+    
+    if (floorPlanId) {
+      markedRooms = markedRooms.filter(room => room.floorPlanId === floorPlanId);
+    }
+    
+    return markedRooms;
+  }
+
+  async createUserMarkedRoom(markedRoom: NewUserMarkedRoom): Promise<UserMarkedRoom> {
+    const id = randomUUID();
+    const newMarkedRoom: UserMarkedRoom = {
+      ...markedRoom,
+      id,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.userMarkedRooms.set(id, newMarkedRoom);
+    return newMarkedRoom;
+  }
+
+  async updateUserMarkedRoom(id: string, markedRoomUpdate: Partial<NewUserMarkedRoom>): Promise<UserMarkedRoom> {
+    const existingRoom = this.userMarkedRooms.get(id);
+    if (!existingRoom) {
+      throw new Error(`Marked room with id ${id} not found`);
+    }
+    
+    const updatedRoom: UserMarkedRoom = {
+      ...existingRoom,
+      ...markedRoomUpdate,
+      updatedAt: new Date()
+    };
+    this.userMarkedRooms.set(id, updatedRoom);
+    return updatedRoom;
+  }
+
+  async deleteUserMarkedRoom(id: string): Promise<void> {
+    if (!this.userMarkedRooms.has(id)) {
+      throw new Error(`Marked room with id ${id} not found`);
+    }
+    this.userMarkedRooms.delete(id);
   }
 }
 
