@@ -7,8 +7,14 @@ import TenantsPage from "./tenants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import { StoreSelector } from "@/components/store-selector";
-import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft } from "lucide-react";
+import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft, Calendar, CheckCircle, Clock, Plus, Edit, Trash2 } from "lucide-react";
 
 // 品牌管理页面组件
 function BrandsPage() {
@@ -359,6 +365,321 @@ function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
   );
 }
 
+// 楼层管理页面组件
+function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newFloorPlan, setNewFloorPlan] = useState({
+    name: "",
+    planVersion: "1.0",
+    level: "",
+    floorNumber: 1,
+    description: "",
+    effectiveDate: new Date().toISOString().split('T')[0],
+    expiryDate: ""
+  });
+  const { toast } = useToast();
+
+  const { data: floorPlans, isLoading, refetch } = useQuery({
+    queryKey: ["/api/floor-plans", selectedStoreId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
+      const response = await fetch(`/api/floor-plans?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch floor plans');
+      return response.json();
+    },
+    enabled: !!selectedStoreId
+  });
+
+  const handleCreateFloorPlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    try {
+      const floorPlanData = {
+        ...newFloorPlan,
+        storeId: selectedStoreId,
+        floorNumber: parseInt(newFloorPlan.floorNumber.toString()),
+        effectiveDate: new Date(newFloorPlan.effectiveDate).toISOString(),
+        expiryDate: newFloorPlan.expiryDate ? new Date(newFloorPlan.expiryDate).toISOString() : null,
+        createdBy: "current-user"
+      };
+
+      const response = await fetch("/api/floor-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(floorPlanData)
+      });
+
+      if (!response.ok) throw new Error("Failed to create floor plan");
+      
+      toast({ title: "成功", description: "楼层平面图创建成功" });
+      setIsCreateModalOpen(false);
+      setNewFloorPlan({
+        name: "",
+        planVersion: "1.0", 
+        level: "",
+        floorNumber: 1,
+        description: "",
+        effectiveDate: new Date().toISOString().split('T')[0],
+        expiryDate: ""
+      });
+      refetch();
+    } catch (error) {
+      toast({ title: "错误", description: "创建楼层平面图失败", variant: "destructive" });
+    }
+  };
+
+  const handleActivateFloorPlan = async (id: string) => {
+    try {
+      const response = await fetch(`/api/floor-plans/${id}/activate`, {
+        method: "POST"
+      });
+
+      if (!response.ok) throw new Error("Failed to activate floor plan");
+      
+      toast({ title: "成功", description: "楼层平面图已激活" });
+      refetch();
+    } catch (error) {
+      toast({ title: "错误", description: "激活楼层平面图失败", variant: "destructive" });
+    }
+  };
+
+  const handleDeactivateFloorPlan = async (id: string) => {
+    try {
+      const response = await fetch(`/api/floor-plans/${id}/deactivate`, {
+        method: "POST"
+      });
+
+      if (!response.ok) throw new Error("Failed to deactivate floor plan");
+      
+      toast({ title: "成功", description: "楼层平面图已停用" });
+      refetch();
+    } catch (error) {
+      toast({ title: "错误", description: "停用楼层平面图失败", variant: "destructive" });
+    }
+  };
+
+  if (!selectedStoreId) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-lg text-slate-500">请先选择一个门店</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-lg">正在加载楼层信息...</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold text-slate-900">楼层管理</h1>
+        
+        <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+          <DialogTrigger asChild>
+            <Button className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              创建新平面图
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>创建楼层平面图</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleCreateFloorPlan} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="name">平面图名称</Label>
+                  <Input
+                    id="name"
+                    value={newFloorPlan.name}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, name: e.target.value })}
+                    placeholder="例: L1主营业区"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="version">版本号</Label>
+                  <Input
+                    id="version"
+                    value={newFloorPlan.planVersion}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, planVersion: e.target.value })}
+                    placeholder="例: 1.0"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="level">楼层</Label>
+                  <Input
+                    id="level"
+                    value={newFloorPlan.level}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, level: e.target.value })}
+                    placeholder="例: L1, F1, B1"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="floorNumber">楼层编号</Label>
+                  <Input
+                    id="floorNumber"
+                    type="number"
+                    value={newFloorPlan.floorNumber}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, floorNumber: parseInt(e.target.value) })}
+                    placeholder="1"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="description">描述</Label>
+                <Textarea
+                  id="description"
+                  value={newFloorPlan.description}
+                  onChange={(e) => setNewFloorPlan({ ...newFloorPlan, description: e.target.value })}
+                  placeholder="楼层平面图描述信息"
+                  rows={2}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="effectiveDate">生效日期</Label>
+                  <Input
+                    id="effectiveDate"
+                    type="date"
+                    value={newFloorPlan.effectiveDate}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, effectiveDate: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="expiryDate">失效日期 (可选)</Label>
+                  <Input
+                    id="expiryDate"
+                    type="date"
+                    value={newFloorPlan.expiryDate}
+                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, expiryDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={() => setIsCreateModalOpen(false)}>
+                  取消
+                </Button>
+                <Button type="submit">创建</Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+        <div className="p-4 border-b border-slate-200">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-blue-600" />
+            楼层平面图管理
+          </h2>
+          <p className="text-sm text-slate-600 mt-1">管理楼层平面图版本、生效时间和状态</p>
+        </div>
+        
+        <div className="divide-y divide-slate-200">
+          {floorPlans && floorPlans.length > 0 ? (
+            floorPlans.map((plan: any) => (
+              <div key={plan.id} className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="font-semibold text-lg">{plan.name}</h3>
+                      <Badge 
+                        variant={plan.isActive ? "default" : "secondary"}
+                        className={plan.isActive ? "bg-green-100 text-green-800 border-green-200" : ""}
+                      >
+                        {plan.isActive ? "当前激活" : "未激活"}
+                      </Badge>
+                      <Badge variant="outline">v{plan.planVersion}</Badge>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-slate-600">
+                      <div className="flex items-center gap-1">
+                        <Building2 className="h-4 w-4" />
+                        <span>{plan.level} ({plan.floorNumber}楼)</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Calendar className="h-4 w-4" />
+                        <span>生效: {new Date(plan.effectiveDate).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-4 w-4" />
+                        <span>失效: {plan.expiryDate ? new Date(plan.expiryDate).toLocaleDateString() : "无限期"}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Users className="h-4 w-4" />
+                        <span>创建者: {plan.createdBy || "系统"}</span>
+                      </div>
+                    </div>
+                    
+                    {plan.description && (
+                      <p className="text-sm text-slate-500 mt-2">{plan.description}</p>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-2 ml-4">
+                    {!plan.isActive && (
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleActivateFloorPlan(plan.id)}
+                        className="flex items-center gap-1"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        激活
+                      </Button>
+                    )}
+                    {plan.isActive && (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleDeactivateFloorPlan(plan.id)}
+                        className="flex items-center gap-1"
+                      >
+                        <Clock className="h-4 w-4" />
+                        停用
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" className="flex items-center gap-1">
+                      <Edit className="h-4 w-4" />
+                      编辑
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="p-8 text-center text-slate-500">
+              <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+              <p>暂无楼层平面图</p>
+              <p className="text-sm mt-1">点击"创建新平面图"开始配置楼层</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
   const [selectedStoreId, setSelectedStoreId] = useState<number | undefined>(undefined);
@@ -389,6 +710,8 @@ export default function MainDashboard() {
         return <SystemOverview />;
       case "floor-plan":
         return <Dashboard selectedStoreId={selectedStoreId} />;
+      case "floors":
+        return <FloorsPage selectedStoreId={selectedStoreId} />;
       case "halls":
         return <HallsPage selectedStoreId={selectedStoreId} />;
       case "tenants":

@@ -395,6 +395,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== 楼层平面图管理 API ====================
+  app.get("/api/floor-plans", async (req, res) => {
+    try {
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const floorPlans = await storage.getAllFloorPlans(storeId);
+      res.json(floorPlans);
+    } catch (error) {
+      console.error("Failed to fetch floor plans:", error);
+      res.status(500).json({ message: "Failed to fetch floor plans" });
+    }
+  });
+
+  app.get("/api/floor-plans/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const floorPlan = await storage.getFloorPlan(id);
+      if (!floorPlan) {
+        return res.status(404).json({ message: "Floor plan not found" });
+      }
+      res.json(floorPlan);
+    } catch (error) {
+      console.error("Failed to fetch floor plan:", error);
+      res.status(500).json({ message: "Failed to fetch floor plan" });
+    }
+  });
+
+  app.post("/api/floor-plans", async (req, res) => {
+    try {
+      const floorPlanData = req.body;
+      const floorPlan = await storage.createFloorPlan(floorPlanData);
+      res.status(201).json(floorPlan);
+    } catch (error) {
+      console.error("Failed to create floor plan:", error);
+      res.status(500).json({ message: "Failed to create floor plan" });
+    }
+  });
+
+  app.put("/api/floor-plans/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const floorPlanData = req.body;
+      const floorPlan = await storage.updateFloorPlan(id, floorPlanData);
+      res.json(floorPlan);
+    } catch (error) {
+      console.error("Failed to update floor plan:", error);
+      res.status(500).json({ message: "Failed to update floor plan" });
+    }
+  });
+
+  app.post("/api/floor-plans/:id/activate", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const floorPlan = await storage.activateFloorPlan(id);
+      res.json(floorPlan);
+    } catch (error) {
+      console.error("Failed to activate floor plan:", error);
+      res.status(500).json({ message: "Failed to activate floor plan" });
+    }
+  });
+
+  app.post("/api/floor-plans/:id/deactivate", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const floorPlan = await storage.deactivateFloorPlan(id);
+      res.json(floorPlan);
+    } catch (error) {
+      console.error("Failed to deactivate floor plan:", error);
+      res.status(500).json({ message: "Failed to deactivate floor plan" });
+    }
+  });
+
   // ==================== 商户管理 API ====================
   app.get("/api/tenants", async (req, res) => {
     try {

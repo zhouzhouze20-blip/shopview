@@ -75,9 +75,12 @@ export interface IStorage {
   
   // Floor plan methods (legacy compatibility)
   getAllFloorPlans(storeId?: number): Promise<FloorPlan[]>;
+  getFloorPlan(id: string): Promise<FloorPlan | undefined>;
   getActiveFloorPlan(storeId?: number): Promise<FloorPlan | undefined>;
   createFloorPlan(floorPlan: InsertFloorPlan): Promise<FloorPlan>;
   updateFloorPlan(id: string, floorPlan: Partial<InsertFloorPlan>): Promise<FloorPlan>;
+  activateFloorPlan(id: string): Promise<FloorPlan>;
+  deactivateFloorPlan(id: string): Promise<FloorPlan>;
   
   // Activity methods
   getRecentActivities(limit?: number): Promise<Activity[]>;
@@ -294,9 +297,17 @@ export class MemStorage implements IStorage {
       id: randomUUID(),
       storeId: 1, // 关联到常州购物中心
       name: "常州购物中心 L1层",
+      planVersion: "1.0",
       level: "L1",
+      floorNumber: 1,
       imageUrl: "/objects/uploads/1e7d422a-b780-4647-81bc-742863a78bb5",
+      description: "商场一楼主要区域平面图",
       isActive: true,
+      effectiveDate: new Date(),
+      expiryDate: null,
+      createdBy: "system",
+      approvedBy: null,
+      approvedAt: null,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -920,14 +931,26 @@ export class MemStorage implements IStorage {
     return plans.find(plan => plan.isActive);
   }
 
+  async getFloorPlan(id: string): Promise<FloorPlan | undefined> {
+    return this.floorPlans.get(id);
+  }
+
   async createFloorPlan(floorPlan: InsertFloorPlan): Promise<FloorPlan> {
     const id = randomUUID();
     const newFloorPlan: FloorPlan = {
       ...floorPlan,
       id,
       storeId: floorPlan.storeId ?? null,
+      planVersion: floorPlan.planVersion ?? "1.0",
+      floorNumber: floorPlan.floorNumber ?? 1,
       imageUrl: floorPlan.imageUrl ?? null,
+      description: floorPlan.description ?? null,
       isActive: floorPlan.isActive ?? null,
+      effectiveDate: floorPlan.effectiveDate ?? new Date(),
+      expiryDate: floorPlan.expiryDate ?? null,
+      createdBy: floorPlan.createdBy ?? null,
+      approvedBy: floorPlan.approvedBy ?? null,
+      approvedAt: floorPlan.approvedAt ?? null,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -950,6 +973,38 @@ export class MemStorage implements IStorage {
     };
     this.floorPlans.set(id, updatedFloorPlan);
     return updatedFloorPlan;
+  }
+
+  async activateFloorPlan(id: string): Promise<FloorPlan> {
+    const plan = this.floorPlans.get(id);
+    if (!plan) {
+      throw new Error(`Floor plan with id ${id} not found`);
+    }
+
+    // Deactivate other plans for the same store
+    if (plan.storeId) {
+      Array.from(this.floorPlans.entries()).forEach(([existingId, existingPlan]) => {
+        if (existingPlan.storeId === plan.storeId && existingId !== id && existingPlan.isActive) {
+          existingPlan.isActive = false;
+          existingPlan.updatedAt = new Date();
+        }
+      });
+    }
+
+    plan.isActive = true;
+    plan.updatedAt = new Date();
+    return plan;
+  }
+
+  async deactivateFloorPlan(id: string): Promise<FloorPlan> {
+    const plan = this.floorPlans.get(id);
+    if (!plan) {
+      throw new Error(`Floor plan with id ${id} not found`);
+    }
+
+    plan.isActive = false;
+    plan.updatedAt = new Date();
+    return plan;
   }
 
   // Activity methods
@@ -1019,6 +1074,12 @@ export class MemStorage implements IStorage {
     const newMarkedRoom: UserMarkedRoom = {
       ...markedRoom,
       id,
+      type: markedRoom.type || "rectangle",
+      storeId: markedRoom.storeId ?? null,
+      floorPlanId: markedRoom.floorPlanId ?? null,
+      width: markedRoom.width ?? null,
+      height: markedRoom.height ?? null,
+      polygonPoints: markedRoom.polygonPoints ?? null,
       createdAt: new Date(),
       updatedAt: new Date()
     };

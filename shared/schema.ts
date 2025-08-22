@@ -208,9 +208,17 @@ export const floorPlans = pgTable("floor_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   storeId: integer("store_id").references(() => stores.storeId), // 添加门店关联
   name: text("name").notNull(),
+  planVersion: varchar("plan_version", { length: 50 }).notNull().default("1.0"),
   level: text("level").notNull(),
+  floorNumber: integer("floor_number").notNull().default(1),
   imageUrl: text("image_url"),
+  description: text("description"),
   isActive: boolean("is_active").default(true),
+  effectiveDate: timestamp("effective_date").defaultNow().notNull(),
+  expiryDate: timestamp("expiry_date"),
+  createdBy: text("created_by"),
+  approvedBy: text("approved_by"),
+  approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
 });
