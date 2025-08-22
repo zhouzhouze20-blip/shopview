@@ -4,7 +4,8 @@ import { storage } from "./storage";
 import { 
   insertRoomSchema, insertFloorPlanSchema, insertActivitySchema,
   insertTenantSchema, insertBrandSchema, insertContractSchema,
-  insertFloorSchema, insertSpaceAssetSchema
+  insertFloorSchema, insertSpaceAssetSchema, insertStoreSchema,
+  insertHallSchema
 } from "@shared/schema";
 import { z } from "zod";
 import { ObjectStorageService } from "./objectStorage";
@@ -19,10 +20,138 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Room routes
+  // ==================== 门店管理 API ====================
+  app.get("/api/stores", async (req, res) => {
+    try {
+      const stores = await storage.getAllStores();
+      res.json(stores);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch stores" });
+    }
+  });
+
+  app.get("/api/stores/:id", async (req, res) => {
+    try {
+      const storeId = parseInt(req.params.id);
+      if (isNaN(storeId)) {
+        return res.status(400).json({ message: "Invalid store ID" });
+      }
+      const store = await storage.getStore(storeId);
+      if (!store) {
+        return res.status(404).json({ message: "Store not found" });
+      }
+      res.json(store);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch store" });
+    }
+  });
+
+  app.post("/api/stores", async (req, res) => {
+    try {
+      const storeData = insertStoreSchema.parse(req.body);
+      const store = await storage.createStore(storeData);
+      res.status(201).json(store);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid store data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create store" });
+    }
+  });
+
+  app.put("/api/stores/:id", async (req, res) => {
+    try {
+      const storeId = parseInt(req.params.id);
+      if (isNaN(storeId)) {
+        return res.status(400).json({ message: "Invalid store ID" });
+      }
+      const storeData = insertStoreSchema.partial().parse(req.body);
+      const store = await storage.updateStore(storeId, storeData);
+      res.json(store);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid store data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update store" });
+    }
+  });
+
+  // ==================== 厅房管理 API ====================
+  app.get("/api/halls", async (req, res) => {
+    try {
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const halls = await storage.getAllHalls(storeId);
+      res.json(halls);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch halls" });
+    }
+  });
+
+  app.get("/api/halls/search", async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      if (!query) {
+        return res.status(400).json({ message: "Search query is required" });
+      }
+      const halls = await storage.searchHalls(query, storeId);
+      res.json(halls);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to search halls" });
+    }
+  });
+
+  app.get("/api/halls/:id", async (req, res) => {
+    try {
+      const hallId = parseInt(req.params.id);
+      if (isNaN(hallId)) {
+        return res.status(400).json({ message: "Invalid hall ID" });
+      }
+      const hall = await storage.getHall(hallId);
+      if (!hall) {
+        return res.status(404).json({ message: "Hall not found" });
+      }
+      res.json(hall);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch hall" });
+    }
+  });
+
+  app.post("/api/halls", async (req, res) => {
+    try {
+      const hallData = insertHallSchema.parse(req.body);
+      const hall = await storage.createHall(hallData);
+      res.status(201).json(hall);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid hall data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create hall" });
+    }
+  });
+
+  app.put("/api/halls/:id", async (req, res) => {
+    try {
+      const hallId = parseInt(req.params.id);
+      if (isNaN(hallId)) {
+        return res.status(400).json({ message: "Invalid hall ID" });
+      }
+      const hallData = insertHallSchema.partial().parse(req.body);
+      const hall = await storage.updateHall(hallId, hallData);
+      res.json(hall);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid hall data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update hall" });
+    }
+  });
+
+  // Room routes (厅房遗留兼容性)
   app.get("/api/rooms", async (req, res) => {
     try {
-      const rooms = await storage.getAllRooms();
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const rooms = await storage.getAllRooms(storeId);
       res.json(rooms);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch rooms" });
@@ -32,10 +161,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/rooms/search", async (req, res) => {
     try {
       const query = req.query.q as string;
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
       if (!query) {
         return res.status(400).json({ message: "Search query is required" });
       }
-      const rooms = await storage.searchRooms(query);
+      const rooms = await storage.searchRooms(query, storeId);
       res.json(rooms);
     } catch (error) {
       res.status(500).json({ message: "Failed to search rooms" });
@@ -190,13 +320,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Analytics routes
+  // Analytics routes (支持门店过滤)
   app.get("/api/stats", async (req, res) => {
     try {
-      const stats = await storage.getStats();
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const stats = await storage.getStats(storeId);
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch stats" });
+    }
+  });
+
+  // 获取所有门店的统计信息
+  app.get("/api/stores/stats", async (req, res) => {
+    try {
+      const stores = await storage.getStores();
+      const stats: {[key: number]: any} = {};
+      
+      await Promise.all(
+        stores.map(async (store) => {
+          try {
+            stats[store.storeId] = await storage.getStats(store.storeId);
+          } catch (error) {
+            console.error(`Failed to get stats for store ${store.storeId}:`, error);
+            stats[store.storeId] = {
+              totalRooms: 0,
+              occupied: 0,
+              vacant: 0,
+              avgRevenue: 0
+            };
+          }
+        })
+      );
+      
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch stores stats" });
     }
   });
 

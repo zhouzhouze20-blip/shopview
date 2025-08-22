@@ -9,6 +9,7 @@ interface FloorPlanProps {
   onRoomClick: (room: Room) => void;
   viewMode: "revenue" | "occupancy" | "lease";
   searchQuery: string;
+  selectedStoreId?: number;
 }
 
 interface RoomSelection {
@@ -22,7 +23,7 @@ interface RoomSelection {
   type: 'rectangle' | 'polygon';
 }
 
-export default function FloorPlan({ onRoomClick, viewMode, searchQuery }: FloorPlanProps) {
+export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selectedStoreId }: FloorPlanProps) {
   const [zoom, setZoom] = useState(1);
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
   const [showRoomOverlays, setShowRoomOverlays] = useState(false); // 默认隐藏虚拟房间
@@ -36,7 +37,13 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery }: FloorP
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { data: rooms, isLoading } = useQuery<Room[]>({
-    queryKey: ["/api/rooms"]
+    queryKey: selectedStoreId ? ["/api/rooms", selectedStoreId] : ["/api/rooms"],
+    queryFn: async () => {
+      const url = selectedStoreId ? `/api/rooms?storeId=${selectedStoreId}` : '/api/rooms';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch rooms');
+      return response.json();
+    }
   });
 
   const { data: floorPlan } = useQuery({
@@ -223,6 +230,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery }: FloorP
     // 创建一个临时的Room对象来适配现有的弹窗
     const tempRoom: Room = {
       id: room.id,
+      storeId: selectedStoreId || null,
       roomNumber: room.name || room.id,
       name: room.name || '用户标记房间',
       area: '0',
@@ -231,6 +239,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery }: FloorP
       monthlyRevenue: '0',
       revenuePerSqm: '0',
       leaseExpiry: null,
+      contractType: null,
       x: room.x.toString(),
       y: room.y.toString(),
       width: room.width.toString(),
@@ -430,7 +439,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery }: FloorP
           drawingType !== 'none' ? 'cursor-crosshair' : 'cursor-default'
         }`}
         style={{
-          backgroundImage: floorPlan?.imageUrl ? `url(${window.location.origin}${floorPlan.imageUrl})` : "url('https://images.unsplash.com/photo-1600585154526-990dced4db0d?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=1920&h=1080')",
+          backgroundImage: (floorPlan as any)?.imageUrl ? `url(${window.location.origin}${(floorPlan as any).imageUrl})` : "url('https://images.unsplash.com/photo-1600585154526-990dced4db0d?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=1920&h=1080')",
           backgroundSize: 'contain',
           backgroundRepeat: 'no-repeat',
           backgroundPosition: 'center',

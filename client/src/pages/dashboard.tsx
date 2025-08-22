@@ -5,7 +5,11 @@ import FloorPlan from "@/components/floor-plan";
 import RoomDetailsModal from "@/components/room-details-modal";
 import { Room } from "@shared/schema";
 
-export default function Dashboard() {
+interface DashboardProps {
+  selectedStoreId?: number;
+}
+
+export default function Dashboard({ selectedStoreId }: DashboardProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"revenue" | "occupancy" | "lease">("revenue");
@@ -23,6 +27,7 @@ export default function Dashboard() {
       <Header 
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        selectedStoreId={selectedStoreId}
         data-testid="header"
       />
       
@@ -59,6 +64,7 @@ export default function Dashboard() {
                 onRoomClick={handleRoomClick}
                 viewMode={viewMode}
                 searchQuery={searchQuery}
+                selectedStoreId={selectedStoreId}
                 data-testid="floor-plan"
               />
             </div>

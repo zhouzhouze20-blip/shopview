@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import NavigationSidebar from "@/components/navigation-sidebar";
 import Dashboard from "./dashboard";
 import TenantsPage from "./tenants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { StoreSelector } from "@/components/store-selector";
+import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft } from "lucide-react";
 
 // 品牌管理页面组件
 function BrandsPage() {
@@ -207,15 +210,36 @@ function SystemOverview() {
 
 export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
+  const [selectedStoreId, setSelectedStoreId] = useState<number | undefined>(undefined);
+  const [location, setLocation] = useLocation();
+
+  // 从URL参数获取门店ID和视图
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const storeIdParam = params.get('storeId');
+    const viewParam = params.get('view');
+    
+    if (storeIdParam) {
+      setSelectedStoreId(parseInt(storeIdParam));
+    }
+    
+    if (viewParam) {
+      if (viewParam === 'rooms') {
+        setActiveModule('floor-plan');
+      } else {
+        setActiveModule(viewParam);
+      }
+    }
+  }, [location]);
 
   const renderContent = () => {
     switch (activeModule) {
       case "dashboard":
         return <SystemOverview />;
       case "floor-plan":
-        return <Dashboard />;
+        return <Dashboard selectedStoreId={selectedStoreId} />;
       case "tenants":
-        return <TenantsPage />;
+        return <TenantsPage selectedStoreId={selectedStoreId} />;
       case "brands":
         return <BrandsPage />;
       case "contracts":
@@ -227,6 +251,21 @@ export default function MainDashboard() {
     }
   };
 
+  const handleBackToStores = () => {
+    setLocation('/stores');
+  };
+
+  const handleStoreChange = (storeId: number | undefined) => {
+    setSelectedStoreId(storeId);
+    // 更新URL参数
+    const params = new URLSearchParams();
+    if (storeId) {
+      params.set('storeId', storeId.toString());
+    }
+    const newUrl = `/dashboard${params.toString() ? '?' + params.toString() : ''}`;
+    setLocation(newUrl);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex" data-testid="main-dashboard">
       <NavigationSidebar 
@@ -234,6 +273,34 @@ export default function MainDashboard() {
         onModuleChange={setActiveModule}
       />
       <main className="flex-1 overflow-auto" data-testid="main-content">
+        {/* 顶部工具栏 */}
+        <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleBackToStores}
+              className="flex items-center gap-2"
+              data-testid="button-back-to-stores"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              返回门店选择
+            </Button>
+            
+            <div className="h-4 w-px bg-gray-300" />
+            
+            <StoreSelector
+              selectedStoreId={selectedStoreId}
+              onStoreChange={handleStoreChange}
+              placeholder="选择门店"
+            />
+          </div>
+          
+          <div className="text-sm text-muted-foreground">
+            百货柜位管理系统
+          </div>
+        </div>
+        
         {renderContent()}
       </main>
     </div>

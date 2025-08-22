@@ -8,16 +8,33 @@ import { Plus, Search, Building2, Phone, Mail, MapPin } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Tenant } from "@shared/schema";
 
-export default function TenantsPage() {
+interface TenantsPageProps {
+  selectedStoreId?: number;
+}
+
+export default function TenantsPage({ selectedStoreId }: TenantsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const queryClient = useQueryClient();
 
   const { data: tenants, isLoading } = useQuery<Tenant[]>({
-    queryKey: ["/api/tenants"]
+    queryKey: selectedStoreId ? ["/api/tenants", selectedStoreId] : ["/api/tenants"],
+    queryFn: async () => {
+      const url = selectedStoreId ? `/api/tenants?storeId=${selectedStoreId}` : '/api/tenants';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch tenants');
+      return response.json();
+    }
   });
 
   const { data: searchResults, isLoading: searchLoading } = useQuery<Tenant[]>({
-    queryKey: ["/api/tenants/search", searchQuery],
+    queryKey: ["/api/tenants/search", searchQuery, selectedStoreId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ q: searchQuery });
+      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
+      const response = await fetch(`/api/tenants/search?${params}`);
+      if (!response.ok) throw new Error('Failed to search tenants');
+      return response.json();
+    },
     enabled: searchQuery.length > 0
   });
 

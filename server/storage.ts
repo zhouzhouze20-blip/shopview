@@ -3,6 +3,8 @@ import {
   type FloorPlan, type InsertFloorPlan, 
   type Activity, type InsertActivity,
   type User, type InsertUser,
+  type Store, type InsertStore,
+  type Hall, type InsertHall,
   type Tenant, type InsertTenant,
   type Brand, type InsertBrand,
   type Contract, type InsertContract,
@@ -16,6 +18,19 @@ export interface IStorage {
   getUser(userId: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  
+  // Store methods
+  getAllStores(): Promise<Store[]>;
+  getStore(storeId: number): Promise<Store | undefined>;
+  createStore(store: InsertStore): Promise<Store>;
+  updateStore(storeId: number, store: Partial<InsertStore>): Promise<Store>;
+  
+  // Hall methods (厅房管理)
+  getAllHalls(storeId?: number): Promise<Hall[]>;
+  getHall(hallId: number): Promise<Hall | undefined>;
+  createHall(hall: InsertHall): Promise<Hall>;
+  updateHall(hallId: number, hall: Partial<InsertHall>): Promise<Hall>;
+  searchHalls(query: string, storeId?: number): Promise<Hall[]>;
   
   // Tenant methods
   getAllTenants(): Promise<Tenant[]>;
@@ -49,17 +64,17 @@ export interface IStorage {
   getSpaceAssetsByFloor(floorId: number): Promise<SpaceAsset[]>;
   
   // Room methods (legacy compatibility)
-  getAllRooms(): Promise<Room[]>;
+  getAllRooms(storeId?: number): Promise<Room[]>;
   getRoom(id: string): Promise<Room | undefined>;
-  getRoomByNumber(roomNumber: string): Promise<Room | undefined>;
+  getRoomByNumber(roomNumber: string, storeId?: number): Promise<Room | undefined>;
   createRoom(room: InsertRoom): Promise<Room>;
   updateRoom(id: string, room: Partial<InsertRoom>): Promise<Room>;
   deleteRoom(id: string): Promise<boolean>;
-  searchRooms(query: string): Promise<Room[]>;
+  searchRooms(query: string, storeId?: number): Promise<Room[]>;
   
   // Floor plan methods (legacy compatibility)
-  getAllFloorPlans(): Promise<FloorPlan[]>;
-  getActiveFloorPlan(): Promise<FloorPlan | undefined>;
+  getAllFloorPlans(storeId?: number): Promise<FloorPlan[]>;
+  getActiveFloorPlan(storeId?: number): Promise<FloorPlan | undefined>;
   createFloorPlan(floorPlan: InsertFloorPlan): Promise<FloorPlan>;
   updateFloorPlan(id: string, floorPlan: Partial<InsertFloorPlan>): Promise<FloorPlan>;
   
@@ -68,7 +83,7 @@ export interface IStorage {
   createActivity(activity: InsertActivity): Promise<Activity>;
   
   // Analytics methods
-  getStats(): Promise<{
+  getStats(storeId?: number): Promise<{
     totalRooms: number;
     occupied: number;
     vacant: number;
@@ -78,6 +93,8 @@ export interface IStorage {
 
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
+  private stores: Map<number, Store>;
+  private halls: Map<number, Hall>;
   private tenants: Map<number, Tenant>;
   private brands: Map<number, Brand>;
   private contracts: Map<number, Contract>;
@@ -89,6 +106,8 @@ export class MemStorage implements IStorage {
 
   constructor() {
     this.users = new Map();
+    this.stores = new Map();
+    this.halls = new Map();
     this.tenants = new Map();
     this.brands = new Map();
     this.contracts = new Map();
@@ -103,6 +122,57 @@ export class MemStorage implements IStorage {
   }
 
   private initializeData() {
+    // Initialize sample stores (门店数据)
+    const sampleStores: (Omit<Store, 'storeId' | 'createdAt' | 'updatedAt'>)[] = [
+      {
+        storeName: "常州购物中心",
+        storeCode: "CZ001",
+        address: "江苏省常州市新北区中央商务区",
+        managerName: "张经理",
+        contactPhone: "0519-12345678",
+        contactEmail: "cz001@counter-mgmt.com",
+        isActive: true
+      },
+      {
+        storeName: "常州新世纪",
+        storeCode: "CZ002", 
+        address: "江苏省常州市天宁区新世纪商业广场",
+        managerName: "李经理",
+        contactPhone: "0519-87654321",
+        contactEmail: "cz002@counter-mgmt.com",
+        isActive: true
+      },
+      {
+        storeName: "常州百货大楼",
+        storeCode: "CZ003",
+        address: "江苏省常州市钟楼区南大街百货大楼",
+        managerName: "王经理", 
+        contactPhone: "0519-11223344",
+        contactEmail: "cz003@counter-mgmt.com",
+        isActive: true
+      },
+      {
+        storeName: "常州半山数据",
+        storeCode: "CZ004",
+        address: "江苏省常州市武进区半山数据中心",
+        managerName: "赵经理",
+        contactPhone: "0519-55667788", 
+        contactEmail: "cz004@counter-mgmt.com",
+        isActive: true
+      }
+    ];
+
+    let storeIdCounter = 1;
+    sampleStores.forEach(storeData => {
+      const store: Store = {
+        ...storeData,
+        storeId: storeIdCounter++,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      this.stores.set(store.storeId, store);
+    });
+
     // Initialize sample tenants
     const sampleTenants: (Omit<Tenant, 'tenantId' | 'createdAt' | 'updatedAt'>)[] = [
       {
@@ -170,17 +240,33 @@ export class MemStorage implements IStorage {
       this.brands.set(brand.brandId, brand);
     });
 
-    // Initialize sample floors
+    // Initialize sample floors for each store
     const sampleFloors: (Omit<Floor, 'floorId' | 'createdAt'>)[] = [
+      // 常州购物中心 (storeId: 1)
       {
+        storeId: 1,
         floorName: "L1",
         displayOrder: 1,
-        description: "商场一层"
+        description: "购物中心一层"
       },
       {
+        storeId: 1,
         floorName: "L2", 
         displayOrder: 2,
-        description: "商场二层"
+        description: "购物中心二层"
+      },
+      // 常州新世纪 (storeId: 2)
+      {
+        storeId: 2,
+        floorName: "1F",
+        displayOrder: 1,
+        description: "新世纪一楼"
+      },
+      {
+        storeId: 2,
+        floorName: "2F", 
+        displayOrder: 2,
+        description: "新世纪二楼"
       }
     ];
 
@@ -194,11 +280,12 @@ export class MemStorage implements IStorage {
       this.floors.set(floor.floorId, floor);
     });
 
-    // Create default floor plan
+    // Create default floor plan for store 1 (常州购物中心)
     const floorPlan: FloorPlan = {
       id: randomUUID(),
-      name: "Mall Level 1",
-      level: "1",
+      storeId: 1, // 关联到常州购物中心
+      name: "常州购物中心 L1层",
+      level: "L1",
       imageUrl: "/objects/uploads/1e7d422a-b780-4647-81bc-742863a78bb5",
       isActive: true,
       createdAt: new Date(),
@@ -206,9 +293,10 @@ export class MemStorage implements IStorage {
     };
     this.floorPlans.set(floorPlan.id, floorPlan);
 
-    // Create sample rooms
+    // Create sample rooms (添加storeId关联)
     const sampleRooms: Omit<Room, 'id' | 'createdAt' | 'updatedAt'>[] = [
       {
+        storeId: 1, // 常州购物中心
         roomNumber: "A-101",
         name: "Electronics Store",
         area: "120.00",
@@ -224,6 +312,7 @@ export class MemStorage implements IStorage {
         height: "15.00"
       },
       {
+        storeId: 1, // 常州购物中心
         roomNumber: "A-102",
         name: "Fashion Boutique",
         area: "150.00",
@@ -239,6 +328,7 @@ export class MemStorage implements IStorage {
         height: "15.00"
       },
       {
+        storeId: 1, // 常州购物中心
         roomNumber: "A-103",
         name: "Coffee Shop",
         area: "80.00",
@@ -254,6 +344,7 @@ export class MemStorage implements IStorage {
         height: "15.00"
       },
       {
+        storeId: 1, // 常州购物中心
         roomNumber: "A-104",
         name: "Vacant Space",
         area: "200.00",
@@ -269,6 +360,7 @@ export class MemStorage implements IStorage {
         height: "15.00"
       },
       {
+        storeId: 2, // 常州新世纪
         roomNumber: "B-201",
         name: "Department Store",
         area: "300.00",
@@ -284,6 +376,7 @@ export class MemStorage implements IStorage {
         height: "18.00"
       },
       {
+        storeId: 2, // 常州新世纪
         roomNumber: "B-202",
         name: "Bookstore",
         area: "90.00",
@@ -299,6 +392,7 @@ export class MemStorage implements IStorage {
         height: "18.00"
       },
       {
+        storeId: 2, // 常州新世纪
         roomNumber: "B-203",
         name: "Jewelry Store",
         area: "110.00",
@@ -314,6 +408,7 @@ export class MemStorage implements IStorage {
         height: "18.00"
       },
       {
+        storeId: 3, // 常州百货大楼
         roomNumber: "C-301",
         name: "Phone Repair",
         area: "45.00",
@@ -329,6 +424,7 @@ export class MemStorage implements IStorage {
         height: "12.00"
       },
       {
+        storeId: 3, // 常州百货大楼
         roomNumber: "C-302",
         name: "Gift Shop",
         area: "60.00",
@@ -344,6 +440,7 @@ export class MemStorage implements IStorage {
         height: "12.00"
       },
       {
+        storeId: 4, // 常州半山数据
         roomNumber: "C-303",
         name: "Shoe Store",
         area: "85.00",
@@ -359,6 +456,7 @@ export class MemStorage implements IStorage {
         height: "12.00"
       },
       {
+        storeId: 4, // 常州半山数据
         roomNumber: "C-304",
         name: "Small Space",
         area: "30.00",
@@ -437,6 +535,101 @@ export class MemStorage implements IStorage {
     };
     this.users.set(userId, user);
     return user;
+  }
+
+  // Store methods (门店管理)
+  async getAllStores(): Promise<Store[]> {
+    return Array.from(this.stores.values());
+  }
+
+  async getStore(storeId: number): Promise<Store | undefined> {
+    return this.stores.get(storeId);
+  }
+
+  async createStore(insertStore: InsertStore): Promise<Store> {
+    const storeId = Math.floor(Math.random() * 1000000);
+    const store: Store = {
+      ...insertStore,
+      storeId,
+      isActive: insertStore.isActive ?? true,
+      managerName: insertStore.managerName ?? null,
+      contactPhone: insertStore.contactPhone ?? null,
+      contactEmail: insertStore.contactEmail ?? null,
+      address: insertStore.address ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.stores.set(storeId, store);
+    return store;
+  }
+
+  async updateStore(storeId: number, storeUpdate: Partial<InsertStore>): Promise<Store> {
+    const existingStore = this.stores.get(storeId);
+    if (!existingStore) {
+      throw new Error(`Store with id ${storeId} not found`);
+    }
+    
+    const updatedStore: Store = {
+      ...existingStore,
+      ...storeUpdate,
+      updatedAt: new Date()
+    };
+    this.stores.set(storeId, updatedStore);
+    return updatedStore;
+  }
+
+  // Hall methods (厅房管理)
+  async getAllHalls(storeId?: number): Promise<Hall[]> {
+    const allHalls = Array.from(this.halls.values());
+    return storeId ? allHalls.filter(hall => hall.storeId === storeId) : allHalls;
+  }
+
+  async getHall(hallId: number): Promise<Hall | undefined> {
+    return this.halls.get(hallId);
+  }
+
+  async createHall(insertHall: InsertHall): Promise<Hall> {
+    const hallId = Math.floor(Math.random() * 1000000);
+    const hall: Hall = {
+      ...insertHall,
+      hallId,
+      isActive: insertHall.isActive ?? true,
+      floorId: insertHall.floorId ?? null,
+      monthlyRent: insertHall.monthlyRent ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.halls.set(hallId, hall);
+    return hall;
+  }
+
+  async updateHall(hallId: number, hallUpdate: Partial<InsertHall>): Promise<Hall> {
+    const existingHall = this.halls.get(hallId);
+    if (!existingHall) {
+      throw new Error(`Hall with id ${hallId} not found`);
+    }
+    
+    const updatedHall: Hall = {
+      ...existingHall,
+      ...hallUpdate,
+      updatedAt: new Date()
+    };
+    this.halls.set(hallId, updatedHall);
+    return updatedHall;
+  }
+
+  async searchHalls(query: string, storeId?: number): Promise<Hall[]> {
+    const lowerQuery = query.toLowerCase();
+    let halls = Array.from(this.halls.values());
+    
+    if (storeId) {
+      halls = halls.filter(hall => hall.storeId === storeId);
+    }
+    
+    return halls.filter(hall =>
+      hall.hallCode.toLowerCase().includes(lowerQuery) ||
+      hall.hallName.toLowerCase().includes(lowerQuery)
+    );
   }
 
   // Tenant methods
@@ -629,16 +822,23 @@ export class MemStorage implements IStorage {
   }
 
   // Room methods (legacy compatibility)
-  async getAllRooms(): Promise<Room[]> {
-    return Array.from(this.rooms.values());
+  async getAllRooms(storeId?: number): Promise<Room[]> {
+    const allRooms = Array.from(this.rooms.values());
+    return storeId ? allRooms.filter(room => room.storeId === storeId) : allRooms;
   }
 
   async getRoom(id: string): Promise<Room | undefined> {
     return this.rooms.get(id);
   }
 
-  async getRoomByNumber(roomNumber: string): Promise<Room | undefined> {
-    return Array.from(this.rooms.values()).find(room => room.roomNumber === roomNumber);
+  async getRoomByNumber(roomNumber: string, storeId?: number): Promise<Room | undefined> {
+    let rooms = Array.from(this.rooms.values());
+    
+    if (storeId) {
+      rooms = rooms.filter(room => room.storeId === storeId);
+    }
+    
+    return rooms.find((room) => room.roomNumber === roomNumber);
   }
 
   async createRoom(room: InsertRoom): Promise<Room> {
@@ -678,9 +878,15 @@ export class MemStorage implements IStorage {
     return this.rooms.delete(id);
   }
 
-  async searchRooms(query: string): Promise<Room[]> {
+  async searchRooms(query: string, storeId?: number): Promise<Room[]> {
     const lowerQuery = query.toLowerCase();
-    return Array.from(this.rooms.values()).filter(room =>
+    let rooms = Array.from(this.rooms.values());
+    
+    if (storeId) {
+      rooms = rooms.filter(room => room.storeId === storeId);
+    }
+    
+    return rooms.filter(room =>
       room.roomNumber.toLowerCase().includes(lowerQuery) ||
       room.name.toLowerCase().includes(lowerQuery) ||
       (room.tenant && room.tenant.toLowerCase().includes(lowerQuery))
@@ -688,12 +894,19 @@ export class MemStorage implements IStorage {
   }
 
   // Floor plan methods
-  async getAllFloorPlans(): Promise<FloorPlan[]> {
-    return Array.from(this.floorPlans.values());
+  async getAllFloorPlans(storeId?: number): Promise<FloorPlan[]> {
+    const allPlans = Array.from(this.floorPlans.values());
+    return storeId ? allPlans.filter(plan => plan.storeId === storeId) : allPlans;
   }
 
-  async getActiveFloorPlan(): Promise<FloorPlan | undefined> {
-    return Array.from(this.floorPlans.values()).find(plan => plan.isActive);
+  async getActiveFloorPlan(storeId?: number): Promise<FloorPlan | undefined> {
+    let plans = Array.from(this.floorPlans.values());
+    
+    if (storeId) {
+      plans = plans.filter(plan => plan.storeId === storeId);
+    }
+    
+    return plans.find(plan => plan.isActive);
   }
 
   async createFloorPlan(floorPlan: InsertFloorPlan): Promise<FloorPlan> {
@@ -747,13 +960,18 @@ export class MemStorage implements IStorage {
   }
 
   // Analytics methods
-  async getStats(): Promise<{
+  async getStats(storeId?: number): Promise<{
     totalRooms: number;
     occupied: number;
     vacant: number;
     avgRevenue: number;
   }> {
-    const rooms = Array.from(this.rooms.values());
+    let rooms = Array.from(this.rooms.values());
+    
+    if (storeId) {
+      rooms = rooms.filter(room => room.storeId === storeId);
+    }
+    
     const totalRooms = rooms.length;
     const occupied = rooms.filter(room => room.status === 'occupied').length;
     const vacant = rooms.filter(room => room.status === 'vacant').length;

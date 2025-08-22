@@ -29,10 +29,25 @@ export const rolePermissions = pgTable("role_permissions", {
   permissionCode: varchar("permission_code", { length: 50 }).notNull()
 });
 
-// ==================== 模块二：空间资产核心 ====================
+// ==================== 模块二：门店管理 ====================
+export const stores = pgTable("stores", {
+  storeId: integer("store_id").primaryKey().generatedByDefaultAsIdentity(),
+  storeName: varchar("store_name", { length: 100 }).notNull(),
+  storeCode: varchar("store_code", { length: 20 }).notNull().unique(),
+  address: text("address"),
+  managerName: varchar("manager_name", { length: 50 }),
+  contactPhone: varchar("contact_phone", { length: 20 }),
+  contactEmail: varchar("contact_email", { length: 100 }),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
+// ==================== 模块三：空间资产核心 ====================
 export const floors = pgTable("floors", {
   floorId: integer("floor_id").primaryKey().generatedByDefaultAsIdentity(),
-  floorName: varchar("floor_name", { length: 50 }).notNull().unique(),
+  storeId: integer("store_id").references(() => stores.storeId).notNull(),
+  floorName: varchar("floor_name", { length: 50 }).notNull(),
   displayOrder: integer("display_order").default(0),
   description: text("description"),
   createdAt: timestamp("created_at").defaultNow()
@@ -46,6 +61,21 @@ export const layouts = pgTable("layouts", {
   effectiveEndDate: date("effective_end_date"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow()
+});
+
+// 厅房管理 (原rooms表的现代化版本)
+export const halls = pgTable("halls", {
+  hallId: integer("hall_id").primaryKey().generatedByDefaultAsIdentity(),
+  storeId: integer("store_id").references(() => stores.storeId).notNull(),
+  hallCode: varchar("hall_code", { length: 50 }).notNull(),
+  hallName: varchar("hall_name", { length: 100 }).notNull(),
+  floorId: integer("floor_id").references(() => floors.floorId),
+  area: decimal("area", { precision: 10, scale: 2 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("vacant"), // vacant, occupied, maintenance
+  monthlyRent: decimal("monthly_rent", { precision: 12, scale: 2 }),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
 });
 
 export const spaceAssets = pgTable("space_assets", {
@@ -79,7 +109,7 @@ export const hotspots = pgTable("hotspots", {
   createdAt: timestamp("created_at").defaultNow()
 });
 
-// ==================== 模块三：商户与品牌 ====================
+// ==================== 模块四：商户与品牌 ====================
 export const tenants = pgTable("tenants", {
   tenantId: integer("tenant_id").primaryKey().generatedByDefaultAsIdentity(),
   companyName: varchar("company_name", { length: 255 }).notNull(),
@@ -106,7 +136,7 @@ export const brands = pgTable("brands", {
   createdAt: timestamp("created_at").defaultNow()
 });
 
-// ==================== 模块四：合同与财务 ====================
+// ==================== 模块五：合同与财务 ====================
 export const contracts = pgTable("contracts", {
   contractId: integer("contract_id").primaryKey().generatedByDefaultAsIdentity(),
   contractCode: varchar("contract_code", { length: 100 }).notNull().unique(),
@@ -153,10 +183,11 @@ export const bills = pgTable("bills", {
   updatedAt: timestamp("updated_at").defaultNow()
 });
 
-// ==================== 兼容性保持（原有表结构，用于向后兼容） ====================
+// ==================== 模块六：兼容性保持（原有表结构，用于向后兼容） ====================
 export const rooms = pgTable("rooms", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  roomNumber: text("room_number").notNull().unique(),
+  storeId: integer("store_id").references(() => stores.storeId), // 添加门店关联
+  roomNumber: text("room_number").notNull(),
   name: text("name").notNull(),
   area: decimal("area", { precision: 10, scale: 2 }).notNull(),
   tenant: text("tenant"),
@@ -175,6 +206,7 @@ export const rooms = pgTable("rooms", {
 
 export const floorPlans = pgTable("floor_plans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeId: integer("store_id").references(() => stores.storeId), // 添加门店关联
   name: text("name").notNull(),
   level: text("level").notNull(),
   imageUrl: text("image_url"),
@@ -196,10 +228,14 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Role = typeof roles.$inferSelect;
 export type NewRole = typeof roles.$inferInsert;
+export type Store = typeof stores.$inferSelect;
+export type NewStore = typeof stores.$inferInsert;
 export type Floor = typeof floors.$inferSelect;
 export type NewFloor = typeof floors.$inferInsert;
 export type Layout = typeof layouts.$inferSelect;
 export type NewLayout = typeof layouts.$inferInsert;
+export type Hall = typeof halls.$inferSelect;
+export type NewHall = typeof halls.$inferInsert;
 export type SpaceAsset = typeof spaceAssets.$inferSelect;
 export type NewSpaceAsset = typeof spaceAssets.$inferInsert;
 export type Hotspot = typeof hotspots.$inferSelect;
@@ -236,6 +272,13 @@ export const insertRoleSchema = createInsertSchema(roles).omit({
   createdAt: true
 });
 
+// 门店管理
+export const insertStoreSchema = createInsertSchema(stores).omit({
+  storeId: true,
+  createdAt: true,
+  updatedAt: true
+});
+
 // 空间资产
 export const insertFloorSchema = createInsertSchema(floors).omit({
   floorId: true,
@@ -245,6 +288,12 @@ export const insertFloorSchema = createInsertSchema(floors).omit({
 export const insertLayoutSchema = createInsertSchema(layouts).omit({
   layoutId: true,
   createdAt: true
+});
+
+export const insertHallSchema = createInsertSchema(halls).omit({
+  hallId: true,
+  createdAt: true,
+  updatedAt: true
 });
 
 export const insertSpaceAssetSchema = createInsertSchema(spaceAssets).omit({
@@ -308,8 +357,10 @@ export const insertActivitySchema = createInsertSchema(activities).omit({
 // 用于插入操作的类型
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type InsertStore = z.infer<typeof insertStoreSchema>;
 export type InsertFloor = z.infer<typeof insertFloorSchema>;
 export type InsertLayout = z.infer<typeof insertLayoutSchema>;
+export type InsertHall = z.infer<typeof insertHallSchema>;
 export type InsertSpaceAsset = z.infer<typeof insertSpaceAssetSchema>;
 export type InsertHotspot = z.infer<typeof insertHotspotSchema>;
 export type InsertTenant = z.infer<typeof insertTenantSchema>;

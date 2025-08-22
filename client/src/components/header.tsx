@@ -9,9 +9,10 @@ import type { UploadResult } from '@uppy/core';
 interface HeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  selectedStoreId?: number;
 }
 
-export default function Header({ searchQuery, onSearchChange }: HeaderProps) {
+export default function Header({ searchQuery, onSearchChange, selectedStoreId }: HeaderProps) {
   const { toast } = useToast();
 
   const handleGetUploadParameters = async () => {
@@ -66,6 +67,11 @@ export default function Header({ searchQuery, onSearchChange }: HeaderProps) {
             </div>
             <h1 className="text-xl font-semibold text-slate-900" data-testid="text-app-title">
               商场分析仪表板
+              {selectedStoreId && (
+                <span className="text-sm font-normal text-slate-500 ml-2">
+                  (门店ID: {selectedStoreId})
+                </span>
+              )}
             </h1>
           </div>
         </div>
