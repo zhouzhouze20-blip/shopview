@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Link, useLocation } from "wouter";
@@ -73,122 +73,128 @@ export default function StoresPage() {
         </div>
       </div>
 
-      {/* 门店网格 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-        {stores?.map((store) => {
-          const stats = statsData?.[store.storeId];
-          const occupancyRate = stats ? Math.round((stats.occupied / stats.totalRooms) * 100) : 0;
-          
-          return (
-            <Card 
-              key={store.storeId} 
-              className="hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-l-blue-500"
-              onClick={() => handleStoreSelect(store.storeId)}
-              data-testid={`store-card-${store.storeId}`}
-            >
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xl flex items-center gap-2">
-                    <Building2 className="h-5 w-5 text-blue-600" />
-                    {store.storeName}
-                  </CardTitle>
-                  <Badge variant={store.isActive ? "default" : "secondary"}>
-                    {store.isActive ? "运营中" : "暂停"}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  门店代码: {store.storeCode}
-                </p>
-              </CardHeader>
-
-              <CardContent className="space-y-4">
-                {/* 门店地址 */}
-                {store.address && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <MapPin className="h-4 w-4 text-gray-500" />
-                    <span>{store.address}</span>
-                  </div>
-                )}
-
-                {/* 联系信息 */}
-                <div className="space-y-2">
-                  {store.managerName && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <User className="h-4 w-4 text-gray-500" />
-                      <span>负责人: {store.managerName}</span>
-                    </div>
-                  )}
-                  {store.contactPhone && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <Phone className="h-4 w-4 text-gray-500" />
-                      <span>{store.contactPhone}</span>
-                    </div>
-                  )}
-                  {store.contactEmail && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <Mail className="h-4 w-4 text-gray-500" />
-                      <span className="text-blue-600">{store.contactEmail}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 运营统计 */}
-                {stats && !isLoadingStats ? (
-                  <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-2">
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600">总厅房数</span>
-                      <span className="font-medium">{stats.totalRooms}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600">出租率</span>
-                      <span className="font-medium text-green-600">
-                        {occupancyRate}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600">已租/空置</span>
-                      <span className="font-medium">
-                        {stats.occupied} / {stats.vacant}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600">平均收益</span>
-                      <span className="font-medium">¥{stats.avgRevenue.toLocaleString()}</span>
-                    </div>
-                  </div>
-                ) : isLoadingStats ? (
-                  <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 text-center text-sm text-gray-500">
-                    加载统计数据中...
-                  </div>
-                ) : null}
-
-                {/* 操作按钮 */}
-                <div className="flex gap-2 pt-2">
-                  <Button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStoreSelect(store.storeId);
-                    }}
-                    className="flex-1"
-                    data-testid={`button-enter-store-${store.storeId}`}
-                  >
-                    进入管理
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLocation(`/dashboard?storeId=${store.storeId}&view=rooms`);
-                    }}
-                    data-testid={`button-view-rooms-${store.storeId}`}
-                  >
-                    查看厅房
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* 门店表格 */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+        {stores && stores.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>门店名称</TableHead>
+                <TableHead>门店代码</TableHead>
+                <TableHead>地址</TableHead>
+                <TableHead>负责人</TableHead>
+                <TableHead>联系方式</TableHead>
+                <TableHead>总厅房数</TableHead>
+                <TableHead>出租率</TableHead>
+                <TableHead>平均收益</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {stores.map((store) => {
+                const stats = statsData?.[store.storeId];
+                const occupancyRate = stats ? Math.round((stats.occupied / stats.totalRooms) * 100) : 0;
+                
+                return (
+                  <TableRow key={store.storeId} data-testid={`row-store-${store.storeId}`}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-blue-600" />
+                        {store.storeName}
+                      </div>
+                    </TableCell>
+                    <TableCell>{store.storeCode}</TableCell>
+                    <TableCell className="max-w-xs">
+                      <div className="truncate" title={store.address || ''}>
+                        {store.address ? (
+                          <div className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-gray-500" />
+                            <span>{store.address}</span>
+                          </div>
+                        ) : '-'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {store.managerName ? (
+                        <div className="flex items-center gap-1">
+                          <User className="h-3 w-3 text-gray-500" />
+                          <span>{store.managerName}</span>
+                        </div>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1 text-xs">
+                        {store.contactPhone && (
+                          <div className="flex items-center gap-1">
+                            <Phone className="h-3 w-3 text-gray-500" />
+                            <span>{store.contactPhone}</span>
+                          </div>
+                        )}
+                        {store.contactEmail && (
+                          <div className="flex items-center gap-1">
+                            <Mail className="h-3 w-3 text-gray-500" />
+                            <span className="text-blue-600">{store.contactEmail}</span>
+                          </div>
+                        )}
+                        {!store.contactPhone && !store.contactEmail && '-'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {stats && !isLoadingStats ? stats.totalRooms : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {stats && !isLoadingStats ? (
+                        <span className="font-medium text-green-600">
+                          {occupancyRate}%
+                        </span>
+                      ) : isLoadingStats ? (
+                        <span className="text-gray-500">加载中...</span>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {stats && !isLoadingStats ? (
+                        <span className="font-medium">
+                          ¥{stats.avgRevenue.toLocaleString()}
+                        </span>
+                      ) : isLoadingStats ? (
+                        <span className="text-gray-500">加载中...</span>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={store.isActive ? "default" : "secondary"}>
+                        {store.isActive ? "运营中" : "暂停"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-2 justify-end">
+                        <Button 
+                          size="sm"
+                          onClick={() => handleStoreSelect(store.storeId)}
+                          data-testid={`button-enter-store-${store.storeId}`}
+                        >
+                          进入管理
+                        </Button>
+                        <Button 
+                          size="sm"
+                          variant="outline" 
+                          onClick={() => setLocation(`/dashboard?storeId=${store.storeId}&view=rooms`)}
+                          data-testid={`button-view-rooms-${store.storeId}`}
+                        >
+                          查看厅房
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : (
+          <div className="p-8 text-center">
+            <div className="text-lg text-slate-500">暂无门店数据</div>
+          </div>
+        )}
       </div>
 
       {/* 空状态 */}
