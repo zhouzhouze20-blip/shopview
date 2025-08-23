@@ -68,10 +68,7 @@ export default function CountersPage() {
 
   // Mutations
   const createCounterMutation = useMutation({
-    mutationFn: (data: InsertCounter) => apiRequest('/api/counters', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+    mutationFn: (data: InsertCounter) => apiRequest('POST', '/api/counters', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/counters'] });
       toast({ title: "柜位创建成功", description: "新柜位已成功添加到系统中" });
@@ -89,10 +86,7 @@ export default function CountersPage() {
 
   const updateCounterMutation = useMutation({
     mutationFn: ({ counterId, data }: { counterId: number; data: Partial<InsertCounter> }) => 
-      apiRequest(`/api/counters/${counterId}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      }),
+      apiRequest('PUT', `/api/counters/${counterId}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/counters'] });
       toast({ title: "柜位更新成功", description: "柜位信息已成功更新" });
@@ -110,9 +104,7 @@ export default function CountersPage() {
   });
 
   const deleteCounterMutation = useMutation({
-    mutationFn: (counterId: number) => apiRequest(`/api/counters/${counterId}`, {
-      method: 'DELETE',
-    }),
+    mutationFn: (counterId: number) => apiRequest('DELETE', `/api/counters/${counterId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/counters'] });
       toast({ title: "柜位删除成功", description: "柜位已从系统中移除" });
