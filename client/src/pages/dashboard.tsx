@@ -33,7 +33,7 @@ export default function Dashboard({ selectedStoreId }: DashboardProps) {
       />
       
       <div className="flex h-screen overflow-hidden">
-        <Sidebar data-testid="sidebar" />
+        <Sidebar selectedRoom={selectedRoom} data-testid="sidebar" />
         
         <main className="flex-1 overflow-hidden" data-testid="main-content">
           <div className="h-full flex flex-col">
@@ -60,117 +60,14 @@ export default function Dashboard({ selectedStoreId }: DashboardProps) {
               </div>
             </div>
 
-            <div className="flex-1 flex bg-slate-50">
-              {/* 左侧详细信息面板 */}
-              <div className="w-80 p-4 bg-white border-r border-slate-200">
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold text-slate-900">图例说明</h3>
-                  
-                  {/* 图例 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-green-200 border border-green-400 rounded"></div>
-                      <span className="text-sm text-slate-600">已占用</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-red-200 border border-red-400 rounded"></div>
-                      <span className="text-sm text-slate-600">空置</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-yellow-200 border border-yellow-400 rounded"></div>
-                      <span className="text-sm text-slate-600">维护中</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-green-100 border-2 border-green-500 rounded"></div>
-                      <span className="text-sm text-slate-600">用户标记房间</span>
-                    </div>
-                  </div>
-                  
-                  {/* 房间详细信息 */}
-                  {selectedRoom ? (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">房间详细信息</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">房间号</label>
-                          <p className="text-sm text-slate-900">{selectedRoom.roomNumber}</p>
-                        </div>
-                        
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">房间名称</label>
-                          <p className="text-sm text-slate-900">{selectedRoom.name}</p>
-                        </div>
-                        
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">面积</label>
-                          <p className="text-sm text-slate-900">{selectedRoom.area} m²</p>
-                        </div>
-                        
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">状态</label>
-                          <div className="mt-1">
-                            <Badge 
-                              variant={selectedRoom.status === 'occupied' ? 'default' : 
-                                      selectedRoom.status === 'vacant' ? 'destructive' : 'secondary'}
-                            >
-                              {selectedRoom.status === 'occupied' ? '已占用' : 
-                               selectedRoom.status === 'vacant' ? '空置' : '维护中'}
-                            </Badge>
-                          </div>
-                        </div>
-                        
-                        {selectedRoom.tenant && (
-                          <div>
-                            <label className="text-sm font-medium text-slate-600">租户</label>
-                            <p className="text-sm text-slate-900">{selectedRoom.tenant}</p>
-                          </div>
-                        )}
-                        
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">月收入</label>
-                          <p className="text-sm text-slate-900">¥{parseFloat(selectedRoom.monthlyRevenue).toLocaleString()}</p>
-                        </div>
-                        
-                        <div>
-                          <label className="text-sm font-medium text-slate-600">单价/m²</label>
-                          <p className="text-sm text-slate-900">¥{parseFloat(selectedRoom.revenuePerSqm).toLocaleString()}</p>
-                        </div>
-                        
-                        {selectedRoom.leaseExpiry && (
-                          <div>
-                            <label className="text-sm font-medium text-slate-600">租期到期</label>
-                            <p className="text-sm text-slate-900">{new Date(selectedRoom.leaseExpiry).toLocaleDateString('zh-CN')}</p>
-                          </div>
-                        )}
-                        
-                        {selectedRoom.contractType && (
-                          <div>
-                            <label className="text-sm font-medium text-slate-600">合同类型</label>
-                            <p className="text-sm text-slate-900">{selectedRoom.contractType}</p>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <div className="text-center py-8">
-                      <p className="text-sm text-slate-500">点击房间查看详细信息</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* 右侧平面图 */}
-              <div className="flex-1 p-6">
-                <FloorPlan 
-                  onRoomClick={handleRoomClick}
-                  viewMode={viewMode}
-                  searchQuery={searchQuery}
-                  selectedStoreId={selectedStoreId}
-                  data-testid="floor-plan"
-                />
-              </div>
+            <div className="flex-1 p-6 bg-slate-50">
+              <FloorPlan 
+                onRoomClick={handleRoomClick}
+                viewMode={viewMode}
+                searchQuery={searchQuery}
+                selectedStoreId={selectedStoreId}
+                data-testid="floor-plan"
+              />
             </div>
           </div>
         </main>

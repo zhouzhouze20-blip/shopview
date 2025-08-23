@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Room } from "@shared/schema";
 
 interface Stats {
   totalRooms: number;
@@ -16,6 +18,10 @@ interface Activity {
   createdAt: string;
 }
 
+interface SidebarProps {
+  selectedRoom?: Room | null;
+}
+
 function formatTimeAgo(dateString: string) {
   const date = new Date(dateString);
   const now = new Date();
@@ -27,7 +33,7 @@ function formatTimeAgo(dateString: string) {
   return `${diffInDays} day${diffInDays > 1 ? 's' : ''} ago`;
 }
 
-export default function Sidebar() {
+export default function Sidebar({ selectedRoom }: SidebarProps) {
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ["/api/stats"]
   });
@@ -124,41 +130,120 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <div className="p-6 flex-1">
-        <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-recent-activity">
-          最近活动
-        </h3>
-        <div className="space-y-3">
-          {activitiesLoading ? (
-            <>
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-            </>
-          ) : activities && activities.length > 0 ? (
-            activities.map((activity) => (
-              <div key={activity.id} className="flex items-start space-x-3" data-testid={`activity-${activity.id}`}>
-                <div className={`w-2 h-2 rounded-full mt-2 ${
-                  activity.type === 'lease_renewal' ? 'bg-primary' :
-                  activity.type === 'payment_received' ? 'bg-success' :
-                  'bg-warning'
-                }`}></div>
-                <div className="flex-1">
-                  <div className="text-sm text-slate-900" data-testid={`text-activity-description-${activity.id}`}>
-                    {activity.description}
-                  </div>
-                  <div className="text-xs text-slate-500" data-testid={`text-activity-time-${activity.id}`}>
-                    {formatTimeAgo(activity.createdAt)}
-                  </div>
+      {/* 房间详细信息 */}
+      {selectedRoom && (
+        <div className="p-6 border-b border-slate-200">
+          <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-room-details">
+            房间详细信息
+          </h3>
+          <Card>
+            <CardContent className="pt-4 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-600">房间号</label>
+                <p className="text-sm text-slate-900 font-medium">{selectedRoom.roomNumber}</p>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600">房间名称</label>
+                <p className="text-sm text-slate-900">{selectedRoom.name}</p>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600">面积</label>
+                <p className="text-sm text-slate-900">{selectedRoom.area} m²</p>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600">状态</label>
+                <div className="mt-1">
+                  <Badge 
+                    variant={selectedRoom.status === 'occupied' ? 'default' : 
+                            selectedRoom.status === 'vacant' ? 'destructive' : 'secondary'}
+                    className="text-xs"
+                  >
+                    {selectedRoom.status === 'occupied' ? '已占用' : 
+                     selectedRoom.status === 'vacant' ? '空置' : '维护中'}
+                  </Badge>
                 </div>
               </div>
-            ))
-          ) : (
-            <div className="text-sm text-slate-500" data-testid="text-no-activities">
-              暂无最近活动
-            </div>
-          )}
+              
+              {selectedRoom.tenant && (
+                <div>
+                  <label className="text-xs font-medium text-slate-600">租户</label>
+                  <p className="text-sm text-slate-900">{selectedRoom.tenant}</p>
+                </div>
+              )}
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600">月收入</label>
+                <p className="text-sm text-slate-900 font-semibold text-green-600">¥{parseFloat(selectedRoom.monthlyRevenue).toLocaleString()}</p>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600">单价/m²</label>
+                <p className="text-sm text-slate-900">¥{parseFloat(selectedRoom.revenuePerSqm).toLocaleString()}</p>
+              </div>
+              
+              {selectedRoom.leaseExpiry && (
+                <div>
+                  <label className="text-xs font-medium text-slate-600">租期到期</label>
+                  <p className="text-sm text-slate-900">{new Date(selectedRoom.leaseExpiry).toLocaleDateString('zh-CN')}</p>
+                </div>
+              )}
+              
+              {selectedRoom.contractType && (
+                <div>
+                  <label className="text-xs font-medium text-slate-600">合同类型</label>
+                  <p className="text-sm text-slate-900">{selectedRoom.contractType}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
+      )}
+
+      <div className="p-6 flex-1">
+        <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-recent-activity">
+          {selectedRoom ? '最近活动' : '点击房间查看详情'}
+        </h3>
+        {!selectedRoom ? (
+          <div className="text-center py-8">
+            <p className="text-sm text-slate-500">在平面图中点击任意房间</p>
+            <p className="text-sm text-slate-500">查看详细信息</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {activitiesLoading ? (
+              <>
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </>
+            ) : activities && activities.length > 0 ? (
+              activities.map((activity) => (
+                <div key={activity.id} className="flex items-start space-x-3" data-testid={`activity-${activity.id}`}>
+                  <div className={`w-2 h-2 rounded-full mt-2 ${
+                    activity.type === 'lease_renewal' ? 'bg-primary' :
+                    activity.type === 'payment_received' ? 'bg-success' :
+                    'bg-warning'
+                  }`}></div>
+                  <div className="flex-1">
+                    <div className="text-sm text-slate-900" data-testid={`text-activity-description-${activity.id}`}>
+                      {activity.description}
+                    </div>
+                    <div className="text-xs text-slate-500" data-testid={`text-activity-time-${activity.id}`}>
+                      {formatTimeAgo(activity.createdAt)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-sm text-slate-500" data-testid="text-no-activities">
+                暂无最近活动
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
