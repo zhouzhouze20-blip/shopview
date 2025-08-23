@@ -651,10 +651,6 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
           drawingType !== 'none' ? 'cursor-crosshair' : 'cursor-default'
         }`}
         style={{
-          backgroundImage: (floorPlan as any)?.imageUrl ? `url(${window.location.origin}${(floorPlan as any).imageUrl})` : "url('https://images.unsplash.com/photo-1600585154526-990dced4db0d?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=1920&h=1080')",
-          backgroundSize: 'contain',
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'center',
           transform: `scale(${zoom})`
         }}
         onMouseDown={handleMouseDown}
@@ -662,6 +658,21 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
         onMouseUp={handleMouseUp}
         data-testid="floor-plan-background"
       >
+        {/* SVG平面图 */}
+        {floorPlan?.svgContent ? (
+          <div 
+            className="absolute inset-0 w-full h-full"
+            dangerouslySetInnerHTML={{ __html: floorPlan.svgContent }}
+            style={{ pointerEvents: 'none' }}
+          />
+        ) : (
+          <div className="absolute inset-0 w-full h-full bg-gray-200 flex items-center justify-center">
+            <div className="text-gray-500 text-center">
+              <div>暂无平面图</div>
+              <div className="text-sm mt-2">请上传楼层平面图</div>
+            </div>
+          </div>
+        )}
         {/* 虚拟房间覆盖层 */}
         {showRoomOverlays && filteredRooms.map((room) => {
           const colors = getRoomColor(room);
