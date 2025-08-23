@@ -51,7 +51,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     }
   });
 
-  const { data: floorPlan } = useQuery<{id: string, svgContent: string}>({
+  const { data: floorPlan } = useQuery<{id: string, imageUrl: string}>({
     queryKey: ["/api/floor-plans/active"],
     queryFn: async () => {
       const response = await fetch('/api/floor-plans/active');
@@ -658,12 +658,16 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
         onMouseUp={handleMouseUp}
         data-testid="floor-plan-background"
       >
-        {/* SVG平面图 */}
-        {floorPlan?.svgContent ? (
+        {/* 楼层平面图背景 */}
+        {floorPlan?.imageUrl ? (
           <div 
             className="absolute inset-0 w-full h-full"
-            dangerouslySetInnerHTML={{ __html: floorPlan.svgContent }}
-            style={{ pointerEvents: 'none' }}
+            style={{
+              backgroundImage: `url(${floorPlan.imageUrl})`,
+              backgroundSize: 'contain',
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'center'
+            }}
           />
         ) : (
           <div className="absolute inset-0 w-full h-full bg-gray-200 flex items-center justify-center">
