@@ -1262,6 +1262,7 @@ export class MemStorage implements IStorage {
       type: markedRoom.type || "rectangle",
       storeId: markedRoom.storeId ?? null,
       floorPlanId: markedRoom.floorPlanId ?? null,
+      counterId: markedRoom.counterId ?? null,
       width: markedRoom.width ?? null,
       height: markedRoom.height ?? null,
       polygonPoints: markedRoom.polygonPoints ?? null,
@@ -1285,6 +1286,63 @@ export class MemStorage implements IStorage {
     };
     this.userMarkedRooms.set(id, updatedRoom);
     return updatedRoom;
+  }
+
+  // 根据柜位号关联标记房间
+  async linkMarkedRoomToCounter(markedRoomId: string, counterNumber: string, storeId?: number): Promise<UserMarkedRoom | null> {
+    const markedRoom = this.userMarkedRooms.get(markedRoomId);
+    if (!markedRoom) {
+      return null;
+    }
+
+    // 查找匹配的柜位
+    const counters = Array.from(this.counters.values());
+    const matchingCounter = counters.find(counter => 
+      counter.counterNumber === counterNumber && 
+      (!storeId || counter.storeId === storeId)
+    );
+
+    if (!matchingCounter) {
+      return null;
+    }
+
+    // 更新标记房间，关联柜位
+    const updatedRoom: UserMarkedRoom = {
+      ...markedRoom,
+      counterId: matchingCounter.counterId,
+      updatedAt: new Date()
+    };
+    this.userMarkedRooms.set(markedRoomId, updatedRoom);
+    return updatedRoom;
+  }
+
+  // 自动关联同名的柜位和标记房间
+  async autoLinkCountersToMarkedRooms(storeId?: number): Promise<{ linked: number; total: number }> {
+    let linkedCount = 0;
+    const markedRooms = Array.from(this.userMarkedRooms.values());
+    const counters = Array.from(this.counters.values());
+
+    for (const markedRoom of markedRooms) {
+      if (storeId && markedRoom.storeId !== storeId) continue;
+      if (markedRoom.counterId) continue; // 已经关联
+
+      const matchingCounter = counters.find(counter => 
+        counter.counterNumber === markedRoom.name &&
+        (!storeId || counter.storeId === storeId)
+      );
+
+      if (matchingCounter) {
+        const updatedRoom: UserMarkedRoom = {
+          ...markedRoom,
+          counterId: matchingCounter.counterId,
+          updatedAt: new Date()
+        };
+        this.userMarkedRooms.set(markedRoom.id, updatedRoom);
+        linkedCount++;
+      }
+    }
+
+    return { linked: linkedCount, total: markedRooms.length };
   }
 
   async deleteUserMarkedRoom(id: string): Promise<void> {

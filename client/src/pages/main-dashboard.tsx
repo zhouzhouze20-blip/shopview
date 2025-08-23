@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -273,48 +274,106 @@ function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
       <div className="mb-8">
         <div className="bg-white rounded-lg shadow-sm border border-slate-200">
           <div className="p-4 border-b border-slate-200">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-blue-600" />
-              用户标记的厅房
-            </h2>
-            <p className="text-sm text-slate-600 mt-1">在楼层平面图中绘制的厅房</p>
-          </div>
-          <div className="divide-y divide-slate-200">
-            {markedRooms && markedRooms.length > 0 ? (
-              markedRooms.map((room: any) => (
-                <div key={room.id} className="p-4 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold text-blue-600">{room.name}</h3>
-                    <p className="text-sm text-slate-600">
-                      类型: {room.type === 'rectangle' ? '矩形' : '多边形'}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      位置: ({parseFloat(room.x).toFixed(1)}%, {parseFloat(room.y).toFixed(1)}%)
-                    </p>
-                    {room.width && room.height && (
-                      <p className="text-sm text-slate-500">
-                        尺寸: {parseFloat(room.width).toFixed(1)}% × {parseFloat(room.height).toFixed(1)}%
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                      用户绘制
-                    </Badge>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {new Date(room.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-8 text-center text-slate-500">
-                <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
-                <p>暂无用户标记的厅房</p>
-                <p className="text-sm mt-1">在楼层平面图中绘制厅房后会在这里显示</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-blue-600" />
+                  用户标记的厅房
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">在楼层平面图中绘制的厅房</p>
               </div>
-            )}
+              <Button 
+                onClick={async () => {
+                  try {
+                    const response = await fetch("/api/marked-rooms/auto-link", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ storeId: selectedStoreId }),
+                    });
+                    const result = await response.json();
+                    if (response.ok) {
+                      toast({
+                        title: "关联成功",
+                        description: `成功关联 ${result.linked} 个厅房`,
+                      });
+                      // 刷新数据
+                      window.location.reload();
+                    } else {
+                      throw new Error(result.error);
+                    }
+                  } catch (error) {
+                    toast({
+                      title: "关联失败",
+                      description: "自动关联过程中发生错误",
+                      variant: "destructive",
+                    });
+                  }
+                }}
+                size="sm"
+                data-testid="button-auto-link"
+              >
+                <Building2 className="w-4 h-4 mr-2" />
+                自动关联柜位
+              </Button>
+            </div>
           </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>厅房名称</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>位置</TableHead>
+                <TableHead>尺寸</TableHead>
+                <TableHead>关联柜位</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>创建时间</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {markedRooms && markedRooms.length > 0 ? (
+                markedRooms.map((room: any) => (
+                  <TableRow key={room.id}>
+                    <TableCell className="font-medium text-blue-600">{room.name}</TableCell>
+                    <TableCell>{room.type === 'rectangle' ? '矩形' : '多边形'}</TableCell>
+                    <TableCell>
+                      ({parseFloat(room.x).toFixed(1)}%, {parseFloat(room.y).toFixed(1)}%)
+                    </TableCell>
+                    <TableCell>
+                      {room.width && room.height 
+                        ? `${parseFloat(room.width).toFixed(1)}% × ${parseFloat(room.height).toFixed(1)}%`
+                        : '-'
+                      }
+                    </TableCell>
+                    <TableCell>
+                      {room.counterId ? (
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                          ✓ 已关联
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
+                          未关联
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                        用户绘制
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{new Date(room.createdAt).toLocaleDateString()}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                    <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                    <p>暂无用户标记的厅房</p>
+                    <p className="text-sm mt-1">在楼层平面图中绘制厅房后会在这里显示</p>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </div>
       </div>
 
@@ -327,40 +386,50 @@ function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
           </h2>
           <p className="text-sm text-slate-600 mt-1">系统预定义的厅房</p>
         </div>
-        <div className="divide-y divide-slate-200">
-          {halls && halls.length > 0 ? (
-            halls.map((hall: any) => (
-              <div key={hall.hallId} className="p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-green-600">{hall.hallName}</h3>
-                  <p className="text-sm text-slate-600">
-                    编号: {hall.hallCode} | 面积: {parseFloat(hall.area).toFixed(0)} m²
-                  </p>
-                  <p className="text-sm text-slate-500">
-                    月租金: ¥{hall.monthlyRent ? parseFloat(hall.monthlyRent).toLocaleString() : '未设定'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <Badge 
-                    variant={hall.status === 'occupied' ? 'default' : hall.status === 'vacant' ? 'secondary' : 'outline'}
-                    className={
-                      hall.status === 'occupied' ? 'bg-green-100 text-green-800 border-green-200' :
-                      hall.status === 'vacant' ? 'bg-gray-100 text-gray-800 border-gray-200' :
-                      'bg-yellow-100 text-yellow-800 border-yellow-200'
-                    }
-                  >
-                    {hall.status === 'occupied' ? '已占用' : hall.status === 'vacant' ? '空闲' : '维护中'}
-                  </Badge>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="p-8 text-center text-slate-500">
-              <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
-              <p>暂无系统厅房数据</p>
-            </div>
-          )}
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>厅房名称</TableHead>
+              <TableHead>编号</TableHead>
+              <TableHead>面积</TableHead>
+              <TableHead>月租金</TableHead>
+              <TableHead>状态</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {halls && halls.length > 0 ? (
+              halls.map((hall: any) => (
+                <TableRow key={hall.hallId}>
+                  <TableCell className="font-medium text-green-600">{hall.hallName}</TableCell>
+                  <TableCell>{hall.hallCode}</TableCell>
+                  <TableCell>{parseFloat(hall.area).toFixed(0)} m²</TableCell>
+                  <TableCell>
+                    ¥{hall.monthlyRent ? parseFloat(hall.monthlyRent).toLocaleString() : '未设定'}
+                  </TableCell>
+                  <TableCell>
+                    <Badge 
+                      variant={hall.status === 'occupied' ? 'default' : hall.status === 'vacant' ? 'secondary' : 'outline'}
+                      className={
+                        hall.status === 'occupied' ? 'bg-green-100 text-green-800 border-green-200' :
+                        hall.status === 'vacant' ? 'bg-gray-100 text-gray-800 border-gray-200' :
+                        'bg-yellow-100 text-yellow-800 border-yellow-200'
+                      }
+                    >
+                      {hall.status === 'occupied' ? '已占用' : hall.status === 'vacant' ? '空闲' : '维护中'}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center py-8 text-slate-500">
+                  <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                  <p>暂无系统厅房数据</p>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

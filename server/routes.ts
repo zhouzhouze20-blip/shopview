@@ -493,6 +493,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 关联柜位和标记房间
+  app.post("/api/marked-rooms/:id/link-counter", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { counterNumber, storeId } = req.body;
+      
+      const updatedRoom = await storage.linkMarkedRoomToCounter(
+        id, 
+        counterNumber, 
+        storeId ? parseInt(storeId) : undefined
+      );
+      
+      if (!updatedRoom) {
+        return res.status(404).json({ error: "房间或柜位未找到" });
+      }
+      
+      res.json(updatedRoom);
+    } catch (error) {
+      console.error("Error linking counter to marked room:", error);
+      res.status(500).json({ error: "关联失败" });
+    }
+  });
+
+  // 自动关联同名的柜位和标记房间
+  app.post("/api/marked-rooms/auto-link", async (req, res) => {
+    try {
+      const { storeId } = req.body;
+      const result = await storage.autoLinkCountersToMarkedRooms(
+        storeId ? parseInt(storeId) : undefined
+      );
+      res.json(result);
+    } catch (error) {
+      console.error("Error auto-linking counters:", error);
+      res.status(500).json({ error: "自动关联失败" });
+    }
+  });
+
   // ==================== 楼层平面图管理 API ====================
   app.get("/api/floor-plans", async (req, res) => {
     try {

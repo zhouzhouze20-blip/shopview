@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -470,77 +471,83 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
         </Card>
       </div>
 
-      {/* Counters List */}
-      {isLoading ? (
-        <div className="text-center py-8">
-          <p className="text-slate-600">加载中...</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredCounters.map((counter) => (
-            <Card key={counter.counterId} className="hover:shadow-md transition-shadow" data-testid={`card-counter-${counter.counterId}`}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">{counter.counterNumber}</CardTitle>
-                  <Badge className={getStatusColor(counter.status)}>
-                    {getStatusText(counter.status)}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">部门:</span>
-                    <span className="font-medium">{counter.department}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">位置:</span>
-                    <span className="font-medium">{counter.building} - {counter.floor}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">面积:</span>
-                    <span className="font-medium">{counter.area} m²</span>
-                  </div>
-                  {counter.monthlyRent && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">月租金:</span>
-                      <span className="font-medium">¥{counter.monthlyRent}</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="flex gap-2 mt-4">
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={() => startEdit(counter)}
-                    data-testid={`button-edit-${counter.counterId}`}
-                  >
-                    <Edit className="w-3 h-3 mr-1" />
-                    编辑
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={() => deleteCounterMutation.mutate(counter.counterId)}
-                    disabled={deleteCounterMutation.isPending}
-                    data-testid={`button-delete-${counter.counterId}`}
-                  >
-                    <Trash2 className="w-3 h-3 mr-1" />
-                    删除
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {filteredCounters.length === 0 && !isLoading && (
-        <div className="text-center py-8">
-          <p className="text-slate-600">暂无柜位数据</p>
-        </div>
-      )}
+      {/* Counters Table */}
+      <div className="bg-white rounded-lg border border-slate-200">
+        {isLoading ? (
+          <div className="text-center py-8">
+            <p className="text-slate-600">加载中...</p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>柜位号</TableHead>
+                <TableHead>部门</TableHead>
+                <TableHead>位置</TableHead>
+                <TableHead>面积</TableHead>
+                <TableHead>月租金</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>描述</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredCounters.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                    暂无柜位数据
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredCounters.map((counter) => (
+                  <TableRow key={counter.counterId} data-testid={`row-counter-${counter.counterId}`}>
+                    <TableCell className="font-medium">{counter.counterNumber}</TableCell>
+                    <TableCell>{counter.department}</TableCell>
+                    <TableCell>{counter.building} - {counter.floor}</TableCell>
+                    <TableCell>{counter.area} m²</TableCell>
+                    <TableCell>
+                      {counter.monthlyRent ? `¥${parseFloat(counter.monthlyRent).toLocaleString()}` : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getStatusColor(counter.status)}>
+                        {getStatusText(counter.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="max-w-xs">
+                      <div className="truncate" title={counter.description || ''}>
+                        {counter.description || '-'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-2 justify-end">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => startEdit(counter)}
+                          data-testid={`button-edit-${counter.counterId}`}
+                        >
+                          <Edit className="w-3 h-3 mr-1" />
+                          编辑
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => deleteCounterMutation.mutate(counter.counterId)}
+                          disabled={deleteCounterMutation.isPending}
+                          data-testid={`button-delete-${counter.counterId}`}
+                        >
+                          <Trash2 className="w-3 h-3 mr-1" />
+                          删除
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </div>
     </div>
   );
 }

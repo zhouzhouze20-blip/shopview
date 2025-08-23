@@ -254,6 +254,7 @@ export const userMarkedRooms = pgTable("user_marked_rooms", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   storeId: integer("store_id").references(() => stores.storeId),
   floorPlanId: varchar("floor_plan_id").references(() => floorPlans.id),
+  counterId: integer("counter_id").references(() => counters.counterId), // 关联柜位
   name: text("name").notNull(),
   type: text("type").notNull().default("rectangle"), // rectangle, polygon
   x: decimal("x", { precision: 10, scale: 2 }).notNull(),
