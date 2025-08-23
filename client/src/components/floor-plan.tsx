@@ -111,21 +111,55 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     }
   }, [rooms, searchQuery]);
 
-  // 加载保存的标记厅房
+  // 加载保存的标记厅房并动态更新名称
   useEffect(() => {
-    if (markedRooms && Array.isArray(markedRooms)) {
-      const convertedRooms: RoomSelection[] = markedRooms.map((room: any) => ({
-        id: room.id,
-        x: parseFloat(room.x),
-        y: parseFloat(room.y), 
-        width: parseFloat(room.width),
-        height: parseFloat(room.height),
-        name: room.name,
-        type: room.type,
-        points: room.polygonPoints || undefined
-      }));
-      setUserRooms(convertedRooms);
-    }
+    const updateRoomsWithCounterInfo = async () => {
+      if (markedRooms && Array.isArray(markedRooms)) {
+        const convertedRooms: RoomSelection[] = await Promise.all(
+          markedRooms.map(async (room: any) => {
+            let displayName = room.name;
+            
+            // 如果有关联的柜位，获取最新的柜位信息
+            if (room.counterId) {
+              try {
+                const response = await fetch(`/api/counters?counterId=${room.counterId}`);
+                if (response.ok) {
+                  const counters = await response.json();
+                  const counterInfo = counters.find((c: any) => c.counterId === room.counterId);
+                  
+                  if (counterInfo) {
+                    // 如果有柜组名称，显示柜位号+柜组名称
+                    if (counterInfo.groupName) {
+                      displayName = `${counterInfo.counterNumber} - ${counterInfo.groupName}`;
+                    } else if (counterInfo.groupCode) {
+                      displayName = `${counterInfo.counterNumber} - ${counterInfo.department} (柜组: ${counterInfo.groupCode})`;
+                    } else {
+                      displayName = `${counterInfo.counterNumber} - ${counterInfo.department}`;
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error('获取柜位信息失败:', error);
+              }
+            }
+            
+            return {
+              id: room.id,
+              x: parseFloat(room.x),
+              y: parseFloat(room.y), 
+              width: parseFloat(room.width),
+              height: parseFloat(room.height),
+              name: displayName,
+              type: room.type,
+              points: room.polygonPoints || undefined
+            };
+          })
+        );
+        setUserRooms(convertedRooms);
+      }
+    };
+
+    updateRoomsWithCounterInfo();
   }, [markedRooms]);
 
   const handleZoomIn = () => {
@@ -365,8 +399,8 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
       updatedAt: new Date()
     };
     
-    // 如果柜位已租出，显示柜位号+柜组名称
-    if (counterInfo?.status === 'occupied' && counterInfo?.groupName) {
+    // 如果有柜组名称，显示柜位号+柜组名称
+    if (counterInfo?.groupName) {
       tempRoom.name = `${counterInfo.counterNumber} - ${counterInfo.groupName}`;
     } else if (counterInfo?.groupCode) {
       tempRoom.name += ` (柜组: ${counterInfo.groupCode})`;
