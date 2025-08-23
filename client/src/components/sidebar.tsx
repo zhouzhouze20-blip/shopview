@@ -176,12 +176,12 @@ export default function Sidebar({ selectedRoom }: SidebarProps) {
               
               <div>
                 <label className="text-xs font-medium text-slate-600">月收入</label>
-                <p className="text-sm text-slate-900 font-semibold text-green-600">¥{parseFloat(selectedRoom.monthlyRevenue).toLocaleString()}</p>
+                <p className="text-sm text-slate-900 font-semibold text-green-600">¥{parseFloat(selectedRoom.monthlyRevenue || '0').toLocaleString()}</p>
               </div>
               
               <div>
                 <label className="text-xs font-medium text-slate-600">单价/m²</label>
-                <p className="text-sm text-slate-900">¥{parseFloat(selectedRoom.revenuePerSqm).toLocaleString()}</p>
+                <p className="text-sm text-slate-900">¥{parseFloat(selectedRoom.revenuePerSqm || '0').toLocaleString()}</p>
               </div>
               
               {selectedRoom.leaseExpiry && (

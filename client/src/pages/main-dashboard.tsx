@@ -756,6 +756,7 @@ export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
   const [selectedStoreId, setSelectedStoreId] = useState<number | undefined>(undefined);
   const [location, setLocation] = useLocation();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // 从URL参数获取门店ID和视图
   useEffect(() => {
@@ -816,11 +817,17 @@ export default function MainDashboard() {
     setLocation(newUrl);
   };
 
+  const handleToggleSidebar = () => {
+    setSidebarCollapsed(!sidebarCollapsed);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex" data-testid="main-dashboard">
       <NavigationSidebar 
         activeModule={activeModule} 
         onModuleChange={setActiveModule}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={handleToggleSidebar}
       />
       <main className="flex-1 overflow-auto" data-testid="main-content">
         {/* 顶部工具栏 */}

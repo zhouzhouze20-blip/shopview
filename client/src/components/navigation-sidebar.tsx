@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Users, FileText, CreditCard, BarChart3, Settings, Home } from "lucide-react";
+import { Building2, Users, FileText, CreditCard, BarChart3, Settings, Home, ChevronLeft } from "lucide-react";
 
 interface NavigationItem {
   id: string;
@@ -70,9 +70,11 @@ const navigationItems: NavigationItem[] = [
 interface NavigationSidebarProps {
   activeModule?: string;
   onModuleChange?: (moduleId: string) => void;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export default function NavigationSidebar({ activeModule = "floor-plan", onModuleChange }: NavigationSidebarProps) {
+export default function NavigationSidebar({ activeModule = "floor-plan", onModuleChange, isCollapsed = false, onToggleCollapse }: NavigationSidebarProps) {
   const [expandedItems, setExpandedItems] = useState<string[]>(["space-management"]);
 
   const toggleExpanded = (itemId: string) => {
@@ -91,15 +93,58 @@ export default function NavigationSidebar({ activeModule = "floor-plan", onModul
     }
   };
 
+  if (isCollapsed) {
+    return (
+      <nav className="w-16 bg-slate-900 text-white flex flex-col" data-testid="navigation-sidebar-collapsed">
+        <div className="p-4 border-b border-slate-800 flex justify-center">
+          <button
+            onClick={onToggleCollapse}
+            className="text-white hover:text-slate-300 transition-colors"
+            data-testid="expand-sidebar-btn"
+          >
+            <ChevronLeft className="w-6 h-6 rotate-180" />
+          </button>
+        </div>
+        <div className="flex-1 py-4">
+          {navigationItems.map((item) => (
+            <div key={item.id} className="mb-1">
+              <button
+                onClick={() => !item.subItems && onModuleChange?.(item.id)}
+                className={`w-full flex items-center justify-center px-4 py-3 hover:bg-slate-800 transition-colors ${
+                  activeModule === item.id ? "bg-slate-800 border-r-2 border-blue-500" : ""
+                }`}
+                data-testid={`nav-item-${item.id}-collapsed`}
+                title={item.name}
+              >
+                <item.icon className="w-5 h-5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </nav>
+    );
+  }
+
   return (
     <nav className="w-64 bg-slate-900 text-white flex flex-col" data-testid="navigation-sidebar">
       <div className="p-6 border-b border-slate-800">
-        <h1 className="text-xl font-bold text-white" data-testid="text-system-title">
-          商业地产资源管理系统
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Commercial Real Estate Management
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-white" data-testid="text-system-title">
+              百货柜位管理系统
+            </h1>
+            <p className="text-sm text-slate-400 mt-1">
+              Department Store Management
+            </p>
+          </div>
+          <button
+            onClick={onToggleCollapse}
+            className="text-white hover:text-slate-300 transition-colors ml-2"
+            data-testid="collapse-sidebar-btn"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto py-4">
