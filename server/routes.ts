@@ -5,7 +5,7 @@ import {
   insertRoomSchema, insertFloorPlanSchema, insertActivitySchema,
   insertTenantSchema, insertBrandSchema, insertContractSchema,
   insertFloorSchema, insertSpaceAssetSchema, insertStoreSchema,
-  insertHallSchema
+  insertCounterSchema, insertHallSchema
 } from "@shared/schema";
 import { z } from "zod";
 import { ObjectStorageService } from "./objectStorage";
@@ -73,6 +73,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid store data", errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update store" });
+    }
+  });
+
+  // ==================== 柜位管理 API ====================
+  app.get("/api/counters", async (req, res) => {
+    try {
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const counters = await storage.getAllCounters(storeId);
+      res.json(counters);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch counters" });
+    }
+  });
+
+  app.get("/api/counters/search", async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      if (!query) {
+        return res.status(400).json({ message: "Search query is required" });
+      }
+      const counters = await storage.searchCounters(query, storeId);
+      res.json(counters);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to search counters" });
+    }
+  });
+
+  app.get("/api/counters/department/:department", async (req, res) => {
+    try {
+      const department = req.params.department;
+      const storeId = req.query.storeId ? parseInt(req.query.storeId as string) : undefined;
+      const counters = await storage.getCountersByDepartment(department, storeId);
+      res.json(counters);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch counters by department" });
+    }
+  });
+
+  app.get("/api/counters/:id", async (req, res) => {
+    try {
+      const counterId = parseInt(req.params.id);
+      if (isNaN(counterId)) {
+        return res.status(400).json({ message: "Invalid counter ID" });
+      }
+      const counter = await storage.getCounter(counterId);
+      if (!counter) {
+        return res.status(404).json({ message: "Counter not found" });
+      }
+      res.json(counter);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch counter" });
+    }
+  });
+
+  app.post("/api/counters", async (req, res) => {
+    try {
+      const counterData = insertCounterSchema.parse(req.body);
+      const counter = await storage.createCounter(counterData);
+      res.status(201).json(counter);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid counter data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create counter" });
+    }
+  });
+
+  app.put("/api/counters/:id", async (req, res) => {
+    try {
+      const counterId = parseInt(req.params.id);
+      if (isNaN(counterId)) {
+        return res.status(400).json({ message: "Invalid counter ID" });
+      }
+      const counterData = insertCounterSchema.partial().parse(req.body);
+      const counter = await storage.updateCounter(counterId, counterData);
+      res.json(counter);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid counter data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update counter" });
+    }
+  });
+
+  app.delete("/api/counters/:id", async (req, res) => {
+    try {
+      const counterId = parseInt(req.params.id);
+      if (isNaN(counterId)) {
+        return res.status(400).json({ message: "Invalid counter ID" });
+      }
+      const success = await storage.deleteCounter(counterId);
+      if (!success) {
+        return res.status(404).json({ message: "Counter not found" });
+      }
+      res.json({ message: "Counter deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete counter" });
     }
   });
 

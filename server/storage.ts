@@ -4,6 +4,7 @@ import {
   type Activity, type InsertActivity,
   type User, type InsertUser,
   type Store, type InsertStore,
+  type Counter, type InsertCounter,
   type Hall, type InsertHall,
   type Tenant, type InsertTenant,
   type Brand, type InsertBrand,
@@ -25,6 +26,15 @@ export interface IStorage {
   getStore(storeId: number): Promise<Store | undefined>;
   createStore(store: InsertStore): Promise<Store>;
   updateStore(storeId: number, store: Partial<InsertStore>): Promise<Store>;
+  
+  // Counter methods (柜位管理)
+  getAllCounters(storeId?: number): Promise<Counter[]>;
+  getCounter(counterId: number): Promise<Counter | undefined>;
+  createCounter(counter: InsertCounter): Promise<Counter>;
+  updateCounter(counterId: number, counter: Partial<InsertCounter>): Promise<Counter>;
+  deleteCounter(counterId: number): Promise<boolean>;
+  searchCounters(query: string, storeId?: number): Promise<Counter[]>;
+  getCountersByDepartment(department: string, storeId?: number): Promise<Counter[]>;
   
   // Hall methods (厅房管理)
   getAllHalls(storeId?: number): Promise<Hall[]>;
@@ -104,6 +114,7 @@ export interface IStorage {
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
   private stores: Map<number, Store>;
+  private counters: Map<number, Counter>;
   private halls: Map<number, Hall>;
   private tenants: Map<number, Tenant>;
   private brands: Map<number, Brand>;
@@ -118,6 +129,7 @@ export class MemStorage implements IStorage {
   constructor() {
     this.users = new Map();
     this.stores = new Map();
+    this.counters = new Map();
     this.halls = new Map();
     this.tenants = new Map();
     this.brands = new Map();
@@ -503,6 +515,114 @@ export class MemStorage implements IStorage {
       this.rooms.set(room.id, room);
     });
 
+    // Initialize sample counters (柜位数据)
+    const sampleCounters: (Omit<Counter, 'counterId' | 'createdAt' | 'updatedAt'>)[] = [
+      // 常州购物中心 (storeId: 1)
+      {
+        storeId: 1,
+        counterNumber: "A001",
+        department: "服装部",
+        building: "A栋",
+        floor: "1F",
+        area: "25.50",
+        status: "occupied",
+        monthlyRent: "8500.00",
+        tenantId: 1, // TechWorld
+        description: "主要销售时尚女装",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "A002",
+        department: "服装部",
+        building: "A栋",
+        floor: "1F",
+        area: "30.00",
+        status: "vacant",
+        monthlyRent: "9000.00",
+        tenantId: null,
+        description: "空置柜位，待租",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "A003",
+        department: "电子产品部",
+        building: "A栋",
+        floor: "2F",
+        area: "20.00",
+        status: "occupied",
+        monthlyRent: "7500.00",
+        tenantId: 1, // TechWorld
+        description: "主要销售数码产品",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "B001",
+        department: "化妆品部",
+        building: "B栋",
+        floor: "1F",
+        area: "15.00",
+        status: "maintenance",
+        monthlyRent: "6000.00",
+        tenantId: null,
+        description: "装修中，预计下月完成",
+        isActive: true
+      },
+      // 常州新世纪 (storeId: 2)
+      {
+        storeId: 2,
+        counterNumber: "C101",
+        department: "珠宝部",
+        building: "C栋",
+        floor: "1F",
+        area: "12.00",
+        status: "occupied",
+        monthlyRent: "12000.00",
+        tenantId: 2, // 时尚佳人
+        description: "高端珠宝专柜",
+        isActive: true
+      },
+      {
+        storeId: 2,
+        counterNumber: "C102",
+        department: "珠宝部",
+        building: "C栋",
+        floor: "1F",
+        area: "10.00",
+        status: "vacant",
+        monthlyRent: "10000.00",
+        tenantId: null,
+        description: "小型珠宝展示柜",
+        isActive: true
+      },
+      {
+        storeId: 2,
+        counterNumber: "D201",
+        department: "运动用品部",
+        building: "D栋",
+        floor: "2F",
+        area: "40.00",
+        status: "occupied",
+        monthlyRent: "15000.00",
+        tenantId: null,
+        description: "运动服装和器材",
+        isActive: true
+      }
+    ];
+
+    let counterIdCounter = 1;
+    sampleCounters.forEach(counterData => {
+      const counter: Counter = {
+        ...counterData,
+        counterId: counterIdCounter++,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      this.counters.set(counter.counterId, counter);
+    });
+
     // Create sample activities
     const sampleActivities: Omit<Activity, 'id' | 'createdAt'>[] = [
       {
@@ -596,6 +716,71 @@ export class MemStorage implements IStorage {
     };
     this.stores.set(storeId, updatedStore);
     return updatedStore;
+  }
+
+  // Counter methods (柜位管理)
+  async getAllCounters(storeId?: number): Promise<Counter[]> {
+    const counters = Array.from(this.counters.values());
+    if (storeId) {
+      return counters.filter(counter => counter.storeId === storeId);
+    }
+    return counters;
+  }
+
+  async getCounter(counterId: number): Promise<Counter | undefined> {
+    return this.counters.get(counterId);
+  }
+
+  async createCounter(insertCounter: InsertCounter): Promise<Counter> {
+    const counterId = Math.floor(Math.random() * 1000000);
+    const counter: Counter = {
+      ...insertCounter,
+      counterId,
+      status: insertCounter.status ?? "vacant",
+      tenantId: insertCounter.tenantId ?? null,
+      monthlyRent: insertCounter.monthlyRent ?? null,
+      description: insertCounter.description ?? null,
+      isActive: insertCounter.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.counters.set(counterId, counter);
+    return counter;
+  }
+
+  async updateCounter(counterId: number, counterUpdate: Partial<InsertCounter>): Promise<Counter> {
+    const existingCounter = this.counters.get(counterId);
+    if (!existingCounter) {
+      throw new Error(`Counter with id ${counterId} not found`);
+    }
+    
+    const updatedCounter: Counter = {
+      ...existingCounter,
+      ...counterUpdate,
+      updatedAt: new Date()
+    };
+    this.counters.set(counterId, updatedCounter);
+    return updatedCounter;
+  }
+
+  async deleteCounter(counterId: number): Promise<boolean> {
+    return this.counters.delete(counterId);
+  }
+
+  async searchCounters(query: string, storeId?: number): Promise<Counter[]> {
+    const counters = await this.getAllCounters(storeId);
+    const lowercaseQuery = query.toLowerCase();
+    return counters.filter(counter => 
+      counter.counterNumber.toLowerCase().includes(lowercaseQuery) ||
+      counter.department.toLowerCase().includes(lowercaseQuery) ||
+      counter.building.toLowerCase().includes(lowercaseQuery) ||
+      counter.floor.toLowerCase().includes(lowercaseQuery)
+    );
+  }
+
+  async getCountersByDepartment(department: string, storeId?: number): Promise<Counter[]> {
+    const counters = await this.getAllCounters(storeId);
+    return counters.filter(counter => counter.department === department);
   }
 
   // Hall methods (厅房管理)

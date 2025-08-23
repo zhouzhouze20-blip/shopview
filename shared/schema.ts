@@ -63,6 +63,24 @@ export const layouts = pgTable("layouts", {
   createdAt: timestamp("created_at").defaultNow()
 });
 
+// 柜位管理 (按用户要求的业务流程)
+export const counters = pgTable("counters", {
+  counterId: integer("counter_id").primaryKey().generatedByDefaultAsIdentity(),
+  storeId: integer("store_id").references(() => stores.storeId).notNull(),
+  counterNumber: varchar("counter_number", { length: 50 }).notNull(), // 柜位号
+  department: varchar("department", { length: 100 }).notNull(), // 部门
+  building: varchar("building", { length: 50 }).notNull(), // 楼栋
+  floor: varchar("floor", { length: 20 }).notNull(), // 楼层
+  area: decimal("area", { precision: 10, scale: 2 }).notNull(), // 面积
+  status: varchar("status", { length: 20 }).notNull().default("vacant"), // 状态: vacant, occupied, maintenance
+  monthlyRent: decimal("monthly_rent", { precision: 12, scale: 2 }),
+  tenantId: integer("tenant_id").references(() => tenants.tenantId),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
 // 厅房管理 (原rooms表的现代化版本)
 export const halls = pgTable("halls", {
   hallId: integer("hall_id").primaryKey().generatedByDefaultAsIdentity(),
@@ -258,6 +276,8 @@ export type Floor = typeof floors.$inferSelect;
 export type NewFloor = typeof floors.$inferInsert;
 export type Layout = typeof layouts.$inferSelect;
 export type NewLayout = typeof layouts.$inferInsert;
+export type Counter = typeof counters.$inferSelect;
+export type NewCounter = typeof counters.$inferInsert;
 export type Hall = typeof halls.$inferSelect;
 export type NewHall = typeof halls.$inferInsert;
 export type SpaceAsset = typeof spaceAssets.$inferSelect;
@@ -314,6 +334,12 @@ export const insertFloorSchema = createInsertSchema(floors).omit({
 export const insertLayoutSchema = createInsertSchema(layouts).omit({
   layoutId: true,
   createdAt: true
+});
+
+export const insertCounterSchema = createInsertSchema(counters).omit({
+  counterId: true,
+  createdAt: true,
+  updatedAt: true
 });
 
 export const insertHallSchema = createInsertSchema(halls).omit({
@@ -392,6 +418,7 @@ export type InsertRole = z.infer<typeof insertRoleSchema>;
 export type InsertStore = z.infer<typeof insertStoreSchema>;
 export type InsertFloor = z.infer<typeof insertFloorSchema>;
 export type InsertLayout = z.infer<typeof insertLayoutSchema>;
+export type InsertCounter = z.infer<typeof insertCounterSchema>;
 export type InsertHall = z.infer<typeof insertHallSchema>;
 export type InsertSpaceAsset = z.infer<typeof insertSpaceAssetSchema>;
 export type InsertHotspot = z.infer<typeof insertHotspotSchema>;

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import NavigationSidebar from "@/components/navigation-sidebar";
 import Dashboard from "./dashboard";
 import TenantsPage from "./tenants";
+import CountersPage from "./counters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -712,6 +713,8 @@ export default function MainDashboard() {
         return <Dashboard selectedStoreId={selectedStoreId} />;
       case "floors":
         return <FloorsPage selectedStoreId={selectedStoreId} />;
+      case "counters":
+        return <CountersPage selectedStoreId={selectedStoreId} />;
       case "halls":
         return <HallsPage selectedStoreId={selectedStoreId} />;
       case "tenants":

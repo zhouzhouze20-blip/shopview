@@ -22,6 +22,7 @@ const navigationItems: NavigationItem[] = [
     name: "铺位资源管理",
     icon: Building2,
     subItems: [
+      { id: "counters", name: "柜位管理", icon: Building2 },
       { id: "floor-plan", name: "楼层平面图", icon: Home },
       { id: "halls", name: "厅房管理", icon: Building2 },
       { id: "floors", name: "楼层管理", icon: Building2 },
