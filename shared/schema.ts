@@ -343,6 +343,9 @@ export const insertCounterSchema = createInsertSchema(counters).omit({
   counterId: true,
   createdAt: true,
   updatedAt: true
+}).extend({
+  area: z.string().transform((val) => val), // 允许字符串输入
+  monthlyRent: z.string().optional().nullable(), // 允许字符串输入，可选
 });
 
 export const insertHallSchema = createInsertSchema(halls).omit({
