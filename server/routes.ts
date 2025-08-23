@@ -482,6 +482,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update user marked room
+  app.put("/api/marked-rooms/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updatedRoom = await storage.updateUserMarkedRoom(id, req.body);
+      res.json(updatedRoom);
+    } catch (error) {
+      console.error("Failed to update marked room:", error);
+      res.status(500).json({ message: "Failed to update marked room" });
+    }
+  });
+
   app.delete("/api/marked-rooms/:id", async (req, res) => {
     try {
       const { id } = req.params;

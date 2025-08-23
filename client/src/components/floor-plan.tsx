@@ -36,6 +36,8 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
   const [polygonPoints, setPolygonPoints] = useState<Array<{x: number, y: number}>>([]);
   const [userRooms, setUserRooms] = useState<RoomSelection[]>([]);
   const [currentSelection, setCurrentSelection] = useState<RoomSelection | null>(null);
+  const [editingRoom, setEditingRoom] = useState<{id: string, name: string} | null>(null);
+  const [editRoomName, setEditRoomName] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
@@ -93,6 +95,21 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     },
     onError: () => {
       toast({ title: "错误", description: "删除厅房标记失败", variant: "destructive" });
+    }
+  });
+
+  // 更新标记厅房的mutation
+  const updateMarkedRoom = useMutation({
+    mutationFn: async ({ id, data }: { id: string, data: any }) => {
+      return apiRequest('PUT', `/api/marked-rooms/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/marked-rooms"] });
+      toast({ title: "成功", description: "厅房已更新" });
+      setEditingRoom(null);
+    },
+    onError: () => {
+      toast({ title: "错误", description: "更新厅房失败", variant: "destructive" });
     }
   });
 
@@ -414,6 +431,32 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     onRoomClick(tempRoom);
   };
 
+  // 处理房间右键菜单操作
+  const handleEditRoom = (room: RoomSelection) => {
+    setEditingRoom({ id: room.id, name: room.name || '' });
+    setEditRoomName(room.name || '');
+  };
+
+  const handleDeleteRoom = (roomId: string) => {
+    if (confirm('确定要删除这个房间吗？')) {
+      deleteMarkedRoom.mutate(roomId);
+    }
+  };
+
+  const handleSaveEdit = () => {
+    if (editingRoom && editRoomName.trim()) {
+      updateMarkedRoom.mutate({
+        id: editingRoom.id,
+        data: { name: editRoomName.trim() }
+      });
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRoom(null);
+    setEditRoomName('');
+  };
+
   if (isLoading) {
     return (
       <div className="floor-plan-container bg-white rounded-xl shadow-sm border border-slate-200 h-full relative">
@@ -667,6 +710,10 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
                   strokeWidth="0.3"
                   className="cursor-pointer pointer-events-auto"
                   onClick={() => handleUserRoomClick(room)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    handleEditRoom(room);
+                  }}
                 />
                 <text
                   x={room.x + room.width / 2}
@@ -686,7 +733,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
             return (
               <div
                 key={room.id}
-                className="absolute border-2 border-green-500 bg-green-100 bg-opacity-40 rounded cursor-pointer transition-all duration-200 hover:bg-opacity-60"
+                className="absolute border-2 border-green-500 bg-green-100 bg-opacity-40 rounded cursor-pointer transition-all duration-200 hover:bg-opacity-60 group"
                 style={{
                   top: `${room.y}%`,
                   left: `${room.x}%`,
@@ -694,12 +741,43 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
                   height: `${room.height}%`
                 }}
                 onClick={() => handleUserRoomClick(room)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  handleEditRoom(room);
+                }}
                 data-testid={`user-room-${room.id}`}
               >
                 <div className="absolute inset-0 flex items-center justify-center">
                   <span className="text-xs font-semibold bg-green-200 text-green-800 px-2 py-1 rounded shadow">
                     {room.name}
                   </span>
+                </div>
+                {/* 悬停时显示操作按钮 */}
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-6 h-6 p-0 bg-white/80 hover:bg-white"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditRoom(room);
+                      }}
+                    >
+                      <Edit className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-6 h-6 p-0 bg-white/80 hover:bg-white text-red-600"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRoom(room.id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             );
@@ -767,6 +845,41 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
           </svg>
         )}
       </div>
+
+      {/* 编辑房间名称的对话框 */}
+      {editingRoom && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+            <h3 className="text-lg font-semibold mb-4">编辑房间名称</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">房间名称</label>
+                <input
+                  type="text"
+                  value={editRoomName}
+                  onChange={(e) => setEditRoomName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="请输入房间名称"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleCancelEdit}
+                >
+                  取消
+                </Button>
+                <Button
+                  onClick={handleSaveEdit}
+                  disabled={!editRoomName.trim()}
+                >
+                  保存
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

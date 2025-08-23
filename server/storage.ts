@@ -275,6 +275,141 @@ export class MemStorage implements IStorage {
       this.brands.set(brand.brandId, brand);
     });
 
+    // Initialize sample counters (柜位测试数据) - 包含用户测试的D0333数据
+    const sampleCounters: (Omit<Counter, 'counterId' | 'createdAt' | 'updatedAt'>)[] = [
+      {
+        storeId: 1,
+        counterNumber: "A001",
+        department: "服装部",
+        building: "A栋",
+        floor: "1F",
+        area: "25.50",
+        status: "occupied",
+        monthlyRent: "8500.00",
+        tenantId: 1,
+        groupCode: "GRP001",
+        groupName: "时尚女装区",
+        description: "主要销售时尚女装",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "A002",
+        department: "服装部",
+        building: "A栋",
+        floor: "1F",
+        area: "30.00",
+        status: "vacant",
+        monthlyRent: "9000.00",
+        tenantId: null,
+        groupCode: null,
+        groupName: null,
+        description: "空置柜位，待租",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "A003",
+        department: "电子产品部",
+        building: "A栋",
+        floor: "2F",
+        area: "20.00",
+        status: "occupied",
+        monthlyRent: "7500.00",
+        tenantId: 1,
+        groupCode: "GRP002",
+        groupName: "数码科技区",
+        description: "主要销售数码产品",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "B001",
+        department: "化妆品部",
+        building: "B栋",
+        floor: "1F",
+        area: "15.00",
+        status: "maintenance",
+        monthlyRent: "6000.00",
+        tenantId: null,
+        groupCode: null,
+        groupName: null,
+        description: "装修中，预计下月完成",
+        isActive: true
+      },
+      {
+        storeId: 1,
+        counterNumber: "D0333",
+        department: "名品部",
+        building: "A栋",
+        floor: "2F",
+        area: "30.00",
+        status: "vacant",
+        monthlyRent: "30000.00",
+        tenantId: null,
+        groupCode: "6010101011",
+        groupName: "劳力士厅",
+        description: "高端品牌专区 - 测试数据",
+        isActive: true
+      },
+      {
+        storeId: 2,
+        counterNumber: "C101",
+        department: "珠宝部",
+        building: "C栋",
+        floor: "1F",
+        area: "12.00",
+        status: "occupied",
+        monthlyRent: "12000.00",
+        tenantId: 2,
+        groupCode: "GRP003",
+        groupName: "黄金珠宝区",
+        description: "高端珠宝专柜",
+        isActive: true
+      },
+      {
+        storeId: 2,
+        counterNumber: "C102",
+        department: "珠宝部",
+        building: "C栋",
+        floor: "1F",
+        area: "10.00",
+        status: "vacant",
+        monthlyRent: "10000.00",
+        tenantId: null,
+        groupCode: null,
+        groupName: null,
+        description: "小型珠宝展示柜",
+        isActive: true
+      },
+      {
+        storeId: 2,
+        counterNumber: "D201",
+        department: "运动用品部",
+        building: "D栋",
+        floor: "2F",
+        area: "40.00",
+        status: "occupied",
+        monthlyRent: "15000.00",
+        tenantId: null,
+        groupCode: "GRP004",
+        groupName: "运动健身区",
+        description: "运动服装和器材",
+        isActive: true
+      }
+    ];
+
+    let counterIdCounter = 1;
+    sampleCounters.forEach(counterData => {
+      const counter: Counter = {
+        ...counterData,
+        counterId: counterIdCounter++,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      this.counters.set(counter.counterId, counter);
+    });
+
     // Initialize sample floors for each store
     const sampleFloors: (Omit<Floor, 'floorId' | 'createdAt'>)[] = [
       // 常州购物中心 (storeId: 1)
@@ -526,113 +661,6 @@ export class MemStorage implements IStorage {
       this.rooms.set(room.id, room);
     });
 
-    // Initialize sample counters (柜位数据)
-    const sampleCounters: (Omit<Counter, 'counterId' | 'createdAt' | 'updatedAt'>)[] = [
-      // 常州购物中心 (storeId: 1)
-      {
-        storeId: 1,
-        counterNumber: "A001",
-        department: "服装部",
-        building: "A栋",
-        floor: "1F",
-        area: "25.50",
-        status: "occupied",
-        monthlyRent: "8500.00",
-        tenantId: 1, // TechWorld
-        description: "主要销售时尚女装",
-        isActive: true
-      },
-      {
-        storeId: 1,
-        counterNumber: "A002",
-        department: "服装部",
-        building: "A栋",
-        floor: "1F",
-        area: "30.00",
-        status: "vacant",
-        monthlyRent: "9000.00",
-        tenantId: null,
-        description: "空置柜位，待租",
-        isActive: true
-      },
-      {
-        storeId: 1,
-        counterNumber: "A003",
-        department: "电子产品部",
-        building: "A栋",
-        floor: "2F",
-        area: "20.00",
-        status: "occupied",
-        monthlyRent: "7500.00",
-        tenantId: 1, // TechWorld
-        description: "主要销售数码产品",
-        isActive: true
-      },
-      {
-        storeId: 1,
-        counterNumber: "B001",
-        department: "化妆品部",
-        building: "B栋",
-        floor: "1F",
-        area: "15.00",
-        status: "maintenance",
-        monthlyRent: "6000.00",
-        tenantId: null,
-        description: "装修中，预计下月完成",
-        isActive: true
-      },
-      // 常州新世纪 (storeId: 2)
-      {
-        storeId: 2,
-        counterNumber: "C101",
-        department: "珠宝部",
-        building: "C栋",
-        floor: "1F",
-        area: "12.00",
-        status: "occupied",
-        monthlyRent: "12000.00",
-        tenantId: 2, // 时尚佳人
-        description: "高端珠宝专柜",
-        isActive: true
-      },
-      {
-        storeId: 2,
-        counterNumber: "C102",
-        department: "珠宝部",
-        building: "C栋",
-        floor: "1F",
-        area: "10.00",
-        status: "vacant",
-        monthlyRent: "10000.00",
-        tenantId: null,
-        description: "小型珠宝展示柜",
-        isActive: true
-      },
-      {
-        storeId: 2,
-        counterNumber: "D201",
-        department: "运动用品部",
-        building: "D栋",
-        floor: "2F",
-        area: "40.00",
-        status: "occupied",
-        monthlyRent: "15000.00",
-        tenantId: null,
-        description: "运动服装和器材",
-        isActive: true
-      }
-    ];
-
-    let counterIdCounter = 1;
-    sampleCounters.forEach(counterData => {
-      const counter: Counter = {
-        ...counterData,
-        counterId: counterIdCounter++,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      this.counters.set(counter.counterId, counter);
-    });
 
     // Create sample activities
     const sampleActivities: Omit<Activity, 'id' | 'createdAt'>[] = [
