@@ -660,14 +660,12 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
       >
         {/* 楼层平面图背景 */}
         {floorPlan?.imageUrl ? (
-          <div 
-            className="absolute inset-0 w-full h-full"
-            style={{
-              backgroundImage: `url(${floorPlan.imageUrl})`,
-              backgroundSize: 'contain',
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'center'
-            }}
+          <img 
+            src={floorPlan.imageUrl}
+            alt="楼层平面图"
+            className="absolute inset-0 w-full h-full object-contain"
+            onLoad={() => console.log('平面图加载成功')}
+            onError={(e) => console.log('平面图加载失败:', e)}
           />
         ) : (
           <div className="absolute inset-0 w-full h-full bg-gray-200 flex items-center justify-center">
