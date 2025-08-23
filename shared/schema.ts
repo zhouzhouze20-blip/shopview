@@ -76,6 +76,7 @@ export const counters = pgTable("counters", {
   monthlyRent: decimal("monthly_rent", { precision: 12, scale: 2 }),
   tenantId: integer("tenant_id").references(() => tenants.tenantId),
   groupCode: varchar("group_code", { length: 50 }), // 柜组编码（租用时填写）
+  groupName: varchar("group_name", { length: 100 }), // 柜组名称（租用时填写）
   description: text("description"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),

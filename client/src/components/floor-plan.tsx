@@ -365,8 +365,10 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
       updatedAt: new Date()
     };
     
-    // 添加柜组编码信息到房间名称中
-    if (counterInfo?.groupCode) {
+    // 如果柜位已租出，显示柜位号+柜组名称
+    if (counterInfo?.status === 'occupied' && counterInfo?.groupName) {
+      tempRoom.name = `${counterInfo.counterNumber} - ${counterInfo.groupName}`;
+    } else if (counterInfo?.groupCode) {
       tempRoom.name += ` (柜组: ${counterInfo.groupCode})`;
     }
     
