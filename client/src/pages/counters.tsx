@@ -186,7 +186,7 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
   });
 
   // Get unique departments for filter
-  const departments = Array.from(new Set(counters.map((c) => c.department)));
+  const departments = Array.from(new Set(counters.map((c) => c.department).filter(dept => dept && dept.trim() !== "")));
 
   // Status color mapping
   const getStatusColor = (status: string) => {
