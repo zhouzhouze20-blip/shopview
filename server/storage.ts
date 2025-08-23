@@ -11,9 +11,13 @@ import {
   type Contract, type InsertContract,
   type Floor, type InsertFloor,
   type SpaceAsset, type InsertSpaceAsset,
-  type UserMarkedRoom, type NewUserMarkedRoom
+  type UserMarkedRoom, type NewUserMarkedRoom,
+  userMarkedRooms
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
   // User methods (keeping for compatibility)
@@ -125,6 +129,7 @@ export class MemStorage implements IStorage {
   private floorPlans: Map<string, FloorPlan>;
   private activities: Map<string, Activity>;
   private userMarkedRooms: Map<string, UserMarkedRoom>;
+  private db: any;
 
   constructor() {
     this.users = new Map();
@@ -140,6 +145,12 @@ export class MemStorage implements IStorage {
     this.floorPlans = new Map();
     this.activities = new Map();
     this.userMarkedRooms = new Map();
+    
+    // Initialize database connection if DATABASE_URL is available
+    if (process.env.DATABASE_URL) {
+      const connection = neon(process.env.DATABASE_URL);
+      this.db = drizzle(connection);
+    }
     
     // Initialize with sample data
     this.initializeData();
@@ -1241,6 +1252,18 @@ export class MemStorage implements IStorage {
 
   // User marked rooms methods implementation
   async getUserMarkedRooms(storeId?: number, floorPlanId?: string): Promise<UserMarkedRoom[]> {
+    // Load from database if available and memory is empty
+    if (this.db && this.userMarkedRooms.size === 0) {
+      try {
+        const dbRooms = await this.db.select().from(userMarkedRooms);
+        dbRooms.forEach(room => {
+          this.userMarkedRooms.set(room.id, room);
+        });
+      } catch (error) {
+        console.error('Error loading from database:', error);
+      }
+    }
+    
     let markedRooms = Array.from(this.userMarkedRooms.values());
     
     if (storeId) {
@@ -1269,6 +1292,17 @@ export class MemStorage implements IStorage {
       createdAt: new Date(),
       updatedAt: new Date()
     };
+    
+    // Save to database if available
+    if (this.db) {
+      try {
+        await this.db.insert(userMarkedRooms).values(newMarkedRoom);
+      } catch (error) {
+        console.error('Error saving to database:', error);
+      }
+    }
+    
+    // Save to memory cache
     this.userMarkedRooms.set(id, newMarkedRoom);
     return newMarkedRoom;
   }
@@ -1337,6 +1371,20 @@ export class MemStorage implements IStorage {
           counterId: matchingCounter.counterId,
           updatedAt: new Date()
         };
+        
+        // Update database if available
+        if (this.db) {
+          try {
+            await this.db.update(userMarkedRooms)
+              .set({ counterId: matchingCounter.counterId, updatedAt: new Date() })
+              .where(eq(userMarkedRooms.id, markedRoom.id));
+          } catch (error) {
+            console.error('Error updating database:', error);
+            continue; // Skip this room if database update fails
+          }
+        }
+        
+        // Update memory cache
         this.userMarkedRooms.set(markedRoom.id, updatedRoom);
         linkedCount++;
       }
