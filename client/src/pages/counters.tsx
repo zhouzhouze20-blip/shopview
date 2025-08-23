@@ -52,6 +52,7 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
       status: "vacant",
       monthlyRent: undefined,
       tenantId: undefined,
+      groupCode: "",
       description: "",
       isActive: true,
     },
@@ -162,6 +163,7 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
       status: counter.status,
       monthlyRent: counter.monthlyRent?.toString(),
       tenantId: counter.tenantId || undefined,
+      groupCode: counter.groupCode || "",
       description: counter.description || "",
       isActive: counter.isActive,
     });
@@ -338,6 +340,20 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
 
                 <FormField
                   control={form.control}
+                  name="groupCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>柜组编码 <span className="text-xs text-gray-500">(租用时填写)</span></FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value || ""} placeholder="如：GRP001" data-testid="input-group-code" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name="monthlyRent"
                   render={({ field }) => (
                     <FormItem>
@@ -487,6 +503,7 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
                 <TableHead>面积</TableHead>
                 <TableHead>月租金</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead>柜组编码</TableHead>
                 <TableHead>描述</TableHead>
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
@@ -512,6 +529,9 @@ export default function CountersPage({ selectedStoreId }: CountersPageProps) {
                       <Badge className={getStatusColor(counter.status)}>
                         {getStatusText(counter.status)}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {counter.groupCode || '-'}
                     </TableCell>
                     <TableCell className="max-w-xs">
                       <div className="truncate" title={counter.description || ''}>

@@ -75,6 +75,7 @@ export const counters = pgTable("counters", {
   status: varchar("status", { length: 20 }).notNull().default("vacant"), // 状态: vacant, occupied, maintenance
   monthlyRent: decimal("monthly_rent", { precision: 12, scale: 2 }),
   tenantId: integer("tenant_id").references(() => tenants.tenantId),
+  groupCode: varchar("group_code", { length: 50 }), // 柜组编码（租用时填写）
   description: text("description"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
