@@ -51,12 +51,17 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     }
   });
 
-  const { data: floorPlan } = useQuery({
-    queryKey: ["/api/floor-plans/active"]
+  const { data: floorPlan } = useQuery<{id: string, svgContent: string}>({
+    queryKey: ["/api/floor-plans/active"],
+    queryFn: async () => {
+      const response = await fetch('/api/floor-plans/active');
+      if (!response.ok) throw new Error('Failed to fetch floor plan');
+      return response.json();
+    }
   });
 
   // 获取用户标记的厅房
-  const { data: markedRooms } = useQuery({
+  const { data: markedRooms } = useQuery<Array<{id: string, x: number, y: number, width: number, height: number, name?: string}>>({
     queryKey: ["/api/marked-rooms", selectedStoreId, floorPlan?.id],
     queryFn: async () => {
       const params = new URLSearchParams();

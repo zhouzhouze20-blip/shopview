@@ -44,67 +44,6 @@ export default function Sidebar({ selectedRoom }: SidebarProps) {
 
   return (
     <aside className="w-80 bg-white border-r border-slate-200 flex flex-col" data-testid="sidebar">
-      <div className="p-6 border-b border-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900 mb-4" data-testid="text-current-floor-plan">
-          当前楼层平面图
-        </h2>
-        <div className="bg-slate-50 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-slate-600" data-testid="text-floor-level">
-              商场 1层
-            </span>
-            <Badge className="bg-success text-white" data-testid="badge-status">
-              激活
-            </Badge>
-          </div>
-          <div className="text-xs text-slate-500" data-testid="text-last-updated">
-            最后更新: 2024-01-15
-          </div>
-        </div>
-      </div>
-      
-      <div className="p-6 border-b border-slate-200">
-        <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-quick-stats">
-          快速统计
-        </h3>
-        <div className="space-y-3">
-          {statsLoading ? (
-            <>
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-            </>
-          ) : (
-            <>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-slate-600">总房间数</span>
-                <span className="text-sm font-semibold text-slate-900" data-testid="text-total-rooms">
-                  {stats?.totalRooms || 0}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-slate-600">已出租</span>
-                <span className="text-sm font-semibold text-success" data-testid="text-occupied-rooms">
-                  {stats?.occupied || 0}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-slate-600">空置</span>
-                <span className="text-sm font-semibold text-warning" data-testid="text-vacant-rooms">
-                  {stats?.vacant || 0}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-slate-600">平均收费/m²</span>
-                <span className="text-sm font-semibold text-slate-900" data-testid="text-avg-revenue">
-                  ¥{stats?.avgRevenue || 0}
-                </span>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* 房间详细信息 - 移到前面 */}
       {selectedRoom && (
