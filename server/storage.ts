@@ -161,38 +161,38 @@ export class MemStorage implements IStorage {
     const sampleStores: (Omit<Store, 'storeId' | 'createdAt' | 'updatedAt'>)[] = [
       {
         storeName: "常州购物中心",
-        storeCode: "CZ001",
-        address: "江苏省常州市新北区中央商务区",
-        managerName: "张经理",
-        contactPhone: "0519-12345678",
-        contactEmail: "cz001@counter-mgmt.com",
+        storeCode: "601",
+        address: null,
+        managerName: null,
+        contactPhone: null,
+        contactEmail: null,
         isActive: true
       },
       {
         storeName: "常州新世纪",
-        storeCode: "CZ002", 
-        address: "江苏省常州市天宁区新世纪商业广场",
-        managerName: "李经理",
-        contactPhone: "0519-87654321",
-        contactEmail: "cz002@counter-mgmt.com",
+        storeCode: "603", 
+        address: null,
+        managerName: null,
+        contactPhone: null,
+        contactEmail: null,
         isActive: true
       },
       {
         storeName: "常州百货大楼",
-        storeCode: "CZ003",
-        address: "江苏省常州市钟楼区南大街百货大楼",
-        managerName: "王经理", 
-        contactPhone: "0519-11223344",
-        contactEmail: "cz003@counter-mgmt.com",
+        storeCode: "602",
+        address: null,
+        managerName: null, 
+        contactPhone: null,
+        contactEmail: null,
         isActive: true
       },
       {
-        storeName: "常州半山数据",
-        storeCode: "CZ004",
-        address: "江苏省常州市武进区半山数据中心",
-        managerName: "赵经理",
-        contactPhone: "0519-55667788", 
-        contactEmail: "cz004@counter-mgmt.com",
+        storeName: "常州半山书局",
+        storeCode: "604",
+        address: null,
+        managerName: null,
+        contactPhone: null, 
+        contactEmail: null,
         isActive: true
       }
     ];

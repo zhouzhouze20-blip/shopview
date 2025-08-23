@@ -81,9 +81,6 @@ export default function StoresPage() {
               <TableRow>
                 <TableHead>门店名称</TableHead>
                 <TableHead>门店代码</TableHead>
-                <TableHead>地址</TableHead>
-                <TableHead>负责人</TableHead>
-                <TableHead>联系方式</TableHead>
                 <TableHead>总厅房数</TableHead>
                 <TableHead>出租率</TableHead>
                 <TableHead>平均收益</TableHead>
@@ -105,41 +102,6 @@ export default function StoresPage() {
                       </div>
                     </TableCell>
                     <TableCell>{store.storeCode}</TableCell>
-                    <TableCell className="max-w-xs">
-                      <div className="truncate" title={store.address || ''}>
-                        {store.address ? (
-                          <div className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3 text-gray-500" />
-                            <span>{store.address}</span>
-                          </div>
-                        ) : '-'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {store.managerName ? (
-                        <div className="flex items-center gap-1">
-                          <User className="h-3 w-3 text-gray-500" />
-                          <span>{store.managerName}</span>
-                        </div>
-                      ) : '-'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="space-y-1 text-xs">
-                        {store.contactPhone && (
-                          <div className="flex items-center gap-1">
-                            <Phone className="h-3 w-3 text-gray-500" />
-                            <span>{store.contactPhone}</span>
-                          </div>
-                        )}
-                        {store.contactEmail && (
-                          <div className="flex items-center gap-1">
-                            <Mail className="h-3 w-3 text-gray-500" />
-                            <span className="text-blue-600">{store.contactEmail}</span>
-                          </div>
-                        )}
-                        {!store.contactPhone && !store.contactEmail && '-'}
-                      </div>
-                    </TableCell>
                     <TableCell>
                       {stats && !isLoadingStats ? stats.totalRooms : '-'}
                     </TableCell>
