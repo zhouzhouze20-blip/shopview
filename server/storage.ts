@@ -1256,7 +1256,7 @@ export class MemStorage implements IStorage {
     if (this.db && this.userMarkedRooms.size === 0) {
       try {
         const dbRooms = await this.db.select().from(userMarkedRooms);
-        dbRooms.forEach(room => {
+        dbRooms.forEach((room: UserMarkedRoom) => {
           this.userMarkedRooms.set(room.id, room);
         });
       } catch (error) {

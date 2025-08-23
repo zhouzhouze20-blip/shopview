@@ -322,20 +322,41 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     setDrawingType('none');
   };
 
-  const handleUserRoomClick = (room: RoomSelection) => {
-    // 创建一个临时的Room对象来适配现有的弹窗
+  const handleUserRoomClick = async (room: RoomSelection) => {
+    // 查找对应的标记房间以获取关联的柜位信息
+    const markedRoom = markedRooms?.find((mr: any) => mr.id === room.id);
+    
+    let counterInfo = null;
+    if (markedRoom?.counterId) {
+      try {
+        // 获取关联的柜位信息
+        const response = await fetch(`/api/counters?counterId=${markedRoom.counterId}`);
+        if (response.ok) {
+          const counters = await response.json();
+          counterInfo = counters.find((c: any) => c.counterId === markedRoom.counterId);
+        }
+      } catch (error) {
+        console.error('获取柜位信息失败:', error);
+      }
+    }
+
+    // 创建一个临时的Room对象来适配现有的弹窗，包含柜位信息
     const tempRoom: Room = {
       id: room.id,
       storeId: selectedStoreId || null,
-      roomNumber: room.name || room.id,
-      name: room.name || '用户标记房间',
-      area: '0',
-      tenant: null,
-      status: 'vacant',
-      monthlyRevenue: '0',
-      revenuePerSqm: '0',
+      roomNumber: counterInfo?.counterNumber || room.name || room.id,
+      name: counterInfo ? 
+        `${counterInfo.counterNumber} - ${counterInfo.department}` : 
+        (room.name || '用户标记房间'),
+      area: counterInfo?.area || '0',
+      tenant: counterInfo?.tenantId ? `租户ID: ${counterInfo.tenantId}` : null,
+      status: counterInfo?.status || 'vacant',
+      monthlyRevenue: counterInfo?.monthlyRent || '0',
+      revenuePerSqm: counterInfo?.area ? 
+        Math.round((parseFloat(counterInfo.monthlyRent || '0') / parseFloat(counterInfo.area))).toString() : 
+        '0',
       leaseExpiry: null,
-      contractType: null,
+      contractType: counterInfo ? '柜位租赁' : null,
       x: room.x.toString(),
       y: room.y.toString(),
       width: room.width.toString(),
@@ -343,6 +364,12 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
       createdAt: new Date(),
       updatedAt: new Date()
     };
+    
+    // 添加柜位描述信息到房间名称中
+    if (counterInfo?.description) {
+      tempRoom.name += ` - ${counterInfo.description}`;
+    }
+    
     onRoomClick(tempRoom);
   };
 
