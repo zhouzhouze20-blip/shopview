@@ -220,6 +220,8 @@ function SystemOverview() {
 
 // 厅房管理页面组件
 function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
+  const { toast } = useToast();
+  
   const { data: halls, isLoading: isLoadingHalls } = useQuery({
     queryKey: ["/api/halls", selectedStoreId],
     queryFn: async () => {
