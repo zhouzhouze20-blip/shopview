@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Header from "@/components/header";
 import Sidebar from "@/components/sidebar";
 import FloorPlan from "@/components/floor-plan";
@@ -14,6 +15,11 @@ export default function Dashboard({ selectedStoreId }: DashboardProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"revenue" | "occupancy" | "lease">("revenue");
+
+  const statsQuery = useQuery({
+    queryKey: ['/api/stats'],
+    enabled: !!selectedStoreId
+  });
 
   const handleRoomClick = (room: Room) => {
     setSelectedRoom(room);
