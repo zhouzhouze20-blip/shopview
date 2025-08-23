@@ -106,31 +106,7 @@ export default function Sidebar({ selectedRoom }: SidebarProps) {
         </div>
       </div>
 
-      <div className="p-6 border-b border-slate-200">
-        <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-legend">
-          图例说明
-        </h3>
-        <div className="space-y-3">
-          <div className="flex items-center space-x-3">
-            <div className="w-4 h-4 bg-success rounded"></div>
-            <span className="text-sm text-slate-600">高收费 (&gt;¥200/m²)</span>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-4 h-4 bg-primary rounded"></div>
-            <span className="text-sm text-slate-600">中等收费 (¥100-200/m²)</span>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-4 h-4 bg-warning rounded"></div>
-            <span className="text-sm text-slate-600">低收费 (&lt;¥100/m²)</span>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-4 h-4 bg-slate-300 rounded"></div>
-            <span className="text-sm text-slate-600">空置</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 房间详细信息 */}
+      {/* 房间详细信息 - 移到前面 */}
       {selectedRoom && (
         <div className="p-6 border-b border-slate-200">
           <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-room-details">
@@ -201,6 +177,30 @@ export default function Sidebar({ selectedRoom }: SidebarProps) {
           </Card>
         </div>
       )}
+
+      <div className="p-6 border-b border-slate-200">
+        <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-legend">
+          图例说明
+        </h3>
+        <div className="space-y-3">
+          <div className="flex items-center space-x-3">
+            <div className="w-4 h-4 bg-success rounded"></div>
+            <span className="text-sm text-slate-600">高收费 (&gt;¥200/m²)</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            <div className="w-4 h-4 bg-primary rounded"></div>
+            <span className="text-sm text-slate-600">中等收费 (¥100-200/m²)</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            <div className="w-4 h-4 bg-warning rounded"></div>
+            <span className="text-sm text-slate-600">低收费 (&lt;¥100/m²)</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            <div className="w-4 h-4 bg-slate-300 rounded"></div>
+            <span className="text-sm text-slate-600">空置</span>
+          </div>
+        </div>
+      </div>
 
       <div className="p-6 flex-1">
         <h3 className="text-md font-semibold text-slate-900 mb-4" data-testid="text-recent-activity">
