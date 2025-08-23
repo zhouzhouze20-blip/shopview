@@ -48,6 +48,7 @@ export default function CountersPage() {
   const form = useForm<InsertCounter>({
     resolver: zodResolver(insertCounterSchema),
     defaultValues: {
+      storeId: 1, // 默认门店ID
       counterNumber: "",
       department: "",
       building: "",
@@ -122,26 +123,19 @@ export default function CountersPage() {
   // Event handlers
   const onSubmit = (data: InsertCounter) => {
     console.log("表单提交数据:", data);
-    console.log("表单错误:", form.formState.errors);
-    
-    // 为新创建的柜位添加storeId
-    const counterData = {
-      ...data,
-      storeId: 1 // 默认使用第一个门店，后续可以改为用户选择
-    };
-    
-    console.log("提交到API的数据:", counterData);
+    console.log("提交到API的数据:", data);
     
     if (editingCounter) {
-      updateCounterMutation.mutate({ counterId: editingCounter.counterId, data: counterData });
+      updateCounterMutation.mutate({ counterId: editingCounter.counterId, data });
     } else {
-      createCounterMutation.mutate(counterData);
+      createCounterMutation.mutate(data);
     }
   };
 
   const startEdit = (counter: Counter) => {
     setEditingCounter(counter);
     form.reset({
+      storeId: counter.storeId,
       counterNumber: counter.counterNumber,
       department: counter.department,
       building: counter.building,
@@ -159,6 +153,7 @@ export default function CountersPage() {
   const startCreate = () => {
     setEditingCounter(null);
     form.reset({
+      storeId: 1, // 默认门店ID
       counterNumber: "",
       department: "",
       building: "",
