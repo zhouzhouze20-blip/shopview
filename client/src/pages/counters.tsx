@@ -59,6 +59,7 @@ export default function CountersPage() {
       groupName: "",
       description: "",
     },
+    mode: "onChange", // 实时验证
   });
 
   // Queries
@@ -411,6 +412,11 @@ export default function CountersPage() {
                     type="submit" 
                     disabled={createCounterMutation.isPending || updateCounterMutation.isPending}
                     data-testid="button-submit-counter"
+                    onClick={() => {
+                      console.log("提交按钮被点击了");
+                      console.log("表单是否有效:", form.formState.isValid);
+                      console.log("表单错误:", form.formState.errors);
+                    }}
                   >
                     {editingCounter ? "更新" : "创建"}
                   </Button>
