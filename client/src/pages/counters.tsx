@@ -120,10 +120,16 @@ export default function CountersPage() {
 
   // Event handlers
   const onSubmit = (data: InsertCounter) => {
+    // 为新创建的柜位添加storeId
+    const counterData = {
+      ...data,
+      storeId: 1 // 默认使用第一个门店，后续可以改为用户选择
+    };
+    
     if (editingCounter) {
-      updateCounterMutation.mutate({ counterId: editingCounter.counterId, data });
+      updateCounterMutation.mutate({ counterId: editingCounter.counterId, data: counterData });
     } else {
-      createCounterMutation.mutate(data);
+      createCounterMutation.mutate(counterData);
     }
   };
 
