@@ -75,6 +75,12 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     enabled: !!floorPlan?.id
   });
 
+  // 获取柜位数据，用于状态颜色显示
+  const { data: countersData } = useQuery({
+    queryKey: ['/api/counters'],
+    enabled: !!selectedStoreId,
+  });
+
   // 保存标记厅房的mutation
   const saveMarkedRoom = useMutation({
     mutationFn: async (roomData: any) => {
@@ -733,9 +739,9 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
             const markedRoom = markedRooms?.find((mr: any) => mr.id === room.id);
             let status = 'vacant'; // 默认状态
             
-            if (markedRoom?.counterId) {
-              // 如果关联了柜位，尝试获取柜位状态
-              const counterInfo = markedRooms?.find((mr: any) => mr.counterId === markedRoom.counterId);
+            if (markedRoom?.counterId && countersData) {
+              // 如果关联了柜位，从柜位数据中获取状态
+              const counterInfo = countersData.find((counter: any) => counter.counterId === markedRoom.counterId);
               status = counterInfo?.status || 'vacant';
             }
             
