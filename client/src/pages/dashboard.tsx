@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import Header from "@/components/header";
 import Sidebar from "@/components/sidebar";
 import FloorPlan from "@/components/floor-plan";
+import { StoreSelector } from "@/components/store-selector";
 import { Room } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +13,12 @@ interface DashboardProps {
   selectedStoreId?: number;
 }
 
-export default function Dashboard({ selectedStoreId }: DashboardProps) {
+export default function Dashboard({ selectedStoreId: initialStoreId }: DashboardProps) {
+  const [, setLocation] = useLocation();
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"revenue" | "occupancy" | "lease">("revenue");
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(initialStoreId || null);
 
   const statsQuery = useQuery({
     queryKey: ['/api/stats'],
@@ -29,10 +33,44 @@ export default function Dashboard({ selectedStoreId }: DashboardProps) {
     setSelectedRoom(null);
   };
 
+  const handleStoreChange = (storeId: number | undefined) => {
+    setSelectedStoreId(storeId || null);
+    // 更新URL参数，保持门店选择状态
+    if (storeId) {
+      const params = new URLSearchParams(window.location.search);
+      params.set('storeId', storeId.toString());
+      setLocation(`/dashboard?${params.toString()}`);
+    } else {
+      setLocation('/dashboard');
+    }
+  };
+
   return (
     <div className="h-screen bg-slate-50">
       <div className="p-4 bg-white border-b border-slate-200">
-        <h1 className="text-xl font-bold text-slate-900">厅房平面图管理</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-slate-900">厅房平面图管理</h1>
+          
+          {/* 全局门店选择器 */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-600">当前门店:</span>
+              <StoreSelector
+                selectedStoreId={selectedStoreId || undefined}
+                onStoreChange={handleStoreChange}
+                placeholder="请选择门店"
+              />
+            </div>
+          </div>
+        </div>
+        
+        {!selectedStoreId && (
+          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800">
+              <span className="font-medium">提示:</span> 请先选择门店，然后在平面图上标记厅房位置。选择门店后，所有模块都会自动同步到该门店的数据。
+            </p>
+          </div>
+        )}
       </div>
       
       <div className="flex h-full">
