@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: counter-management-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: counter_management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-counter123!@#}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-counter-db.sql:/docker-entrypoint-initdb.d/init-counter-db.sql:ro
+    ports:
+      - "15432:5432"  # 避免使用5432端口
+    networks:
+      - counter-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d counter_management"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres -c max_connections=200
+               -c shared_buffers=256MB
+               -c effective_cache_size=1GB
+               -c maintenance_work_mem=64MB
+               -c checkpoint_completion_target=0.9
+               -c wal_buffers=16MB
+               -c default_statistics_target=100
+
+  # Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: counter-management-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080  # 避免使用5000端口，使用8080
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-counter123!@#}@postgres:5432/counter_management
+      # 数据库连接配置
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-counter123!@#}
+      PGDATABASE: counter_management
+      # 安全配置
+      SESSION_SECRET: ${SESSION_SECRET:-your-super-secret-session-key-change-this-in-production}
+      JWT_SECRET: ${JWT_SECRET:-your-jwt-secret-key-change-this-in-production}
+      # 应用配置
+      MAX_FILE_SIZE: 10485760  # 10MB
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:18080}
+    ports:
+      - "18080:8080"  # 使用18080作为外部端口
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - counter-network
+    volumes:
+      - app_logs:/app/logs
+      - app_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: counter-management-nginx
+    restart: unless-stopped
+    ports:
+      - "18081:8081"    # HTTP 使用18081，避免80端口
+      - "18444:8444"    # HTTPS 使用18444，避免443端口
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - counter-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  app_logs:
+    driver: local
+  app_uploads:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  counter-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
