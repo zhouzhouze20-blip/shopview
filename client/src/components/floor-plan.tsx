@@ -197,42 +197,56 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
   };
 
   const getRoomColor = (room: Room) => {
+    // 优先根据状态进行颜色区分
     if (room.status === 'vacant') {
       return {
-        bg: 'bg-slate-300 bg-opacity-20',
-        border: 'border-slate-300',
-        text: 'text-slate-600'
+        bg: 'bg-gray-100 bg-opacity-80',
+        border: 'border-gray-400',
+        text: 'text-gray-600'
+      };
+    } else if (room.status === 'occupied') {
+      return {
+        bg: 'bg-green-100 bg-opacity-80',
+        border: 'border-green-500',
+        text: 'text-green-800'
+      };
+    } else if (room.status === 'maintenance') {
+      return {
+        bg: 'bg-orange-100 bg-opacity-80',
+        border: 'border-orange-500',
+        text: 'text-orange-800'
       };
     }
 
+    // 如果是收费视图且没有明确状态，按收入颜色分级
     if (viewMode === 'revenue') {
       const revenuePerSqm = parseFloat(room.revenuePerSqm || '0');
       if (revenuePerSqm > 200) {
         return {
-          bg: 'bg-success bg-opacity-20',
-          border: 'border-success',
-          text: 'text-success'
+          bg: 'bg-emerald-100 bg-opacity-80',
+          border: 'border-emerald-600',
+          text: 'text-emerald-800'
         };
       } else if (revenuePerSqm >= 100) {
         return {
-          bg: 'bg-primary bg-opacity-20',
-          border: 'border-primary',
-          text: 'text-primary'
+          bg: 'bg-blue-100 bg-opacity-80',
+          border: 'border-blue-500',
+          text: 'text-blue-800'
         };
       } else {
         return {
-          bg: 'bg-warning bg-opacity-20',
-          border: 'border-warning',
-          text: 'text-warning'
+          bg: 'bg-yellow-100 bg-opacity-80',
+          border: 'border-yellow-500',
+          text: 'text-yellow-800'
         };
       }
     }
 
-    // Default for other view modes
+    // 默认颜色
     return {
-      bg: 'bg-primary bg-opacity-20',
-      border: 'border-primary',
-      text: 'text-primary'
+      bg: 'bg-blue-100 bg-opacity-80',
+      border: 'border-blue-500',
+      text: 'text-blue-800'
     };
   };
 
@@ -713,6 +727,48 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
 
         {/* 用户标记的房间 */}
         {userRooms.map((room) => {
+          // 获取房间状态颜色
+          const getMarkedRoomColor = () => {
+            // 从 markedRooms 中查找对应房间的状态信息
+            const markedRoom = markedRooms?.find((mr: any) => mr.id === room.id);
+            let status = 'vacant'; // 默认状态
+            
+            if (markedRoom?.counterId) {
+              // 如果关联了柜位，尝试获取柜位状态
+              const counterInfo = markedRooms?.find((mr: any) => mr.counterId === markedRoom.counterId);
+              status = counterInfo?.status || 'vacant';
+            }
+            
+            // 根据状态返回颜色
+            if (status === 'occupied') {
+              return {
+                fill: 'rgba(34, 197, 94, 0.3)',
+                stroke: '#22c55e',
+                bgClass: 'bg-green-100 bg-opacity-60',
+                borderClass: 'border-green-500',
+                textClass: 'bg-green-200 text-green-800'
+              };
+            } else if (status === 'maintenance') {
+              return {
+                fill: 'rgba(251, 146, 60, 0.3)',
+                stroke: '#fb923c',
+                bgClass: 'bg-orange-100 bg-opacity-60',
+                borderClass: 'border-orange-500',
+                textClass: 'bg-orange-200 text-orange-800'
+              };
+            } else {
+              return {
+                fill: 'rgba(156, 163, 175, 0.3)',
+                stroke: '#9ca3af',
+                bgClass: 'bg-gray-100 bg-opacity-60',
+                borderClass: 'border-gray-500',
+                textClass: 'bg-gray-200 text-gray-800'
+              };
+            }
+          };
+
+          const colors = getMarkedRoomColor();
+
           if (room.type === 'polygon' && room.points) {
             // 多边形房间 - 使用百分比坐标系统
             return (
@@ -725,8 +781,8 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
               >
                 <polygon
                   points={room.points.map(p => `${p.x},${p.y}`).join(' ')}
-                  fill="rgba(34, 197, 94, 0.2)"
-                  stroke="#22c55e"
+                  fill={colors.fill}
+                  stroke={colors.stroke}
                   strokeWidth="0.3"
                   className="cursor-pointer pointer-events-auto"
                   onClick={() => handleUserRoomClick(room)}
@@ -740,8 +796,8 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
                   y={room.y + room.height / 2}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  className="text-xs font-semibold fill-green-800 pointer-events-auto cursor-pointer"
-                  style={{ fontSize: '2px' }}
+                  className="text-xs font-semibold pointer-events-auto cursor-pointer"
+                  style={{ fontSize: '2px', fill: colors.stroke }}
                   onClick={() => handleUserRoomClick(room)}
                 >
                   {room.name}
@@ -753,7 +809,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
             return (
               <div
                 key={room.id}
-                className="absolute border-2 border-green-500 bg-green-100 bg-opacity-40 rounded cursor-pointer transition-all duration-200 hover:bg-opacity-60 group"
+                className={`absolute border-2 ${colors.borderClass} ${colors.bgClass} rounded cursor-pointer transition-all duration-200 hover:bg-opacity-80 group`}
                 style={{
                   top: `${room.y}%`,
                   left: `${room.x}%`,
@@ -768,7 +824,7 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
                 data-testid={`user-room-${room.id}`}
               >
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-xs font-semibold bg-green-200 text-green-800 px-2 py-1 rounded shadow">
+                  <span className={`text-xs font-semibold ${colors.textClass} px-2 py-1 rounded shadow`}>
                     {room.name}
                   </span>
                 </div>
