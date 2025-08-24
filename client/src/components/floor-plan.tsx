@@ -253,8 +253,9 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     if (drawingType === 'none' || !containerRef.current) return;
     
     const rect = containerRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    // 考虑缩放因子的坐标计算
+    const x = ((e.clientX - rect.left) / (rect.width / zoom)) * 100;
+    const y = ((e.clientY - rect.top) / (rect.height / zoom)) * 100;
     
     if (drawingType === 'rectangle') {
       setDrawingStart({ x, y });
@@ -269,8 +270,9 @@ export default function FloorPlan({ onRoomClick, viewMode, searchQuery, selected
     if (drawingType !== 'rectangle' || !isDrawing || !drawingStart || !containerRef.current) return;
     
     const rect = containerRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    // 考虑缩放因子的坐标计算
+    const x = ((e.clientX - rect.left) / (rect.width / zoom)) * 100;
+    const y = ((e.clientY - rect.top) / (rect.height / zoom)) * 100;
     
     const width = Math.abs(x - drawingStart.x);
     const height = Math.abs(y - drawingStart.y);
