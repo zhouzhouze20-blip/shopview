@@ -62,6 +62,10 @@ export default function StoresPage() {
     );
   }
 
+  // 调试信息
+  console.log('门店数据:', stores);
+  console.log('是否加载中:', isLoading);
+
   return (
     <div className="container mx-auto p-6 space-y-6" data-testid="stores-page">
       <div className="flex items-center justify-between">
@@ -71,6 +75,14 @@ export default function StoresPage() {
             选择门店进入管理系统，查看各门店的运营情况
           </p>
         </div>
+      </div>
+
+      {/* 调试信息显示 */}
+      <div className="bg-yellow-100 p-4 rounded-lg">
+        <h3 className="font-bold">调试信息:</h3>
+        <p>门店数量: {stores?.length || 0}</p>
+        <p>加载状态: {isLoading ? '加载中' : '已完成'}</p>
+        <p>数据: {JSON.stringify(stores)}</p>
       </div>
 
       {/* 门店表格 */}
