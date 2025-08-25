@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Link, useLocation } from "wouter";
 import { Store } from "@shared/schema";
-import { Building2, Users, MapPin, Phone, Mail, User } from "lucide-react";
+import { Building2, Upload, Image } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface StoreStats {
   totalRooms: number;
@@ -16,6 +18,9 @@ interface StoreStats {
 
 export default function StoresPage() {
   const [location, setLocation] = useLocation();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: stores, isLoading } = useQuery<Store[]>({
     queryKey: ['/api/stores'],
@@ -52,6 +57,55 @@ export default function StoresPage() {
     setLocation(`/dashboard?storeId=${storeId}`);
   };
 
+  // 上传平面图
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      // 获取上传URL
+      const uploadResponse = await fetch('/api/objects/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      
+      if (!uploadResponse.ok) throw new Error('获取上传URL失败');
+      
+      const { uploadURL } = await uploadResponse.json();
+      
+      // 上传文件
+      const uploadFileResponse = await fetch(uploadURL, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type,
+        },
+      });
+      
+      if (!uploadFileResponse.ok) throw new Error('文件上传失败');
+      
+      return { uploadURL };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "上传成功！",
+        description: "平面图已上传，请刷新页面查看效果"
+      });
+      setSelectedFile(null);
+      queryClient.invalidateQueries({ queryKey: ['/api/floor-plans'] });
+    },
+    onError: (error) => {
+      toast({
+        title: "上传失败",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  const handleFileUpload = () => {
+    if (selectedFile) {
+      uploadMutation.mutate(selectedFile);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="container mx-auto p-6" data-testid="stores-loading">
@@ -62,9 +116,6 @@ export default function StoresPage() {
     );
   }
 
-  // 调试信息
-  console.log('门店数据:', stores);
-  console.log('是否加载中:', isLoading);
 
   return (
     <div className="container mx-auto p-6 space-y-6" data-testid="stores-page">
@@ -77,12 +128,31 @@ export default function StoresPage() {
         </div>
       </div>
 
-      {/* 调试信息显示 */}
-      <div className="bg-yellow-100 p-4 rounded-lg">
-        <h3 className="font-bold">调试信息:</h3>
-        <p>门店数量: {stores?.length || 0}</p>
-        <p>加载状态: {isLoading ? '加载中' : '已完成'}</p>
-        <p>数据: {JSON.stringify(stores)}</p>
+      {/* 平面图上传功能 */}
+      <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg">
+        <h3 className="font-bold text-blue-800 mb-3 flex items-center gap-2">
+          <Image className="h-5 w-5" />
+          平面图上传
+        </h3>
+        <div className="flex items-center gap-4">
+          <Input
+            type="file"
+            accept="image/*"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            className="flex-1"
+          />
+          <Button 
+            onClick={handleFileUpload}
+            disabled={!selectedFile || uploadMutation.isPending}
+            className="flex items-center gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            {uploadMutation.isPending ? '上传中...' : '上传平面图'}
+          </Button>
+        </div>
+        <p className="text-sm text-blue-600 mt-2">
+          💡 支持 JPG、PNG、SVG 格式，建议尺寸 1920x1080 或更高
+        </p>
       </div>
 
       {/* 门店表格 */}
