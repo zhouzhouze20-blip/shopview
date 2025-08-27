@@ -623,18 +623,22 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold text-slate-900">楼层管理</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">楼层管理</h1>
+          <p className="text-slate-600 mt-1">为当前门店配置楼层并上传对应的平面图</p>
+        </div>
         
         <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
           <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
+            <Button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700">
               <Plus className="h-4 w-4" />
-              创建新平面图
+              添加新楼层
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>创建楼层平面图</DialogTitle>
+              <DialogTitle>添加新楼层</DialogTitle>
+              <p className="text-sm text-slate-600">为当前门店添加一个新的楼层配置</p>
             </DialogHeader>
             <form onSubmit={handleCreateFloorPlan} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -662,25 +666,33 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="level">楼层</Label>
-                  <Input
-                    id="level"
-                    value={newFloorPlan.level}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, level: e.target.value })}
-                    placeholder="例: L1, F1, B1"
-                    required
-                  />
+                  <Label htmlFor="level">楼层标识</Label>
+                  <Select value={newFloorPlan.level} onValueChange={(value) => setNewFloorPlan({ ...newFloorPlan, level: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择楼层标识" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="B2">B2 (地下二层)</SelectItem>
+                      <SelectItem value="B1">B1 (地下一层)</SelectItem>
+                      <SelectItem value="L1">L1 (一楼大堂)</SelectItem>
+                      <SelectItem value="F2">F2 (二楼)</SelectItem>
+                      <SelectItem value="F3">F3 (三楼)</SelectItem>
+                      <SelectItem value="F4">F4 (四楼)</SelectItem>
+                      <SelectItem value="F5">F5 (五楼)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
-                  <Label htmlFor="floorNumber">楼层编号</Label>
+                  <Label htmlFor="floorNumber">楼层数值</Label>
                   <Input
                     id="floorNumber"
                     type="number"
                     value={newFloorPlan.floorNumber}
                     onChange={(e) => setNewFloorPlan({ ...newFloorPlan, floorNumber: parseInt(e.target.value) })}
-                    placeholder="1"
+                    placeholder="例：1, 2, -1"
                     required
                   />
+                  <p className="text-xs text-slate-500 mt-1">正数表示地面楼层，负数表示地下楼层</p>
                 </div>
               </div>
 
@@ -721,7 +733,9 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
                 <Button type="button" variant="outline" onClick={() => setIsCreateModalOpen(false)}>
                   取消
                 </Button>
-                <Button type="submit">创建</Button>
+                <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
+                  创建楼层
+                </Button>
               </div>
             </form>
           </DialogContent>
@@ -846,9 +860,18 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
             ))
           ) : (
             <div className="p-8 text-center text-slate-500">
-              <Building2 className="h-12 w-12 mx-auto mb-3 text-slate-300" />
-              <p>暂无楼层平面图</p>
-              <p className="text-sm mt-1">点击"创建新平面图"开始配置楼层</p>
+              <Building2 className="h-16 w-16 mx-auto mb-4 text-slate-300" />
+              <h3 className="text-lg font-semibold text-slate-700 mb-2">尚未配置楼层</h3>
+              <p className="mb-4">为当前门店添加楼层配置，然后上传对应的平面图</p>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto">
+                <h4 className="font-semibold text-blue-800 mb-2">操作步骤：</h4>
+                <ol className="text-sm text-blue-700 text-left space-y-1">
+                  <li>1. 点击右上角"添加新楼层"按钮</li>
+                  <li>2. 填写楼层信息（如L1、F2等）</li>
+                  <li>3. 创建后在楼层卡片中上传平面图</li>
+                  <li>4. 激活楼层后即可在平面图中标记房间</li>
+                </ol>
+              </div>
             </div>
           )}
         </div>
