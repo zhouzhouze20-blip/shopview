@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import NavigationSidebar from "@/components/navigation-sidebar";
 import Dashboard from "./dashboard";
 import TenantsPage from "./tenants";
@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { StoreSelector } from "@/components/store-selector";
-import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft, Calendar, CheckCircle, Clock, Plus, Edit, Trash2 } from "lucide-react";
+import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft, Calendar, CheckCircle, Clock, Plus, Edit, Trash2, Upload, Image } from "lucide-react";
 
 // 品牌管理页面组件
 function BrandsPage() {
@@ -440,6 +440,7 @@ function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
 // 楼层管理页面组件
 function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<{[key: string]: File | null}>({});
   const [newFloorPlan, setNewFloorPlan] = useState({
     name: "",
     planVersion: "1.0",
@@ -449,6 +450,8 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
     effectiveDate: new Date().toISOString().split('T')[0],
     expiryDate: ""
   });
+  
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const { data: floorPlans, isLoading, refetch } = useQuery({
@@ -529,6 +532,72 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
     } catch (error) {
       toast({ title: "错误", description: "停用楼层平面图失败", variant: "destructive" });
     }
+  };
+
+  // 上传平面图功能
+  const uploadMutation = useMutation({
+    mutationFn: async ({ floorPlanId, file }: { floorPlanId: string; file: File }) => {
+      // 获取上传URL
+      const uploadResponse = await fetch('/api/objects/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      
+      if (!uploadResponse.ok) throw new Error('获取上传URL失败');
+      
+      const { uploadURL } = await uploadResponse.json();
+      
+      // 上传文件
+      const uploadFileResponse = await fetch(uploadURL, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type,
+        },
+      });
+      
+      if (!uploadFileResponse.ok) throw new Error('文件上传失败');
+      
+      // 更新平面图记录，将上传的URL保存到数据库
+      const updateResponse = await fetch(`/api/floor-plans/${floorPlanId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl: uploadURL.split('?')[0] // 去掉查询参数，只保留路径
+        })
+      });
+      
+      if (!updateResponse.ok) throw new Error('更新平面图记录失败');
+      
+      return { uploadURL, floorPlanId };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "上传成功！",
+        description: `楼层平面图已上传成功`
+      });
+      setSelectedFiles(prev => ({ ...prev, [data.floorPlanId]: null }));
+      queryClient.invalidateQueries({ queryKey: ['/api/floor-plans'] });
+      refetch();
+    },
+    onError: (error) => {
+      toast({
+        title: "上传失败",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  const handleFileUpload = (floorPlanId: string) => {
+    const file = selectedFiles[floorPlanId];
+    if (file) {
+      uploadMutation.mutate({ floorPlanId, file });
+    }
+  };
+
+  const handleFileSelect = (floorPlanId: string, file: File | null) => {
+    setSelectedFiles(prev => ({ ...prev, [floorPlanId]: file }));
   };
 
   if (!selectedStoreId) {
@@ -736,6 +805,42 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
                       编辑
                     </Button>
                   </div>
+                </div>
+                
+                {/* 平面图上传功能 */}
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                    <Image className="h-4 w-4" />
+                    {plan.level} 楼层平面图上传
+                  </h4>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleFileSelect(plan.id, e.target.files?.[0] || null)}
+                      className="flex-1"
+                      data-testid={`input-floorplan-${plan.id}`}
+                    />
+                    <Button 
+                      onClick={() => handleFileUpload(plan.id)}
+                      disabled={!selectedFiles[plan.id] || uploadMutation.isPending}
+                      className="flex items-center gap-2"
+                      size="sm"
+                      data-testid={`button-upload-${plan.id}`}
+                    >
+                      <Upload className="h-4 w-4" />
+                      {uploadMutation.isPending ? '上传中...' : '上传图片'}
+                    </Button>
+                  </div>
+                  <p className="text-sm text-blue-600 mt-2">
+                    💡 支持 JPG、PNG、SVG 格式，用于 {plan.level} ({plan.floorNumber}楼) 平面图显示
+                  </p>
+                  {plan.imageUrl && (
+                    <p className="text-sm text-green-600 mt-1 flex items-center gap-1">
+                      <CheckCircle className="h-3 w-3" />
+                      已有平面图，重新上传将覆盖现有图片
+                    </p>
+                  )}
                 </div>
               </div>
             ))
