@@ -474,8 +474,8 @@ function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
         ...newFloorPlan,
         storeId: selectedStoreId,
         floorNumber: parseInt(newFloorPlan.floorNumber.toString()),
-        effectiveDate: new Date(newFloorPlan.effectiveDate).toISOString(),
-        expiryDate: newFloorPlan.expiryDate ? new Date(newFloorPlan.expiryDate).toISOString() : null,
+        effectiveDate: newFloorPlan.effectiveDate,
+        expiryDate: newFloorPlan.expiryDate || null,
         createdBy: "current-user"
       };
 

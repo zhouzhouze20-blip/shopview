@@ -348,7 +348,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/floor-plans", async (req, res) => {
     try {
-      const floorPlanData = insertFloorPlanSchema.parse(req.body);
+      // 先转换日期字段，再进行schema验证
+      const bodyData = { ...req.body };
+      if (bodyData.effectiveDate) {
+        bodyData.effectiveDate = new Date(bodyData.effectiveDate);
+      }
+      if (bodyData.expiryDate) {
+        bodyData.expiryDate = new Date(bodyData.expiryDate);
+      }
+      
+      const floorPlanData = insertFloorPlanSchema.parse(bodyData);
       const floorPlan = await storage.createFloorPlan(floorPlanData);
       res.status(201).json(floorPlan);
     } catch (error) {
