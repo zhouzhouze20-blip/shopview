@@ -15,9 +15,8 @@ import {
   userMarkedRooms
 } from "@shared/schema";
 import { randomUUID } from "crypto";
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
 import { eq } from "drizzle-orm";
+import { initializeDatabase, type DrizzleDatabase } from "./config";
 
 export interface IStorage {
   // User methods (keeping for compatibility)
@@ -129,7 +128,7 @@ export class MemStorage implements IStorage {
   private floorPlans: Map<string, FloorPlan>;
   private activities: Map<string, Activity>;
   private userMarkedRooms: Map<string, UserMarkedRoom>;
-  private db: any;
+  private db: DrizzleDatabase | null = null;
 
   constructor() {
     this.users = new Map();
@@ -146,14 +145,34 @@ export class MemStorage implements IStorage {
     this.activities = new Map();
     this.userMarkedRooms = new Map();
     
-    // Initialize database connection if DATABASE_URL is available
-    if (process.env.DATABASE_URL) {
-      const connection = neon(process.env.DATABASE_URL);
-      this.db = drizzle(connection);
-    }
+    // Initialize database connection using the new config system
+    this.initializeDatabase();
     
     // Initialize with sample data
     this.initializeData();
+  }
+
+  /**
+   * 初始化数据库连接
+   */
+  private async initializeDatabase() {
+    try {
+      this.db = await initializeDatabase();
+      console.log('✅ 数据库连接初始化成功');
+    } catch (error) {
+      console.warn('⚠️ 数据库连接初始化失败，使用内存存储:', error);
+      this.db = null;
+    }
+  }
+
+  /**
+   * 获取数据库连接，如果不存在则重新初始化
+   */
+  private async getDatabase(): Promise<DrizzleDatabase | null> {
+    if (!this.db) {
+      await this.initializeDatabase();
+    }
+    return this.db;
   }
 
   private initializeData() {
