@@ -22,13 +22,13 @@ docker-compose up -d --build
 ### 端口配置
 - **应用端口**: 2000
 - **数据库端口**: 25432  
-- **Nginx代理**: 28080 (HTTP) / 28443 (HTTPS)
+- **Nginx代理**: 28090 (HTTP) / 28443 (HTTPS)
 
 ### 服务访问地址
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | 主应用 | http://localhost:2000 | 百货柜位管理系统 |
-| Nginx代理 | http://localhost:28080 | 带负载均衡的访问入口 |
+| Nginx代理 | http://localhost:28090 | 带负载均衡的访问入口 |
 | 数据库 | localhost:25432 | PostgreSQL数据库 |
 
 ## 🗂️ 项目结构
@@ -158,7 +158,7 @@ docker-compose logs -f nginx
    ```bash
    # 只开放必要端口
    ufw allow 2000
-   ufw allow 28080
+   ufw allow 28090
    ufw allow 28443
    ```
 
