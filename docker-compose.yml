@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      PORT: 8000
+      PORT: 2000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/commercial_real_estate
       # 添加其他必要的环境变量
       PGHOST: postgres
@@ -42,7 +42,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres123}
       PGDATABASE: commercial_real_estate
     ports:
-      - "28000:8000"
+      - "2000:2000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,7 +51,7 @@ services:
     volumes:
       - app_logs:/app/logs
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

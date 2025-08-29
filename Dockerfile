@@ -49,11 +49,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.confi
 USER nextjs
 
 # Expose port
-EXPOSE 8000
+EXPOSE 2000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:2000/api/health || exit 1
 
 # Start the application
 ENTRYPOINT ["dumb-init", "--"]
