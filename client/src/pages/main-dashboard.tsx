@@ -1,10 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, Component, ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import NavigationSidebar from "@/components/navigation-sidebar";
+import BaseMapsPage from "@/pages/base-maps";
+import UnitMapVersionsPage from "@/pages/unit-map-versions";
+import BusinessUnitsPage from "@/pages/business-units";
+import FloorAreaReportPage from "@/pages/floor-area-report";
 import Dashboard from "./dashboard";
 import TenantsPage from "./tenants";
 import CountersPage from "./counters";
+import FloorsPage from "./floors";
+import CounterRevenueMapPage from "./counter-revenue-map";
+import ContractsPage from "./contracts";
+import ManaframePage from "./manaframe";
+import SuppliersPage from "./suppliers";
+import SystemConfigPage from "./system-config";
+import DecorationsPage from "./decorations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +26,35 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { StoreSelector } from "@/components/store-selector";
-import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, ArrowLeft, Calendar, CheckCircle, Clock, Plus, Edit, Trash2, Upload, Image } from "lucide-react";
+import { useStore } from "@/contexts/StoreContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { Building2, Users, FileText, CreditCard, BarChart3, TrendingUp, Calendar, CheckCircle, Clock, Plus, Edit, Trash2, Upload, Image } from "lucide-react";
+
+// 内容区错误边界：捕获切换时的 removeChild 等错误，避免整页白屏
+class ContentErrorBoundary extends Component<{ children: ReactNode; activeModule: string }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidUpdate(prev: { activeModule: string }) {
+    if (prev.activeModule !== this.props.activeModule && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center text-slate-600">
+          <p className="mb-2">页面切换时出现异常</p>
+          <Button variant="outline" size="sm" onClick={() => this.setState({ hasError: false })}>
+            重试
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // 品牌管理页面组件
 function BrandsPage() {
@@ -40,45 +78,6 @@ function BrandsPage() {
           <CardContent>
             <p className="text-slate-600">时尚女装品牌</p>
             <div className="mt-2 text-sm text-slate-500">分类: 服装</div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-// 合同管理页面组件
-function ContractsPage() {
-  return (
-    <div className="p-6">
-      <h1 className="text-3xl font-bold text-slate-900 mb-6">合同台账</h1>
-      <div className="grid grid-cols-1 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <FileText className="w-5 h-5 mr-2" />
-              合同概览
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">12</div>
-                <div className="text-sm text-slate-600">活跃合同</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">8</div>
-                <div className="text-sm text-slate-600">续约合同</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-orange-600">3</div>
-                <div className="text-sm text-slate-600">即将到期</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-red-600">1</div>
-                <div className="text-sm text-slate-600">过期合同</div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -184,7 +183,7 @@ function SystemOverview() {
             <div className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer">
               <Building2 className="w-8 h-8 text-blue-600 mb-2" />
               <h3 className="font-semibold">铺位资源管理</h3>
-              <p className="text-sm text-slate-600">楼层平面图、厅房管理、空间资产</p>
+              <p className="text-sm text-slate-600">收益仪表盘、厅房管理、空间资产</p>
             </div>
             <div className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer">
               <Users className="w-8 h-8 text-green-600 mb-2" />
@@ -437,465 +436,22 @@ function HallsPage({ selectedStoreId }: { selectedStoreId?: number }) {
   );
 }
 
-// 楼层管理页面组件
-function FloorsPage({ selectedStoreId }: { selectedStoreId?: number }) {
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<{[key: string]: File | null}>({});
-  const [newFloorPlan, setNewFloorPlan] = useState({
-    name: "",
-    planVersion: "1.0",
-    level: "",
-    floorNumber: 1,
-    description: "",
-    effectiveDate: new Date().toISOString().split('T')[0],
-    expiryDate: ""
-  });
-  
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  const { data: floorPlans, isLoading, refetch } = useQuery({
-    queryKey: ["/api/floor-plans", selectedStoreId],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
-      const response = await fetch(`/api/floor-plans?${params}`);
-      if (!response.ok) throw new Error('Failed to fetch floor plans');
-      return response.json();
-    },
-    enabled: !!selectedStoreId
-  });
-
-  const handleCreateFloorPlan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const floorPlanData = {
-        ...newFloorPlan,
-        storeId: selectedStoreId,
-        floorNumber: parseInt(newFloorPlan.floorNumber.toString()),
-        effectiveDate: newFloorPlan.effectiveDate,
-        expiryDate: newFloorPlan.expiryDate || null,
-        createdBy: "current-user"
-      };
-
-      const response = await fetch("/api/floor-plans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(floorPlanData)
-      });
-
-      if (!response.ok) throw new Error("Failed to create floor plan");
-      
-      toast({ title: "成功", description: "楼层平面图创建成功" });
-      setIsCreateModalOpen(false);
-      setNewFloorPlan({
-        name: "",
-        planVersion: "1.0", 
-        level: "",
-        floorNumber: 1,
-        description: "",
-        effectiveDate: new Date().toISOString().split('T')[0],
-        expiryDate: ""
-      });
-      refetch();
-    } catch (error) {
-      toast({ title: "错误", description: "创建楼层平面图失败", variant: "destructive" });
-    }
-  };
-
-  const handleActivateFloorPlan = async (id: string) => {
-    try {
-      const response = await fetch(`/api/floor-plans/${id}/activate`, {
-        method: "POST"
-      });
-
-      if (!response.ok) throw new Error("Failed to activate floor plan");
-      
-      toast({ title: "成功", description: "楼层平面图已激活" });
-      refetch();
-    } catch (error) {
-      toast({ title: "错误", description: "激活楼层平面图失败", variant: "destructive" });
-    }
-  };
-
-  const handleDeactivateFloorPlan = async (id: string) => {
-    try {
-      const response = await fetch(`/api/floor-plans/${id}/deactivate`, {
-        method: "POST"
-      });
-
-      if (!response.ok) throw new Error("Failed to deactivate floor plan");
-      
-      toast({ title: "成功", description: "楼层平面图已停用" });
-      refetch();
-    } catch (error) {
-      toast({ title: "错误", description: "停用楼层平面图失败", variant: "destructive" });
-    }
-  };
-
-  // 上传平面图功能
-  const uploadMutation = useMutation({
-    mutationFn: async ({ floorPlanId, file }: { floorPlanId: string; file: File }) => {
-      // 获取上传URL
-      const uploadResponse = await fetch('/api/objects/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      
-      if (!uploadResponse.ok) throw new Error('获取上传URL失败');
-      
-      const { uploadURL } = await uploadResponse.json();
-      
-      // 上传文件
-      const uploadFileResponse = await fetch(uploadURL, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      });
-      
-      if (!uploadFileResponse.ok) throw new Error('文件上传失败');
-      
-      // 更新平面图记录，将上传的URL保存到数据库
-      const updateResponse = await fetch(`/api/floor-plans/${floorPlanId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageUrl: uploadURL.split('?')[0] // 去掉查询参数，只保留路径
-        })
-      });
-      
-      if (!updateResponse.ok) throw new Error('更新平面图记录失败');
-      
-      return { uploadURL, floorPlanId };
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "上传成功！",
-        description: `楼层平面图已上传成功`
-      });
-      setSelectedFiles(prev => ({ ...prev, [data.floorPlanId]: null }));
-      queryClient.invalidateQueries({ queryKey: ['/api/floor-plans'] });
-      refetch();
-    },
-    onError: (error) => {
-      toast({
-        title: "上传失败",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  });
-
-  const handleFileUpload = (floorPlanId: string) => {
-    const file = selectedFiles[floorPlanId];
-    if (file) {
-      uploadMutation.mutate({ floorPlanId, file });
-    }
-  };
-
-  const handleFileSelect = (floorPlanId: string, file: File | null) => {
-    setSelectedFiles(prev => ({ ...prev, [floorPlanId]: file }));
-  };
-
-  if (!selectedStoreId) {
-    return (
-      <div className="p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-lg text-slate-500">请先选择一个门店</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-lg">正在加载楼层信息...</div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">楼层管理</h1>
-          <p className="text-slate-600 mt-1">为当前门店配置楼层并上传对应的平面图</p>
-        </div>
-        
-        <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700">
-              <Plus className="h-4 w-4" />
-              添加新楼层
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>添加新楼层</DialogTitle>
-              <p className="text-sm text-slate-600">为当前门店添加一个新的楼层配置</p>
-            </DialogHeader>
-            <form onSubmit={handleCreateFloorPlan} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="name">平面图名称</Label>
-                  <Input
-                    id="name"
-                    value={newFloorPlan.name}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, name: e.target.value })}
-                    placeholder="例: L1主营业区"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="version">版本号</Label>
-                  <Input
-                    id="version"
-                    value={newFloorPlan.planVersion}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, planVersion: e.target.value })}
-                    placeholder="例: 1.0"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="level">楼层标识</Label>
-                  <Select value={newFloorPlan.level} onValueChange={(value) => setNewFloorPlan({ ...newFloorPlan, level: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择楼层标识" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="B2">B2 (地下二层)</SelectItem>
-                      <SelectItem value="B1">B1 (地下一层)</SelectItem>
-                      <SelectItem value="L1">L1 (一楼大堂)</SelectItem>
-                      <SelectItem value="F2">F2 (二楼)</SelectItem>
-                      <SelectItem value="F3">F3 (三楼)</SelectItem>
-                      <SelectItem value="F4">F4 (四楼)</SelectItem>
-                      <SelectItem value="F5">F5 (五楼)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="floorNumber">楼层数值</Label>
-                  <Input
-                    id="floorNumber"
-                    type="number"
-                    value={newFloorPlan.floorNumber}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, floorNumber: parseInt(e.target.value) })}
-                    placeholder="例：1, 2, -1"
-                    required
-                  />
-                  <p className="text-xs text-slate-500 mt-1">正数表示地面楼层，负数表示地下楼层</p>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="description">描述</Label>
-                <Textarea
-                  id="description"
-                  value={newFloorPlan.description}
-                  onChange={(e) => setNewFloorPlan({ ...newFloorPlan, description: e.target.value })}
-                  placeholder="楼层平面图描述信息"
-                  rows={2}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="effectiveDate">生效日期</Label>
-                  <Input
-                    id="effectiveDate"
-                    type="date"
-                    value={newFloorPlan.effectiveDate}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, effectiveDate: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="expiryDate">失效日期 (可选)</Label>
-                  <Input
-                    id="expiryDate"
-                    type="date"
-                    value={newFloorPlan.expiryDate}
-                    onChange={(e) => setNewFloorPlan({ ...newFloorPlan, expiryDate: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-4">
-                <Button type="button" variant="outline" onClick={() => setIsCreateModalOpen(false)}>
-                  取消
-                </Button>
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
-                  创建楼层
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200">
-        <div className="p-4 border-b border-slate-200">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-blue-600" />
-            楼层平面图管理
-          </h2>
-          <p className="text-sm text-slate-600 mt-1">管理楼层平面图版本、生效时间和状态</p>
-        </div>
-        
-        <div className="divide-y divide-slate-200">
-          {floorPlans && floorPlans.length > 0 ? (
-            floorPlans.map((plan: any) => (
-              <div key={plan.id} className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold text-lg">{plan.name}</h3>
-                      <Badge 
-                        variant={plan.isActive ? "default" : "secondary"}
-                        className={plan.isActive ? "bg-green-100 text-green-800 border-green-200" : ""}
-                      >
-                        {plan.isActive ? "当前激活" : "未激活"}
-                      </Badge>
-                      <Badge variant="outline">v{plan.planVersion}</Badge>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-slate-600">
-                      <div className="flex items-center gap-1">
-                        <Building2 className="h-4 w-4" />
-                        <span>{plan.level} ({plan.floorNumber}楼)</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
-                        <span>生效: {new Date(plan.effectiveDate).toLocaleDateString()}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        <span>失效: {plan.expiryDate ? new Date(plan.expiryDate).toLocaleDateString() : "无限期"}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Users className="h-4 w-4" />
-                        <span>创建者: {plan.createdBy || "系统"}</span>
-                      </div>
-                    </div>
-                    
-                    {plan.description && (
-                      <p className="text-sm text-slate-500 mt-2">{plan.description}</p>
-                    )}
-                  </div>
-                  
-                  <div className="flex items-center gap-2 ml-4">
-                    {!plan.isActive && (
-                      <Button 
-                        size="sm" 
-                        onClick={() => handleActivateFloorPlan(plan.id)}
-                        className="flex items-center gap-1"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        激活
-                      </Button>
-                    )}
-                    {plan.isActive && (
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleDeactivateFloorPlan(plan.id)}
-                        className="flex items-center gap-1"
-                      >
-                        <Clock className="h-4 w-4" />
-                        停用
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" className="flex items-center gap-1">
-                      <Edit className="h-4 w-4" />
-                      编辑
-                    </Button>
-                  </div>
-                </div>
-                
-                {/* 平面图上传功能 */}
-                <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                  <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                    <Image className="h-4 w-4" />
-                    {plan.level} 楼层平面图上传
-                  </h4>
-                  <div className="flex items-center gap-3">
-                    <Input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => handleFileSelect(plan.id, e.target.files?.[0] || null)}
-                      className="flex-1"
-                      data-testid={`input-floorplan-${plan.id}`}
-                    />
-                    <Button 
-                      onClick={() => handleFileUpload(plan.id)}
-                      disabled={!selectedFiles[plan.id] || uploadMutation.isPending}
-                      className="flex items-center gap-2"
-                      size="sm"
-                      data-testid={`button-upload-${plan.id}`}
-                    >
-                      <Upload className="h-4 w-4" />
-                      {uploadMutation.isPending ? '上传中...' : '上传图片'}
-                    </Button>
-                  </div>
-                  <p className="text-sm text-blue-600 mt-2">
-                    💡 支持 JPG、PNG、SVG 格式，用于 {plan.level} ({plan.floorNumber}楼) 平面图显示
-                  </p>
-                  {plan.imageUrl && (
-                    <p className="text-sm text-green-600 mt-1 flex items-center gap-1">
-                      <CheckCircle className="h-3 w-3" />
-                      已有平面图，重新上传将覆盖现有图片
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="p-8 text-center text-slate-500">
-              <Building2 className="h-16 w-16 mx-auto mb-4 text-slate-300" />
-              <h3 className="text-lg font-semibold text-slate-700 mb-2">尚未配置楼层</h3>
-              <p className="mb-4">为当前门店添加楼层配置，然后上传对应的平面图</p>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto">
-                <h4 className="font-semibold text-blue-800 mb-2">操作步骤：</h4>
-                <ol className="text-sm text-blue-700 text-left space-y-1">
-                  <li>1. 点击右上角"添加新楼层"按钮</li>
-                  <li>2. 填写楼层信息（如L1、F2等）</li>
-                  <li>3. 创建后在楼层卡片中上传平面图</li>
-                  <li>4. 激活楼层后即可在平面图中标记房间</li>
-                </ol>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
-  const [selectedStoreId, setSelectedStoreId] = useState<number | undefined>(undefined);
-  const [location, setLocation] = useLocation();
+  const [location] = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const hasSyncedUrlRef = useRef(false);
+  const { user, logout } = useAuth();
 
-  // 从URL参数获取门店ID和视图
+  // 使用全局门店状态
+  const { selectedStoreId } = useStore();
+
+  // 仅首次进入本页时根据 URL 设置模块，之后不再覆盖用户点击的菜单
   useEffect(() => {
+    if (hasSyncedUrlRef.current) return;
+    hasSyncedUrlRef.current = true;
     const params = new URLSearchParams(window.location.search);
-    const storeIdParam = params.get('storeId');
     const viewParam = params.get('view');
-    
-    if (storeIdParam) {
-      setSelectedStoreId(parseInt(storeIdParam));
-    }
-    
     if (viewParam) {
       if (viewParam === 'rooms') {
         setActiveModule('floor-plan');
@@ -903,90 +459,140 @@ export default function MainDashboard() {
         setActiveModule(viewParam);
       }
     }
-  }, [location]);
+  }, []);
 
   const renderContent = () => {
     switch (activeModule) {
       case "dashboard":
         return <SystemOverview />;
       case "floor-plan":
-        return <Dashboard selectedStoreId={selectedStoreId} />;
-      case "floors":
-        return <FloorsPage selectedStoreId={selectedStoreId} />;
+        return <Dashboard selectedStoreId={selectedStoreId ?? undefined} />;
+      case "counter-revenue-map":
+        return <CounterRevenueMapPage />;
       case "counters":
-        return <CountersPage selectedStoreId={selectedStoreId} />;
+        return <CountersPage />;
       case "halls":
-        return <HallsPage selectedStoreId={selectedStoreId} />;
+        return <HallsPage selectedStoreId={selectedStoreId ?? undefined} />;
       case "tenants":
-        return <TenantsPage selectedStoreId={selectedStoreId} />;
+        return <TenantsPage selectedStoreId={selectedStoreId ?? undefined} />;
+      case "floors":
+        return <FloorsPage />;
+      case "base-maps":
+        return <BaseMapsPage />;
+      case "unit-map-versions":
+        return <UnitMapVersionsPage />;
+      case "business-units":
+        return <BusinessUnitsPage />;
+      case "floor-area-report":
+        return <FloorAreaReportPage />;
       case "brands":
         return <BrandsPage />;
+      case "suppliers":
+        return <SuppliersPage />;
+      case "manaframe":
+        return <ManaframePage />;
       case "contracts":
         return <ContractsPage />;
+      case "decorations":
+        return <DecorationsPage initialTab="projects" />;
+      case "decorations-todos":
+        return <DecorationsPage initialTab="todos" />;
       case "bills":
         return <FinancialPage />;
+      case "users":
+        return <SystemConfigPage initialTab="users" />;
+      case "roles":
+        return <SystemConfigPage initialTab="roles" />;
       default:
         return <SystemOverview />;
     }
-  };
-
-  const handleBackToStores = () => {
-    setLocation('/stores');
-  };
-
-  const handleStoreChange = (storeId: number | undefined) => {
-    setSelectedStoreId(storeId);
-    // 更新URL参数
-    const params = new URLSearchParams();
-    if (storeId) {
-      params.set('storeId', storeId.toString());
-    }
-    const newUrl = `/dashboard${params.toString() ? '?' + params.toString() : ''}`;
-    setLocation(newUrl);
   };
 
   const handleToggleSidebar = () => {
     setSidebarCollapsed(!sidebarCollapsed);
   };
 
+  const { toast } = useToast();
+
+  const exitFullscreenSafely = () => {
+    if (!document.fullscreenElement) return Promise.resolve(true);
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let timeoutId: number | undefined;
+
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        document.removeEventListener("fullscreenchange", handleFullscreenChange);
+        resolve(result);
+      };
+
+      const handleFullscreenChange = () => {
+        if (!document.fullscreenElement) finish(true);
+      };
+
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+      timeoutId = window.setTimeout(() => {
+        finish(!document.fullscreenElement);
+      }, 1500);
+
+      try {
+        const result = document.exitFullscreen();
+        if (result && typeof result.then === "function") {
+          result.catch(() => finish(!document.fullscreenElement));
+        }
+      } catch {
+        finish(!document.fullscreenElement);
+      }
+    });
+  };
+
+  // 切换模块：非全屏时直接切换；全屏时先退出全屏再切换
+  const handleModuleChange = async (moduleId: string) => {
+    if (document.fullscreenElement) {
+      const exited = await exitFullscreenSafely();
+      if (!exited) {
+        toast({
+          title: "请先退出全屏",
+          description: "当前全屏未能自动退出，请按 Esc 退出全屏后再切换模块。",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    setActiveModule(moduleId);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex" data-testid="main-dashboard">
       <NavigationSidebar 
         activeModule={activeModule} 
-        onModuleChange={setActiveModule}
+        onModuleChange={handleModuleChange}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
       />
       <main className="flex-1 overflow-auto" data-testid="main-content">
-        {/* 顶部工具栏 */}
-        <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+        {/* 顶部栏：仅显示系统标题 */}
+        <div className="bg-white border-b px-6 py-4 flex items-center justify-end">
           <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleBackToStores}
-              className="flex items-center gap-2"
-              data-testid="button-back-to-stores"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              返回门店选择
+            <div className="text-right">
+              <div className="text-sm font-medium text-slate-900">{user?.real_name || user?.username}</div>
+              <div className="text-xs text-muted-foreground">{user?.role_names?.join(" / ") || "已登录"}</div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => logout()}>
+              退出登录
             </Button>
-            
-            <div className="h-4 w-px bg-gray-300" />
-            
-            <StoreSelector
-              selectedStoreId={selectedStoreId}
-              onStoreChange={handleStoreChange}
-              placeholder="选择门店"
-            />
-          </div>
-          
-          <div className="text-sm text-muted-foreground">
-            百货柜位管理系统
           </div>
         </div>
-        
-        {renderContent()}
+
+        {/* key 强制按模块完整卸载再挂载；错误边界兜底 removeChild 等异常 */}
+        <ContentErrorBoundary activeModule={activeModule}>
+          <div key={activeModule} className="min-h-0 flex-1">
+            {renderContent()}
+          </div>
+        </ContentErrorBoundary>
       </main>
     </div>
   );

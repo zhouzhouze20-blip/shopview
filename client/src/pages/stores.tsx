@@ -1,11 +1,9 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Link, useLocation } from "wouter";
-import { Store } from "@shared/schema";
+import { useLocation } from "wouter";
 import { Building2 } from "lucide-react";
+import { useStore } from "@/contexts/StoreContext";
 
 interface StoreStats {
   totalRooms: number;
@@ -16,40 +14,21 @@ interface StoreStats {
 
 export default function StoresPage() {
   const [location, setLocation] = useLocation();
+  
+  // 使用全局门店状态
+  const { stores, isLoading, error, refetch, setSelectedStoreId } = useStore();
 
-  const { data: stores, isLoading } = useQuery<Store[]>({
-    queryKey: ['/api/stores'],
-  });
+  console.log('当前状态:', { isLoading, error, stores: stores?.length });
 
-  const { data: statsData, isLoading: isLoadingStats } = useQuery<{[key: number]: StoreStats}>({
-    queryKey: ['/api/stores/stats'],
-    queryFn: async () => {
-      if (!stores) return {};
-      
-      const stats: {[key: number]: StoreStats} = {};
-      
-      // 获取每个门店的统计数据
-      await Promise.all(
-        stores.map(async (store) => {
-          try {
-            const response = await fetch(`/api/stats?storeId=${store.storeId}`);
-            if (response.ok) {
-              stats[store.storeId] = await response.json();
-            }
-          } catch (error) {
-            console.error(`Failed to fetch stats for store ${store.storeId}:`, error);
-          }
-        })
-      );
-      
-      return stats;
-    },
-    enabled: !!stores,
-  });
+  // 暂时禁用统计API调用，因为后端没有这个端点
+  const statsData: {[key: number]: StoreStats} = {};
+  const isLoadingStats = false;
 
   const handleStoreSelect = (storeId: number) => {
-    // 导航到主页面并传递选中的门店ID
-    setLocation(`/dashboard?storeId=${storeId}`);
+    // 设置全局门店状态
+    setSelectedStoreId(storeId);
+    // 导航到主页面
+    setLocation('/dashboard');
   };
 
   if (isLoading) {
@@ -57,6 +36,37 @@ export default function StoresPage() {
       <div className="container mx-auto p-6" data-testid="stores-loading">
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-lg">正在加载门店信息...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    const isConnectionRefused =
+      error?.message?.includes('Failed to fetch') ||
+      error?.message?.includes('NetworkError') ||
+      error?.message?.includes('ERR_CONNECTION_REFUSED');
+    return (
+      <div className="container mx-auto p-6" data-testid="stores-error">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center max-w-md">
+            <div className="text-lg text-red-600 mb-2">门店列表加载失败</div>
+            {isConnectionRefused ? (
+              <>
+                <p className="text-sm text-gray-600 mb-2">
+                  无法连接到后端 API（端口 8000），请先在终端启动本项目的 Python 后端服务。
+                </p>
+                <p className="text-xs text-gray-500 font-mono bg-slate-100 p-3 rounded mb-4 text-left break-all">
+                  cd python_app && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+                </p>
+              </>
+            ) : (
+              <div className="text-sm text-gray-500 mb-4">{String(error)}</div>
+            )}
+            <Button onClick={() => refetch()} className="mt-2">
+              重新加载
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -71,6 +81,15 @@ export default function StoresPage() {
           <p className="text-muted-foreground mt-2">
             选择门店进入管理系统，查看各门店的运营情况
           </p>
+        </div>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isLoading}
+          >
+            {isLoading ? '加载中...' : '刷新数据'}
+          </Button>
         </div>
       </div>
 
@@ -92,18 +111,24 @@ export default function StoresPage() {
             </TableHeader>
             <TableBody>
               {stores.map((store) => {
-                const stats = statsData?.[store.storeId];
+                // 使用正确的字段名
+                const storeId = store.storeId;
+                const storeName = store.storeName;
+                const storeCode = store.storeCode;
+                const isActive = store.isActive;
+                
+                const stats = statsData?.[storeId];
                 const occupancyRate = stats ? Math.round((stats.occupied / stats.totalRooms) * 100) : 0;
                 
                 return (
-                  <TableRow key={store.storeId} data-testid={`row-store-${store.storeId}`}>
+                  <TableRow key={storeId} data-testid={`row-store-${storeId}`}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <Building2 className="h-4 w-4 text-blue-600" />
-                        {store.storeName}
+                        {storeName}
                       </div>
                     </TableCell>
-                    <TableCell>{store.storeCode}</TableCell>
+                    <TableCell>{storeCode}</TableCell>
                     <TableCell>
                       {stats && !isLoadingStats ? stats.totalRooms : '-'}
                     </TableCell>
@@ -126,24 +151,24 @@ export default function StoresPage() {
                       ) : '-'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={store.isActive ? "default" : "secondary"}>
-                        {store.isActive ? "运营中" : "暂停"}
+                      <Badge variant={isActive ? "default" : "secondary"}>
+                        {isActive ? "运营中" : "暂停"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
                         <Button 
                           size="sm"
-                          onClick={() => handleStoreSelect(store.storeId)}
-                          data-testid={`button-enter-store-${store.storeId}`}
+                          onClick={() => handleStoreSelect(storeId)}
+                          data-testid={`button-enter-store-${storeId}`}
                         >
                           进入管理
                         </Button>
                         <Button 
                           size="sm"
                           variant="outline" 
-                          onClick={() => setLocation(`/dashboard?storeId=${store.storeId}&view=rooms`)}
-                          data-testid={`button-view-rooms-${store.storeId}`}
+                          onClick={() => setLocation(`/dashboard?storeId=${storeId}&view=rooms`)}
+                          data-testid={`button-view-rooms-${storeId}`}
                         >
                           查看厅房
                         </Button>

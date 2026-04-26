@@ -758,42 +758,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ==================== 楼层管理 API (新架构) ====================
-  app.get("/api/floors", async (req, res) => {
-    try {
-      const floors = await storage.getAllFloors();
-      res.json(floors);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch floors" });
-    }
-  });
-
-  app.get("/api/floors/:id", async (req, res) => {
-    try {
-      const floorId = parseInt(req.params.id);
-      const floor = await storage.getFloor(floorId);
-      if (!floor) {
-        return res.status(404).json({ message: "Floor not found" });
-      }
-      res.json(floor);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch floor" });
-    }
-  });
-
-  app.post("/api/floors", async (req, res) => {
-    try {
-      const floorData = insertFloorSchema.parse(req.body);
-      const floor = await storage.createFloor(floorData);
-      res.status(201).json(floor);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid floor data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create floor" });
-    }
-  });
-
   // ==================== 空间资产管理 API (新架构) ====================
   app.get("/api/space-assets", async (req, res) => {
     try {

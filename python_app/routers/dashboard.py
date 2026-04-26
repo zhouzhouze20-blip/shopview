@@ -5,9 +5,9 @@ Department Store Counter Management System - Dashboard API
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from ..models.database import get_db
-from ..models.models import Store, Counter, Tenant, Contract, Bill
-from ..schemas.schemas import DashboardStats, StoreStats
+from models.database import get_db
+from models.models import Store, Counter, Tenant, Contract, Bill
+from schemas.schemas import DashboardStats, StoreStats
 from typing import List
 from decimal import Decimal
 

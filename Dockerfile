@@ -1,60 +1,77 @@
-# Multi-stage build for production
-FROM node:18-alpine AS builder
+# 百货柜位管理系统 - 极简部署 Dockerfile
 
-# Set working directory
+# 阶段1: 构建前端
+FROM node:20-bookworm-slim AS frontend-builder
+
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json ./
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm config set strict-ssl false && \
+    npm config set fetch-retries 5
 
-# Install dependencies
-RUN npm ci
+COPY client/package*.json ./
 
-# Copy source code
-COPY . .
+RUN npm ci --include=optional --legacy-peer-deps
 
-# Build the application
-RUN npm run build
+COPY client/ ./
 
-# Production stage
-FROM node:18-alpine AS production
+RUN npm run build:no-check
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# 阶段2: Python 运行时
+FROM python:3.11-slim
 
-# Create app user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nextjs -u 1001
-
-# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json ./
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_EXTRA_INDEX_URL=
 
-# Install only production dependencies
-RUN npm ci --only=production && npm cache clean --force
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=20 \
+    PIP_PROGRESS_BAR=off \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL} \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONPATH=/app:/app/python_app
 
-# Copy built application from builder stage
-COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nextjs:nodejs /app/server ./server
-COPY --from=builder --chown=nextjs:nodejs /app/shared ./shared
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    curl \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy database migration files
-COPY --from=builder --chown=nextjs:nodejs /app/migrations ./migrations
-COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
+COPY python_requirements.txt ./
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --prefer-binary \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
+    -r python_requirements.txt
 
-# Switch to non-root user
-USER nextjs
+COPY python_app/ ./python_app/
+COPY --from=frontend-builder /app/dist ./static
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
-# Expose port
-EXPOSE 2000
+RUN mkdir -p /app/uploads /app/logs
+RUN chmod +x /app/docker-entrypoint.sh /app/python_app/alembic_upgrade.sh
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:2000/api/health || exit 1
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Start the application
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "server/index.js"]
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl --fail http://localhost:8000/api/health || exit 1
+
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["sh", "-c", "exec uvicorn python_app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-4}"]

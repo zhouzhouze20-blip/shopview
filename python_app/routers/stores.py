@@ -5,9 +5,9 @@ Department Store Counter Management System - Store Management API
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from ..models.database import get_db
-from ..models.models import Store
-from ..schemas.schemas import Store as StoreSchema, StoreCreate, StoreUpdate, BaseResponse
+from models.database import get_db
+from models.models import Store
+from schemas.schemas import Store as StoreSchema, StoreCreate, StoreUpdate, BaseResponse
 
 router = APIRouter(
     prefix="/api/stores",
@@ -15,6 +15,7 @@ router = APIRouter(
 )
 
 
+@router.get("", response_model=List[StoreSchema])
 @router.get("/", response_model=List[StoreSchema])
 async def get_stores(
     skip: int = 0,

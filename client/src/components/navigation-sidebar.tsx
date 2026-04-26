@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Users, FileText, CreditCard, BarChart3, Settings, Home, ChevronLeft } from "lucide-react";
+import { Building2, Users, FileText, CreditCard, BarChart3, Settings, Home, ChevronLeft, Truck, HardHat } from "lucide-react";
 
 interface NavigationItem {
   id: string;
@@ -22,11 +22,18 @@ const navigationItems: NavigationItem[] = [
     name: "铺位资源管理",
     icon: Building2,
     subItems: [
-      { id: "counters", name: "柜位管理", icon: Building2 },
-      { id: "floor-plan", name: "楼层平面图", icon: Home },
-      { id: "halls", name: "厅房管理", icon: Building2 },
-      { id: "floors", name: "楼层管理", icon: Building2 },
-      { id: "space-assets", name: "空间资产", icon: Building2 }
+      { id: "floor-plan", name: "收益仪表盘", icon: Home },
+      { id: "counter-revenue-map", name: "柜位收益图", icon: BarChart3 },
+      { id: "halls", name: "厅房管理", icon: Building2 }
+    ]
+  },
+  {
+    id: "decoration-management",
+    name: "装修管理",
+    icon: HardHat,
+    subItems: [
+      { id: "decorations", name: "装修项目", icon: HardHat },
+      { id: "decorations-todos", name: "装修待办", icon: FileText }
     ]
   },
   {
@@ -34,8 +41,8 @@ const navigationItems: NavigationItem[] = [
     name: "品牌/商户管理",
     icon: Users,
     subItems: [
-      { id: "tenants", name: "商户档案", icon: Users },
-      { id: "brands", name: "品牌档案", icon: Users }
+      { id: "manaframe", name: "柜位定义", icon: Building2 },
+      { id: "suppliers", name: "供应商管理", icon: Truck }
     ]
   },
   {
@@ -61,6 +68,18 @@ const navigationItems: NavigationItem[] = [
     name: "系统管理",
     icon: Settings,
     subItems: [
+      {
+        id: "floor-base-definitions",
+        name: "楼层基础定义",
+        icon: Building2,
+        subItems: [
+          { id: "floors", name: "楼层定义", icon: Building2 },
+          { id: "base-maps", name: "底图管理", icon: Building2 },
+          { id: "unit-map-versions", name: "柜位图版本", icon: Building2 },
+          { id: "business-units", name: "经营单元设置", icon: Building2 },
+          { id: "floor-area-report", name: "楼层面积报表", icon: BarChart3 },
+        ],
+      },
       { id: "users", name: "用户管理", icon: Users },
       { id: "roles", name: "角色权限", icon: Settings }
     ]
@@ -75,7 +94,7 @@ interface NavigationSidebarProps {
 }
 
 export default function NavigationSidebar({ activeModule = "floor-plan", onModuleChange, isCollapsed = false, onToggleCollapse }: NavigationSidebarProps) {
-  const [expandedItems, setExpandedItems] = useState<string[]>(["space-management"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["space-management", "tenant-management", "system-management", "floor-base-definitions"]);
 
   const toggleExpanded = (itemId: string) => {
     setExpandedItems(prev => 
@@ -185,17 +204,49 @@ export default function NavigationSidebar({ activeModule = "floor-plan", onModul
             {item.subItems && expandedItems.includes(item.id) && (
               <div className="bg-slate-800">
                 {item.subItems.map((subItem) => (
-                  <button
-                    key={subItem.id}
-                    onClick={() => handleItemClick(subItem.id, false)}
-                    className={`w-full flex items-center px-12 py-2 text-left hover:bg-slate-700 transition-colors ${
-                      activeModule === subItem.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
-                    }`}
-                    data-testid={`nav-subitem-${subItem.id}`}
-                  >
-                    <subItem.icon className="w-4 h-4 mr-3" />
-                    <span className="text-sm">{subItem.name}</span>
-                  </button>
+                  <div key={subItem.id}>
+                    <button
+                      onClick={() => handleItemClick(subItem.id, !!subItem.subItems)}
+                      className={`w-full flex items-center justify-between px-12 py-2 text-left hover:bg-slate-700 transition-colors ${
+                        activeModule === subItem.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
+                      }`}
+                      data-testid={`nav-subitem-${subItem.id}`}
+                    >
+                      <div className="flex items-center">
+                        <subItem.icon className="w-4 h-4 mr-3" />
+                        <span className="text-sm">{subItem.name}</span>
+                      </div>
+                      {subItem.subItems && (
+                        <svg
+                          className={`w-3 h-3 transition-transform ${
+                            expandedItems.includes(subItem.id) ? "rotate-90" : ""
+                          }`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                    </button>
+                    {subItem.subItems && expandedItems.includes(subItem.id) && (
+                      <div className="bg-slate-700/50">
+                        {subItem.subItems.map((leaf) => (
+                          <button
+                            key={leaf.id}
+                            onClick={() => handleItemClick(leaf.id, false)}
+                            className={`w-full flex items-center px-16 py-2 text-left hover:bg-slate-700 transition-colors ${
+                              activeModule === leaf.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
+                            }`}
+                            data-testid={`nav-subitem-${subItem.id}-${leaf.id}`}
+                          >
+                            <leaf.icon className="w-4 h-4 mr-3" />
+                            <span className="text-sm">{leaf.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

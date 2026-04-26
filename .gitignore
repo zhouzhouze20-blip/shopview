@@ -5,3 +5,15 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .git.backup.*
+.env
+.env.python
+.config/
+.local/
+.pytest_cache/
+.venv/
+__pycache__/
+*.py[cod]
+attached_assets/
+client/dist/
+static/assets/
+uploads/

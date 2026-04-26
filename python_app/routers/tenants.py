@@ -5,9 +5,9 @@ Department Store Counter Management System - Tenant Management API
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from ..models.database import get_db
-from ..models.models import Tenant
-from ..schemas.schemas import Tenant as TenantSchema, TenantCreate, TenantUpdate, BaseResponse
+from models.database import get_db
+from models.models import Tenant
+from schemas.schemas import Tenant as TenantSchema, TenantCreate, TenantUpdate, BaseResponse
 
 router = APIRouter(
     prefix="/api/tenants",
@@ -35,16 +35,25 @@ async def get_tenants(
     return tenants
 
 
-@router.get("/{tenant_id}", response_model=TenantSchema)
-async def get_tenant(tenant_id: int, db: Session = Depends(get_db)):
-    """获取单个租户信息"""
-    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="租户不存在"
-        )
-    return tenant
+@router.get("/search/", response_model=List[TenantSchema])
+async def search_tenants(
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    q: Optional[str] = Query(None, description="兼容前端搜索参数"),
+    storeId: Optional[int] = Query(None, description="兼容前端门店参数，当前未启用"),
+    db: Session = Depends(get_db)
+):
+    """搜索租户"""
+    _ = storeId
+    search_value = (keyword or q or "").strip()
+    if not search_value:
+        return []
+
+    tenants = db.query(Tenant).filter(
+        (Tenant.company_name.ilike(f"%{search_value}%")) |
+        (Tenant.tenant_code.ilike(f"%{search_value}%")) |
+        (Tenant.contact_person.ilike(f"%{search_value}%"))
+    ).all()
+    return tenants
 
 
 @router.post("/", response_model=TenantSchema)
@@ -103,15 +112,13 @@ async def delete_tenant(tenant_id: int, db: Session = Depends(get_db)):
     return BaseResponse(message="租户删除成功")
 
 
-@router.get("/search/", response_model=List[TenantSchema])
-async def search_tenants(
-    keyword: str = Query(..., description="搜索关键词"),
-    db: Session = Depends(get_db)
-):
-    """搜索租户"""
-    tenants = db.query(Tenant).filter(
-        (Tenant.company_name.ilike(f"%{keyword}%")) |
-        (Tenant.tenant_code.ilike(f"%{keyword}%")) |
-        (Tenant.contact_person.ilike(f"%{keyword}%"))
-    ).all()
-    return tenants
+@router.get("/{tenant_id}", response_model=TenantSchema)
+async def get_tenant(tenant_id: int, db: Session = Depends(get_db)):
+    """获取单个租户信息"""
+    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="租户不存在"
+        )
+    return tenant

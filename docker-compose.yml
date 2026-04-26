@@ -1,84 +1,18 @@
-version: '3.8'
-
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: commercial-real-estate-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: commercial_real_estate
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
-    ports:
-      - "25432:5432"
-    networks:
-      - app-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d commercial_real_estate"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-
-  # Application
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: commercial-real-estate-app
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    container_name: shopview-app
     restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      PORT: 2000
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/commercial_real_estate
-      # 添加其他必要的环境变量
-      PGHOST: postgres
-      PGPORT: 5432
-      PGUSER: postgres
-      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres123}
-      PGDATABASE: commercial_real_estate
+    user: ${APP_RUN_USER:-0:0}
+    env_file:
+      - .env
     ports:
-      - "2000:2000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - app-network
+      - "${APP_PORT}:${PORT}"
     volumes:
-      - app_logs:/app/logs
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # Nginx (可选的反向代理)
-  nginx:
-    image: nginx:alpine
-    container_name: commercial-real-estate-nginx
-    restart: unless-stopped
-    ports:
-      - "28090:80"
-      - "28443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - app
-    networks:
-      - app-network
-
-volumes:
-  postgres_data:
-    driver: local
-  app_logs:
-    driver: local
-
-networks:
-  app-network:
-    driver: bridge
+      - ./uploads:${UPLOAD_PATH}:Z
+      - ./logs:${LOG_PATH}:Z

@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Search, Building2, Phone, Mail, MapPin } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
-import { Tenant } from "@shared/schema";
+import { Tenant } from "@/lib/schema";
+import { useStore } from "@/contexts/StoreContext";
+import GlobalStoreSelector from "@/components/global-store-selector";
+import { apiGet } from "@/lib/api";
 
 interface TenantsPageProps {
   selectedStoreId?: number;
@@ -14,28 +16,45 @@ interface TenantsPageProps {
 
 export default function TenantsPage({ selectedStoreId }: TenantsPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const queryClient = useQueryClient();
+  const { getCurrentFilter } = useStore();
+
+  // 使用全局门店筛选
+  const currentFilter = getCurrentFilter();
+  const effectiveStoreId = selectedStoreId || currentFilter.storeId;
+
+  const mapTenant = (tenant: any): Tenant => ({
+    tenantId: tenant.tenant_id,
+    companyName: tenant.company_name,
+    tenantCode: tenant.tenant_code,
+    legalRepresentative: tenant.legal_representative ?? undefined,
+    contactPerson: tenant.contact_person ?? undefined,
+    contactPhone: tenant.contact_phone ?? undefined,
+    contactEmail: tenant.contact_email ?? undefined,
+    address: tenant.address ?? undefined,
+    businessCategory: tenant.business_category ?? undefined,
+    isActive: tenant.is_active,
+    createdAt: tenant.created_at,
+    updatedAt: tenant.updated_at ?? undefined,
+  });
 
   const { data: tenants, isLoading } = useQuery<Tenant[]>({
-    queryKey: selectedStoreId ? ["/api/tenants", selectedStoreId] : ["/api/tenants"],
+    queryKey: effectiveStoreId ? ["/api/tenants/", effectiveStoreId] : ["/api/tenants/"],
     queryFn: async () => {
-      const url = selectedStoreId ? `/api/tenants?storeId=${selectedStoreId}` : '/api/tenants';
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch tenants');
-      return response.json();
-    }
+      const query = effectiveStoreId ? `?storeId=${encodeURIComponent(String(effectiveStoreId))}` : "";
+      const data = await apiGet<any[]>(`/api/tenants/${query}`);
+      return data.map(mapTenant);
+    },
   });
 
   const { data: searchResults, isLoading: searchLoading } = useQuery<Tenant[]>({
-    queryKey: ["/api/tenants/search", searchQuery, selectedStoreId],
+    queryKey: ["/api/tenants/search/", searchQuery, effectiveStoreId],
     queryFn: async () => {
-      const params = new URLSearchParams({ q: searchQuery });
-      if (selectedStoreId) params.set('storeId', selectedStoreId.toString());
-      const response = await fetch(`/api/tenants/search?${params}`);
-      if (!response.ok) throw new Error('Failed to search tenants');
-      return response.json();
+      const params = new URLSearchParams({ keyword: searchQuery });
+      if (effectiveStoreId) params.set('storeId', effectiveStoreId.toString());
+      const data = await apiGet<any[]>(`/api/tenants/search/?${params.toString()}`);
+      return data.map(mapTenant);
     },
-    enabled: searchQuery.length > 0
+    enabled: searchQuery.length > 0,
   });
 
   const displayTenants = searchQuery ? searchResults : tenants;
@@ -63,6 +82,9 @@ export default function TenantsPage({ selectedStoreId }: TenantsPageProps) {
             新增商户
           </Button>
         </div>
+
+        {/* 全局门店选择器 */}
+        <GlobalStoreSelector className="mb-6" />
 
         {/* 搜索栏 */}
         <div className="mb-6">
