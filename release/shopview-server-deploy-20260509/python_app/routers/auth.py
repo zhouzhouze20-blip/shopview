@@ -1,0 +1,225 @@
+"""
+认证 API
+"""
+import base64
+import hashlib
+import hmac
+import os
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from jose import JWTError, jwt
+from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session
+
+from models.database import SessionLocal, get_db
+from models.models import LoginLog, Role, User, UserIdentity, UserRole
+from schemas.schemas import AuthUserSchema, LoginRequest, LoginResponse
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "shopview-dev-secret-key-change-me")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "12"))
+AUTH_COOKIE_NAME = "shopview_auth_token"
+DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "Admin@123456")
+PASSWORD_ITERATIONS = 390000
+
+
+def get_client_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else None
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS)
+    return "pbkdf2_sha256${}${}${}".format(
+        PASSWORD_ITERATIONS,
+        base64.b64encode(salt).decode("utf-8"),
+        base64.b64encode(digest).decode("utf-8"),
+    )
+
+
+def _verify_password(plain_password: str, password_hash: str) -> bool:
+    if password_hash.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations, salt_b64, digest_b64 = password_hash.split("$", 3)
+            salt = base64.b64decode(salt_b64.encode("utf-8"))
+            expected = base64.b64decode(digest_b64.encode("utf-8"))
+            calculated = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt, int(iterations))
+            return hmac.compare_digest(calculated, expected)
+        except Exception:
+            return False
+    return False
+
+
+def _create_access_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    payload = {"sub": str(user_id), "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _decode_access_token(token: str) -> Optional[int]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        subject = payload.get("sub")
+        return int(subject) if subject is not None else None
+    except (JWTError, ValueError):
+        return None
+
+
+def _serialize_auth_user(db: Session, user: User) -> dict:
+    role_rows = (
+        db.query(Role.role_code, Role.role_name)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .filter(UserRole.user_id == user.user_id)
+        .all()
+    )
+    return {
+        "user_id": user.user_id,
+        "username": user.username,
+        "real_name": user.real_name,
+        "employee_no": getattr(user, "employee_no", None),
+        "status": getattr(user, "status", "ACTIVE") or "ACTIVE",
+        "is_active": user.is_active,
+        "role_codes": [row.role_code for row in role_rows],
+        "role_names": [row.role_name for row in role_rows],
+    }
+
+
+def ensure_default_admin() -> None:
+    db = SessionLocal()
+    try:
+        user_count = db.query(User).count()
+        if user_count > 0:
+            return
+
+        admin_user = User(
+            username=DEFAULT_ADMIN_USERNAME,
+            password_hash=_hash_password(DEFAULT_ADMIN_PASSWORD),
+            real_name="系统管理员",
+            role="admin",
+            status="ACTIVE",
+            is_active=True,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        db.add(admin_user)
+        db.flush()
+
+        db.add(UserIdentity(
+            user_id=admin_user.user_id,
+            identity_type="password",
+            identifier=DEFAULT_ADMIN_USERNAME,
+            credential_hash=admin_user.password_hash,
+            is_primary=True,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        ))
+
+        super_admin_role = db.query(Role).filter(Role.role_code == "super_admin").first()
+        if super_admin_role:
+            db.add(UserRole(
+                user_id=admin_user.user_id,
+                role_id=super_admin_role.id,
+                created_at=datetime.now(),
+            ))
+
+        db.commit()
+        print(f"已创建默认管理员账号: {DEFAULT_ADMIN_USERNAME}")
+    except ProgrammingError:
+        db.rollback()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def get_current_user(
+    auth_token: Optional[str] = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+    db: Session = Depends(get_db),
+) -> User:
+    if not auth_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
+
+    user_id = _decode_access_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效")
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不可用")
+    return user
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == payload.username).first()
+    if not user or not _verify_password(payload.password, user.password_hash):
+        db.add(LoginLog(
+            user_id=user.user_id if user else None,
+            identity_type="password",
+            identifier=payload.username,
+            login_result="FAILED",
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            created_at=datetime.now(),
+        ))
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+
+    if not user.is_active or getattr(user, "status", "ACTIVE") in {"DISABLED", "LOCKED"}:
+        db.add(LoginLog(
+            user_id=user.user_id,
+            identity_type="password",
+            identifier=payload.username,
+            login_result="FAILED",
+            ip_address=get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            created_at=datetime.now(),
+        ))
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用或锁定")
+
+    token = _create_access_token(user.user_id)
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=ACCESS_TOKEN_EXPIRE_HOURS * 3600,
+    )
+    user.last_login = datetime.now()
+    db.add(LoginLog(
+        user_id=user.user_id,
+        identity_type="password",
+        identifier=payload.username,
+        login_result="SUCCESS",
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        created_at=datetime.now(),
+    ))
+    db.commit()
+    db.refresh(user)
+    return {"message": "登录成功", "user": _serialize_auth_user(db, user)}
+
+
+@router.get("/me", response_model=AuthUserSchema)
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _serialize_auth_user(db, current_user)
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return {"message": "已退出登录"}

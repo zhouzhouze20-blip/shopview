@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  type WheelEvent,
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBaseMapsList, useFloorDictList } from "@/hooks/useBaseMaps";
 import { BusinessUnitStatus, useBusinessUnits } from "@/hooks/useBusinessUnits";
-import { useContractDetail, useUnitContracts } from "@/hooks/useContracts";
+import { useContractDetail, useContractsList, useUnitContracts, type ContractListItem } from "@/hooks/useContracts";
 import { useGeoElements } from "@/hooks/useGeoElements";
 import { useAlignTransform, useUnitMapVersions } from "@/hooks/useUnitMapVersions";
 import { resolveApiAssetUrl } from "@/lib/api";
@@ -18,7 +27,19 @@ import { getPathVisualCenter } from "@/lib/svg-path-center";
 import { formatOperationMethod } from "@/lib/operation-method";
 import { deriveSvgViewBox, extractSvgMetadataFromText } from "@/lib/svg-metadata";
 import { cn } from "@/lib/utils";
-import { FileText, RefreshCw } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  HardHat,
+  Map as MapIcon,
+  MapPin,
+  Maximize2,
+  Minus,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 
 function normalizeUnitCode(value?: string | null) {
   return (value || "").trim().toUpperCase().replace(/\s+/g, "");
@@ -65,6 +86,11 @@ function fmtValue(value?: string | number | null) {
   return value;
 }
 
+function isFutureDate(value?: string | null) {
+  if (!value) return false;
+  return value.slice(0, 10) > new Date().toISOString().slice(0, 10);
+}
+
 function renderSupplierInfo(code?: string | null, name?: string | null) {
   const supplierCode = code?.trim();
   const supplierName = name?.trim();
@@ -88,6 +114,22 @@ function renderGroupInfo(code?: string | null, name?: string | null) {
       <div>{groupCode || "-"}</div>
       {groupName ? <div className="text-xs text-muted-foreground">{groupName}</div> : null}
     </div>
+  );
+}
+
+function renderContractType(code?: string | null, name?: string | null) {
+  const typeCode = code?.trim();
+  const typeName = name?.trim();
+  if (!typeCode && !typeName) return "-";
+  return typeName ? `${typeName}${typeCode ? ` (${typeCode})` : ""}` : typeCode;
+}
+
+function getPrimaryGroupCode(item: ContractListItem) {
+  return (
+    String(item.group_codes || item.cmchar9 || "")
+      .split(",")
+      .map((value) => value.trim())
+      .find(Boolean) || ""
   );
 }
 
@@ -137,10 +179,38 @@ const STATUS_META: Record<
 };
 
 const STATUS_LEGEND_ORDER: BusinessUnitStatus[] = ["ACTIVE", "FITOUT", "VACANT", "INACTIVE"];
+const MAP_MIN_ZOOM = 1;
+const MAP_MAX_ZOOM = 8;
+const CONTRACT_STATUS_OPTIONS = [
+  { value: "ALL", label: "全部状态" },
+  { value: "Y", label: "已生效" },
+  { value: "Q", label: "过期" },
+  { value: "B", label: "未生效" },
+  { value: "A", label: "已审批" },
+  { value: "S", label: "停用" },
+  { value: "N", label: "终止" },
+];
 
 function getStatusMeta(status?: string | null) {
   if (!status) return STATUS_META.INACTIVE;
   return STATUS_META[status as BusinessUnitStatus] ?? STATUS_META.INACTIVE;
+}
+
+function clampMapZoom(value: number) {
+  return Math.min(MAP_MAX_ZOOM, Math.max(MAP_MIN_ZOOM, value));
+}
+
+function getPointerDistance(points: Array<{ x: number; y: number }>) {
+  if (points.length < 2) return 0;
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+}
+
+function getPointerMidpoint(points: Array<{ x: number; y: number }>) {
+  if (points.length < 2) return points[0] ?? { x: 0, y: 0 };
+  return {
+    x: (points[0].x + points[1].x) / 2,
+    y: (points[0].y + points[1].y) / 2,
+  };
 }
 
 type DetailColumn<Row> = {
@@ -192,7 +262,17 @@ function DetailTable<Row>({
   );
 }
 
-export default function ContractsPage() {
+export type ContractsPageProps = {
+  /** 从其他模块跳入合同台账时传入，挂载后自动打开对应合同明细弹窗 */
+  openContractNoOnMount?: string | null;
+  /** 明细弹窗已根据 openContractNoOnMount 打开后回调，用于清空父级状态避免重复触发 */
+  onOpenContractNoConsumed?: () => void;
+};
+
+export default function ContractsPage({
+  openContractNoOnMount,
+  onOpenContractNoConsumed,
+}: ContractsPageProps = {}) {
   const floorsQuery = useFloorDictList();
   const floorOptions = useMemo(() => floorsQuery.data ?? [], [floorsQuery.data]);
 
@@ -206,7 +286,32 @@ export default function ContractsPage() {
   const [contractDetailOpen, setContractDetailOpen] = useState(false);
   const [reopenUnitDialogOnContractClose, setReopenUnitDialogOnContractClose] = useState(false);
   const [counterKeyword, setCounterKeyword] = useState("");
+  const [listKeyword, setListKeyword] = useState("");
+  const [listStatus, setListStatus] = useState("ALL");
+  const [listGroupCode, setListGroupCode] = useState("");
+  const [listPage, setListPage] = useState(0);
+  const [listPageSize, setListPageSize] = useState(100);
+  const [pageView, setPageView] = useState("list");
   const [resolvedSvgViewBox, setResolvedSvgViewBox] = useState<string | null>(null);
+  const [mapFullscreenOpen, setMapFullscreenOpen] = useState(false);
+  const [mapZoom, setMapZoom] = useState(1);
+  const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
+  const mapPointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const mapGestureRef = useRef<{
+    startDistance: number;
+    startMidpoint: { x: number; y: number };
+    startZoom: number;
+    startPan: { x: number; y: number };
+    lastPoint: { x: number; y: number } | null;
+    moved: boolean;
+  }>({
+    startDistance: 0,
+    startMidpoint: { x: 0, y: 0 },
+    startZoom: 1,
+    startPan: { x: 0, y: 0 },
+    lastPoint: null,
+    moved: false,
+  });
 
   const unitsQuery = useBusinessUnits({ floorId });
   const baseMapsQuery = useBaseMapsList(floorId);
@@ -214,6 +319,13 @@ export default function ContractsPage() {
   const geoQuery = useGeoElements(versionId);
   const alignQuery = useAlignTransform(versionId);
   const contractsQuery = useUnitContracts(selectedUnitId);
+  const contractsListQuery = useContractsList({
+    keyword: listKeyword,
+    status: listStatus,
+    groupCode: listGroupCode,
+    skip: listPage * listPageSize,
+    limit: listPageSize,
+  });
   const contractDetailQuery = useContractDetail(selectedContractNo);
 
   const unitRows = useMemo(() => unitsQuery.data ?? [], [unitsQuery.data]);
@@ -363,6 +475,15 @@ export default function ContractsPage() {
   }, [exactMatchedGeo]);
 
   useEffect(() => {
+    if (!detailOpen || !selectedUnitId) return;
+    contractsQuery.refetch();
+  }, [detailOpen, selectedUnitId, contractsQuery.refetch]);
+
+  useEffect(() => {
+    setListPage(0);
+  }, [listKeyword, listStatus, listGroupCode, listPageSize]);
+
+  useEffect(() => {
     if (!baseMapOptions.length) {
       setBaseMapId(undefined);
       return;
@@ -386,14 +507,58 @@ export default function ContractsPage() {
     setSelectedGeoId(geoId);
     setSelectedUnitId(unitId);
     setDetailOpen(true);
+    if (detailOpen && selectedUnitId === unitId) {
+      contractsQuery.refetch();
+    }
   };
 
   const detail = contractsQuery.data;
   const activeContract = detail?.active_contract;
-  const contractRows = detail?.contracts ?? [];
+  const contractRows = useMemo(() => {
+    const rows = detail?.contracts ?? [];
+    const seen = new Set<string>();
+    return rows.filter((item) => {
+      const key = normalizeUnitCode(item.cmcontno || item.cmfcontno || "");
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [detail?.contracts]);
+  const activeContractCount = useMemo(
+    () => contractRows.filter((item) => item.is_current_effective).length,
+    [contractRows],
+  );
+  const contractListRows = contractsListQuery.data?.items ?? [];
+  const canGoPrevPage = listPage > 0;
+  const canGoNextPage = contractListRows.length >= listPageSize;
   const detailUnitStatus = detail?.unit.status ?? selectedUnitStatus;
   const contractDetail = contractDetailQuery.data;
   const contractMain = contractDetail?.contmain;
+
+  const startDecorationFromContract = (contractNo?: string | null) => {
+    const normalized = contractNo?.trim();
+    if (!normalized) return;
+    window.location.href = `${window.location.pathname}?view=decorations&contract_no=${encodeURIComponent(normalized)}`;
+  };
+
+  const locateContractOnMap = (item: ContractListItem) => {
+    const groupCode = getPrimaryGroupCode(item);
+    if (!groupCode) return;
+    const normalizedGroupCode = normalizeUnitCode(groupCode);
+    const matchedGeo =
+      geoRows.find((g) => (normalizedUnitCodeMap.get(g.unit_id) || "") === normalizedGroupCode) ??
+      geoRows.find((g) => (normalizedUnitCodeMap.get(g.unit_id) || "").includes(normalizedGroupCode));
+
+    setCounterKeyword(groupCode);
+    setPageView("map");
+
+    if (matchedGeo) {
+      setSelectedGeoId(matchedGeo.id);
+      setSelectedUnitId(matchedGeo.unit_id);
+      setDetailOpen(true);
+    }
+  };
 
   const openContractDetail = (contractNo?: string | null) => {
     const normalized = (contractNo || "").trim();
@@ -406,6 +571,223 @@ export default function ContractsPage() {
     setContractDetailOpen(true);
   };
 
+  useEffect(() => {
+    const normalized = (openContractNoOnMount || "").trim();
+    if (!normalized) return;
+    setSelectedContractNo(normalized);
+    setReopenUnitDialogOnContractClose(false);
+    setDetailOpen(false);
+    setContractDetailOpen(true);
+    onOpenContractNoConsumed?.();
+  }, [openContractNoOnMount, onOpenContractNoConsumed]);
+
+  const resetMapView = () => {
+    setMapZoom(1);
+    setMapPan({ x: 0, y: 0 });
+    mapPointersRef.current.clear();
+    mapGestureRef.current = {
+      startDistance: 0,
+      startMidpoint: { x: 0, y: 0 },
+      startZoom: 1,
+      startPan: { x: 0, y: 0 },
+      lastPoint: null,
+      moved: false,
+    };
+  };
+
+  const updateMapZoom = (nextZoom: number) => {
+    setMapZoom(clampMapZoom(nextZoom));
+  };
+
+  const handleMapPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = { x: event.clientX, y: event.clientY };
+    mapPointersRef.current.set(event.pointerId, point);
+    const points = Array.from(mapPointersRef.current.values());
+
+    mapGestureRef.current = {
+      startDistance: getPointerDistance(points),
+      startMidpoint: getPointerMidpoint(points),
+      startZoom: mapZoom,
+      startPan: mapPan,
+      lastPoint: points.length === 1 ? point : null,
+      moved: false,
+    };
+  };
+
+  const handleMapPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!mapPointersRef.current.has(event.pointerId)) return;
+    const point = { x: event.clientX, y: event.clientY };
+    mapPointersRef.current.set(event.pointerId, point);
+    const points = Array.from(mapPointersRef.current.values());
+    const gesture = mapGestureRef.current;
+
+    if (points.length >= 2) {
+      const distance = getPointerDistance(points);
+      const midpoint = getPointerMidpoint(points);
+      const scale = gesture.startDistance > 0 ? distance / gesture.startDistance : 1;
+      const nextZoom = clampMapZoom(gesture.startZoom * scale);
+      gesture.moved = gesture.moved || Math.abs(distance - gesture.startDistance) > 4;
+      setMapZoom(nextZoom);
+      setMapPan({
+        x: gesture.startPan.x + midpoint.x - gesture.startMidpoint.x,
+        y: gesture.startPan.y + midpoint.y - gesture.startMidpoint.y,
+      });
+      return;
+    }
+
+    if (points.length === 1 && gesture.lastPoint) {
+      const dx = point.x - gesture.lastPoint.x;
+      const dy = point.y - gesture.lastPoint.y;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        gesture.moved = true;
+      }
+      gesture.lastPoint = point;
+      setMapPan((current) => ({ x: current.x + dx, y: current.y + dy }));
+    }
+  };
+
+  const handleMapPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    mapPointersRef.current.delete(event.pointerId);
+    const points = Array.from(mapPointersRef.current.values());
+    mapGestureRef.current.lastPoint = points.length === 1 ? points[0] : null;
+    mapGestureRef.current.startPan = mapPan;
+    mapGestureRef.current.startZoom = mapZoom;
+  };
+
+  const handleMapClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    if (!mapGestureRef.current.moved) return;
+    event.preventDefault();
+    event.stopPropagation();
+    mapGestureRef.current.moved = false;
+  };
+
+  const handleMapWheel = (event: WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const direction = event.deltaY > 0 ? -0.15 : 0.15;
+    updateMapZoom(mapZoom + direction);
+  };
+
+  const mapStatusText = normalizedCounterKeyword
+    ? highlightedCount
+      ? `搜索结果：${highlightedCount} 个`
+      : `未找到柜位：${counterKeyword.trim()}`
+    : selectedUnitCode
+      ? `当前柜位：${selectedUnitCode}`
+      : "点击柜位查看合同";
+
+  const renderMapCanvas = (isFullscreen = false) => {
+    if (!selectedBaseMapUrl) {
+      return <div className="text-sm text-muted-foreground">当前楼层没有可用底图</div>;
+    }
+    if (!vb) {
+      return <div className="text-sm text-muted-foreground">当前底图缺少有效 viewBox，无法叠加柜位图</div>;
+    }
+
+    return (
+      <div className="rounded-lg border bg-white overflow-hidden">
+        <div className="flex flex-col gap-2 border-b px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>柜位数量：{geoRows.length}</span>
+            <span>{mapStatusText}</span>
+            <span>缩放：{Math.round(mapZoom * 100)}%</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => updateMapZoom(mapZoom - 0.5)}>
+              <Minus className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => updateMapZoom(mapZoom + 0.5)}>
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={resetMapView}>
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+            {!isFullscreen ? (
+              <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => setMapFullscreenOpen(true)}>
+                <Maximize2 className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <div
+          className={cn(
+            "relative w-full touch-none select-none overflow-hidden bg-slate-50",
+            isFullscreen ? "h-[72vh] sm:h-[78vh]" : "aspect-[16/10] min-h-[280px]",
+          )}
+          onPointerDown={handleMapPointerDown}
+          onPointerMove={handleMapPointerMove}
+          onPointerUp={handleMapPointerUp}
+          onPointerCancel={handleMapPointerUp}
+          onClickCapture={handleMapClickCapture}
+          onWheel={handleMapWheel}
+        >
+          <svg
+            className="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+            viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+            preserveAspectRatio="xMidYMid meet"
+            style={{
+              transform: `translate(${mapPan.x}px, ${mapPan.y}px) scale(${mapZoom})`,
+              transformOrigin: "center",
+            }}
+          >
+            <image href={selectedBaseMapUrl} x={vb.x} y={vb.y} width={vb.w} height={vb.h} />
+            <g transform={alignTransformText}>
+              {geoRows.map((g) => {
+                const isSelected = g.id === selectedGeoId;
+                const isHighlighted = highlightedGeoIds.has(g.id);
+                const statusMeta = getStatusMeta(unitStatusMap.get(g.unit_id));
+                const fill = isSelected ? statusMeta.selectedFill : isHighlighted ? "rgba(250,204,21,0.4)" : statusMeta.fill;
+                const stroke = isSelected
+                  ? statusMeta.selectedStroke
+                  : isHighlighted
+                    ? "rgba(180,83,9,1)"
+                    : statusMeta.stroke;
+                return (
+                  <path
+                    key={g.id}
+                    d={g.path_data}
+                    fill={fill}
+                    stroke={stroke}
+                    strokeWidth={isSelected || isHighlighted ? 3 : 2}
+                    vectorEffect="non-scaling-stroke"
+                    className="cursor-pointer"
+                    onClick={() => selectGeo(g.id, g.unit_id)}
+                  />
+                );
+              })}
+              {labelPoints.map((point) => {
+                if (point.x == null || point.y == null) return null;
+                const geo = geoRows.find((item) => item.id === point.id);
+                if (!geo) return null;
+                const isSelected = geo.id === selectedGeoId;
+                const isHighlighted = highlightedGeoIds.has(geo.id);
+                const textValue = unitCodeMap.get(geo.unit_id) || `unit-${geo.unit_id}`;
+                return (
+                  <text
+                    key={`label-${geo.id}`}
+                    x={point.x}
+                    y={point.y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={isSelected || isHighlighted ? 32 : 28}
+                    fontWeight={isSelected || isHighlighted ? 800 : 700}
+                    fill={isHighlighted ? "#92400e" : "#0f172a"}
+                    stroke="#ffffff"
+                    strokeWidth={isSelected || isHighlighted ? 8 : 6}
+                    paintOrder="stroke"
+                    pointerEvents="none"
+                  >
+                    {textValue}
+                  </text>
+                );
+              })}
+            </g>
+          </svg>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6" data-testid="contracts-page">
       <div className="flex items-center justify-between">
@@ -413,7 +795,13 @@ export default function ContractsPage() {
           <h1 className="text-3xl font-bold tracking-tight">合同台账</h1>
           <p className="text-sm text-muted-foreground mt-1">选择楼层或输入柜位号，直接在图纸上定位并查看 ERP 合同</p>
         </div>
-        <Button variant="outline" onClick={() => contractsQuery.refetch()} disabled={!selectedUnitId}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            contractsListQuery.refetch();
+            if (selectedUnitId) contractsQuery.refetch();
+          }}
+        >
           <RefreshCw className="w-4 h-4 mr-2" />
           刷新合同
         </Button>
@@ -461,113 +849,233 @@ export default function ContractsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>合同图</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            {STATUS_LEGEND_ORDER.map((status) => {
-              const meta = STATUS_META[status];
-              return (
-                <div key={status} className="inline-flex items-center gap-2 rounded-md border bg-slate-50 px-3 py-1.5">
-                  <span
-                    className="inline-block h-3 w-3 rounded-sm border"
-                    style={{ backgroundColor: meta.fill, borderColor: meta.stroke }}
-                  />
-                  <span>{meta.label}</span>
-                </div>
-              );
-            })}
-            {normalizedCounterKeyword ? (
-              <div className="inline-flex items-center gap-2 rounded-md border bg-amber-50 px-3 py-1.5 text-amber-800">
-                <span className="inline-block h-3 w-3 rounded-sm border border-amber-700 bg-amber-300" />
-                <span>柜位号搜索高亮</span>
-              </div>
-            ) : null}
+      <Tabs value={pageView} onValueChange={setPageView} className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <TabsList className="grid w-full grid-cols-2 md:w-[360px]">
+            <TabsTrigger value="list" className="gap-2">
+              <FileText className="h-4 w-4" />
+              合同列表
+            </TabsTrigger>
+            <TabsTrigger value="map" className="gap-2">
+              <MapIcon className="h-4 w-4" />
+              图纸定位
+            </TabsTrigger>
+          </TabsList>
+          <div className="text-sm text-muted-foreground">
+            列表 {contractListRows.length} 条
+            {selectedUnitCode ? `；当前柜位 ${selectedUnitCode}` : ""}
           </div>
-          {!selectedBaseMapUrl ? (
-            <div className="text-sm text-muted-foreground">当前楼层没有可用底图</div>
-          ) : !vb ? (
-            <div className="text-sm text-muted-foreground">当前底图缺少有效 viewBox，无法叠加柜位图</div>
-          ) : (
-            <div className="rounded-lg border bg-white overflow-hidden">
-              <div className="px-4 py-2 border-b text-xs text-muted-foreground flex items-center justify-between">
-                <span>柜位数量：{geoRows.length}</span>
-                <span>
-                  {normalizedCounterKeyword
-                    ? highlightedCount
-                      ? `搜索结果：${highlightedCount} 个`
-                      : `未找到柜位：${counterKeyword.trim()}`
-                    : selectedUnitCode
-                      ? `当前柜位：${selectedUnitCode}`
-                      : "点击柜位查看合同"}
-                </span>
+        </div>
+
+        <TabsContent value="list" className="mt-0">
+          <Card>
+            <CardHeader>
+              <CardTitle>合同列表</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>合同搜索</Label>
+                  <Input
+                    value={listKeyword}
+                    onChange={(e) => setListKeyword(e.target.value)}
+                    placeholder="合同号、主题、供应商、品牌、柜组"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>合同状态</Label>
+                  <Select value={listStatus} onValueChange={setListStatus}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="全部状态" />
+                    </SelectTrigger>
+                    <SelectContent className="z-50 bg-white border shadow-xl">
+                      {CONTRACT_STATUS_OPTIONS.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>柜组编码</Label>
+                  <Input
+                    value={listGroupCode}
+                    onChange={(e) => setListGroupCode(e.target.value)}
+                    placeholder="如 6030106076"
+                  />
+                </div>
               </div>
-              <div className="relative w-full aspect-[16/10] bg-slate-50">
-                <svg className="absolute inset-0 w-full h-full" viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} preserveAspectRatio="xMidYMid meet">
-                  <image href={selectedBaseMapUrl} x={vb.x} y={vb.y} width={vb.w} height={vb.h} />
-                  <g transform={alignTransformText}>
-                    {geoRows.map((g) => {
-                      const isSelected = g.id === selectedGeoId;
-                      const isHighlighted = highlightedGeoIds.has(g.id);
-                      const statusMeta = getStatusMeta(unitStatusMap.get(g.unit_id));
-                      const fill = isSelected
-                        ? statusMeta.selectedFill
-                        : isHighlighted
-                          ? "rgba(250,204,21,0.4)"
-                          : statusMeta.fill;
-                      const stroke = isSelected
-                        ? statusMeta.selectedStroke
-                        : isHighlighted
-                          ? "rgba(180,83,9,1)"
-                          : statusMeta.stroke;
-                      return (
-                        <path
-                          key={g.id}
-                          d={g.path_data}
-                          fill={fill}
-                          stroke={stroke}
-                          strokeWidth={isSelected || isHighlighted ? 3 : 2}
-                          vectorEffect="non-scaling-stroke"
-                          className="cursor-pointer"
-                          onClick={() => selectGeo(g.id, g.unit_id)}
-                        />
-                      );
-                    })}
-                    {labelPoints.map((point) => {
-                      if (point.x == null || point.y == null) return null;
-                      const geo = geoRows.find((item) => item.id === point.id);
-                      if (!geo) return null;
-                      const isSelected = geo.id === selectedGeoId;
-                      const isHighlighted = highlightedGeoIds.has(geo.id);
-                      const textValue = unitCodeMap.get(geo.unit_id) || `unit-${geo.unit_id}`;
-                      return (
-                        <text
-                          key={`label-${geo.id}`}
-                          x={point.x}
-                          y={point.y}
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fontSize={isSelected || isHighlighted ? 32 : 28}
-                          fontWeight={isSelected || isHighlighted ? 800 : 700}
-                          fill={isHighlighted ? "#92400e" : "#0f172a"}
-                          stroke="#ffffff"
-                          strokeWidth={isSelected || isHighlighted ? 8 : 6}
-                          paintOrder="stroke"
-                          pointerEvents="none"
-                        >
-                          {textValue}
-                        </text>
-                      );
-                    })}
-                  </g>
-                </svg>
+
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap">状态</TableHead>
+                      <TableHead className="whitespace-nowrap">合同编号</TableHead>
+                      <TableHead className="whitespace-nowrap">合同类型</TableHead>
+                      <TableHead className="min-w-48">供应商</TableHead>
+                      <TableHead className="whitespace-nowrap">经营方式</TableHead>
+                      <TableHead className="min-w-52">主题</TableHead>
+                      <TableHead className="min-w-40">柜组</TableHead>
+                      <TableHead className="whitespace-nowrap">品牌</TableHead>
+                      <TableHead className="whitespace-nowrap">生效日期</TableHead>
+                      <TableHead className="whitespace-nowrap">失效日期</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">月目标销售额</TableHead>
+                      <TableHead className="whitespace-nowrap">付款方式</TableHead>
+                      <TableHead className="whitespace-nowrap">是否清算</TableHead>
+                      <TableHead className="whitespace-nowrap">结算位置</TableHead>
+                      <TableHead className="whitespace-nowrap">录入员</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {contractsListQuery.isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={16} className="py-8 text-center text-muted-foreground">
+                          加载合同列表中...
+                        </TableCell>
+                      </TableRow>
+                    ) : contractsListQuery.error ? (
+                      <TableRow>
+                        <TableCell colSpan={16} className="py-8 text-center text-red-600">
+                          {contractsListQuery.error instanceof Error ? contractsListQuery.error.message : "合同列表加载失败"}
+                        </TableCell>
+                      </TableRow>
+                    ) : contractListRows.length ? (
+                      contractListRows.map((item) => (
+                        <TableRow key={item.cmcontno}>
+                          <TableCell>
+                            <Badge variant={item.cmstatus === "Y" ? "default" : "secondary"}>{item.status_label || "-"}</Badge>
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            <Button
+                              variant="link"
+                              className="h-auto p-0 text-left font-medium"
+                              onClick={() => openContractDetail(item.cmcontno)}
+                            >
+                              {item.cmcontno}
+                            </Button>
+                          </TableCell>
+                          <TableCell>{renderContractType(item.cmtype, item.contract_type_name)}</TableCell>
+                          <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
+                          <TableCell>{formatOperationMethod(item.cmwmid)}</TableCell>
+                          <TableCell>{fmtValue(item.cmtitle)}</TableCell>
+                          <TableCell>{renderGroupInfo(item.group_codes, item.group_names)}</TableCell>
+                          <TableCell>{fmtValue(item.cmppname || item.range_brands)}</TableCell>
+                          <TableCell>{fmtDate(item.cmeffdate)}</TableCell>
+                          <TableCell>{fmtDate(item.cmlapdate)}</TableCell>
+                          <TableCell className="text-right">{fmtMoney(item.cmmoney)}</TableCell>
+                          <TableCell>{fmtValue(item.cmpaycode)}</TableCell>
+                          <TableCell>{item.is_clear == null ? "-" : item.is_clear ? "是" : "否"}</TableCell>
+                          <TableCell>{fmtValue(item.cmjsmkt)}</TableCell>
+                          <TableCell>{fmtValue(item.cminputor)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!getPrimaryGroupCode(item)}
+                              onClick={() => locateContractOnMap(item)}
+                            >
+                              <MapPin className="mr-2 h-4 w-4" />
+                              定位图纸
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={16} className="py-8 text-center text-muted-foreground">
+                          未找到符合条件的合同
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              <div className="flex flex-col gap-3 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between">
+                <div>
+                  第 {listPage + 1} 页，当前显示 {contractListRows.length} 条；是否清算取自 contbd，结算位置取自 contmain.cmjsmkt。
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={String(listPageSize)} onValueChange={(value) => setListPageSize(Number(value))}>
+                    <SelectTrigger className="h-8 w-[112px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="z-50 bg-white border shadow-xl">
+                      <SelectItem value="50">每页 50</SelectItem>
+                      <SelectItem value="100">每页 100</SelectItem>
+                      <SelectItem value="200">每页 200</SelectItem>
+                      <SelectItem value="500">每页 500</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!canGoPrevPage || contractsListQuery.isLoading}
+                    onClick={() => setListPage((page) => Math.max(0, page - 1))}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    上一页
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!canGoNextPage || contractsListQuery.isLoading}
+                    onClick={() => setListPage((page) => page + 1)}
+                  >
+                    下一页
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="map" className="mt-0">
+          <Card>
+            <CardHeader>
+              <CardTitle>合同图</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                {STATUS_LEGEND_ORDER.map((status) => {
+                  const meta = STATUS_META[status];
+                  return (
+                    <div key={status} className="inline-flex items-center gap-2 rounded-md border bg-slate-50 px-3 py-1.5">
+                      <span
+                        className="inline-block h-3 w-3 rounded-sm border"
+                        style={{ backgroundColor: meta.fill, borderColor: meta.stroke }}
+                      />
+                      <span>{meta.label}</span>
+                    </div>
+                  );
+                })}
+                {normalizedCounterKeyword ? (
+                  <div className="inline-flex items-center gap-2 rounded-md border bg-amber-50 px-3 py-1.5 text-amber-800">
+                    <span className="inline-block h-3 w-3 rounded-sm border border-amber-700 bg-amber-300" />
+                    <span>柜位号搜索高亮</span>
+                  </div>
+                ) : null}
+              </div>
+              {renderMapCanvas()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={mapFullscreenOpen} onOpenChange={setMapFullscreenOpen}>
+        <DialogContent className="h-[96vh] max-h-[96vh] w-[96vw] max-w-[96vw] overflow-hidden p-3 sm:p-5">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapIcon className="h-5 w-5" />
+              合同图全屏
+            </DialogTitle>
+          </DialogHeader>
+          {renderMapCanvas(true)}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-5xl max-h-[86vh] overflow-y-auto">
@@ -609,11 +1117,11 @@ export default function ContractsPage() {
                 </div>
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">合同数</div>
-                  <div className="text-lg font-semibold">{detail.contracts.length}</div>
+                  <div className="text-lg font-semibold">{contractRows.length}</div>
                 </div>
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">正式生效</div>
-                  <div className="text-lg font-semibold">{detail.active_contract_count}</div>
+                  <div className="text-lg font-semibold">{activeContractCount}</div>
                 </div>
               </div>
 
@@ -672,6 +1180,7 @@ export default function ContractsPage() {
                     <TableHead>合同有效期</TableHead>
                     <TableHead>经营范围有效期</TableHead>
                     <TableHead>面积</TableHead>
+                    <TableHead>操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -698,11 +1207,22 @@ export default function ContractsPage() {
                         <TableCell>{fmtDate(item.cmeffdate)} 至 {fmtDate(item.cmlapdate)}</TableCell>
                         <TableCell>{fmtDate(item.cmfeffdate)} 至 {fmtDate(item.cmflapdate)}</TableCell>
                         <TableCell>{fmtMoney(item.cmfjzmj ?? item.cmfsymj ?? item.cmfzjmj)}</TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!isFutureDate(item.cmeffdate)}
+                            onClick={() => startDecorationFromContract(item.cmfcontno)}
+                          >
+                            <HardHat className="mr-2 h-4 w-4" />
+                            发起装修
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                         这个柜位没有匹配到 ERP 合同
                       </TableCell>
                     </TableRow>
@@ -742,6 +1262,16 @@ export default function ContractsPage() {
             <div className="py-10 text-center text-muted-foreground">暂无合同明细</div>
           ) : (
             <div className="space-y-5">
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  disabled={!isFutureDate(contractMain?.cmeffdate)}
+                  onClick={() => startDecorationFromContract(contractDetail.contract_no)}
+                >
+                  <HardHat className="mr-2 h-4 w-4" />
+                  发起装修流程
+                </Button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">合同编号</div>
@@ -782,7 +1312,7 @@ export default function ContractsPage() {
                   </div>
                   <div>
                     <div className="text-muted-foreground">合同类型</div>
-                    <div>{fmtValue(contractMain?.cmtype)}</div>
+                    <div>{renderContractType(contractMain?.cmtype, contractMain?.contract_type_name)}</div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">经营方式</div>
@@ -791,6 +1321,14 @@ export default function ContractsPage() {
                   <div>
                     <div className="text-muted-foreground">月目标销售额</div>
                     <div>{fmtMoney(contractMain?.cmmoney)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">结算位置</div>
+                    <div>{fmtValue(contractMain?.cmjsmkt)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">付款方式</div>
+                    <div>{fmtValue(contractMain?.cmpaycode)}</div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">签约日期</div>
@@ -821,10 +1359,10 @@ export default function ContractsPage() {
 
               <Tabs defaultValue="contmanaframe" className="space-y-4">
                 <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="contmanaframe">经营范围 {contractDetail.counts.contmanaframe}</TabsTrigger>
-                  <TabsTrigger value="contbd">保底超额 {contractDetail.counts.contbd}</TabsTrigger>
-                  <TabsTrigger value="contcyclist">周期费用 {contractDetail.counts.contcyclist}</TabsTrigger>
-                  <TabsTrigger value="contsupcharge">供应商费用 {contractDetail.counts.contsupcharge}</TabsTrigger>
+                  <TabsTrigger value="contmanaframe">所属柜组 {contractDetail.counts.contmanaframe}</TabsTrigger>
+                  <TabsTrigger value="contbd">保底 {contractDetail.counts.contbd}</TabsTrigger>
+                  <TabsTrigger value="contcyclist">租赁周期费用 {contractDetail.counts.contcyclist}</TabsTrigger>
+                  <TabsTrigger value="contsupcharge">供应商合同费用 {contractDetail.counts.contsupcharge}</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="contmanaframe">
@@ -858,12 +1396,16 @@ export default function ContractsPage() {
                       { header: "序号", render: (row) => fmtValue(row.cbseqno) },
                       { header: "柜组", render: (row) => renderGroupInfo(row.cbmfid, row.group_name) },
                       { header: "有效期", render: (row) => `${fmtDate(row.cbeffdate)} 至 ${fmtDate(row.cblapdate)}` },
+                      { header: "是否保底", render: (row) => fmtYesNo(row.cbisrunbd) },
+                      { header: "是否清算", render: (row) => fmtYesNo(row.cbisrunqs) },
                       { header: "保底额", render: (row) => fmtMoney(row.cbsum) },
-                      { header: "保底比率", render: (row) => fmtValue(row.cbrate) },
+                      { header: "保底比率", render: (row) => fmtPercent(row.cbrate) },
+                      { header: "保底毛利", render: (row) => fmtMoney(row.cbprofit) },
                       { header: "租金单价", render: (row) => fmtMoney(row.cbrentprice) },
                       { header: "管理费单价", render: (row) => fmtMoney(row.cbnamaprice) },
                       { header: "推广费单价", render: (row) => fmtMoney(row.cbpopprice) },
                       { header: "销售考核", render: (row) => fmtMoney(row.cbsalekh) },
+                      { header: "完成金额", render: (row) => fmtMoney(row.xssr) },
                     ]}
                   />
                 </TabsContent>
@@ -903,12 +1445,7 @@ export default function ContractsPage() {
                         { header: "返还日期", render: (row) => fmtDate(row.cscretdate), className: "whitespace-nowrap" },
                         { header: "生效日期", render: (row) => fmtDate(row.csceffdate), className: "whitespace-nowrap" },
                         { header: "失效日期", render: (row) => fmtDate(row.csclapdate), className: "whitespace-nowrap" },
-                        { header: "保底值", render: (row) => fmtMoney(row.cscbottomvalues), className: "whitespace-nowrap" },
-                        { header: "封顶值", render: (row) => fmtMoney(row.cscpeakvalues), className: "whitespace-nowrap" },
-                        { header: "单位数量", render: (row) => fmtMoney(row.cscnum1), className: "whitespace-nowrap" },
-                        { header: "单位金额", render: (row) => fmtMoney(row.cscnum2), className: "whitespace-nowrap" },
                         { header: "指标", render: (row) => fmtMoney(row.cscvalue), className: "whitespace-nowrap" },
-                        { header: "备注", render: (row) => fmtValue(row.cscmemo), className: "min-w-32" },
                       ]}
                     />
                   </div>

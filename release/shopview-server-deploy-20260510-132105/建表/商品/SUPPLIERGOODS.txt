@@ -1,0 +1,128 @@
+-- Create table
+create table DBUSRPUB.SUPPLIERGOODS
+(
+  sgssupid   VARCHAR2(20) not null,
+  sgsgdid    VARCHAR2(20) not null,
+  sgsstatus  CHAR(1) not null,
+  sgsflag    CHAR(1) not null,
+  sgsdhunit  VARCHAR2(6),
+  sgssupcode VARCHAR2(20),
+  sgscdcode  VARCHAR2(10),
+  sgsdesc    VARCHAR2(60),
+  sgsjxtax   NUMBER(8,4) not null,
+  sgshsjj    NUMBER(14,4) not null,
+  sgsbhsjj   NUMBER(14,4) not null,
+  sgsjysj    NUMBER(12,2),
+  sgsjyhyj   NUMBER(12,2),
+  sgsjypfj   NUMBER(12,2),
+  sgsjypsj   NUMBER(14,4),
+  sgsminzk   NUMBER,
+  sgsfjhrq   DATE,
+  sgsljhrq   DATE,
+  sgsttrq    DATE,
+  sgsmaint   VARCHAR2(20),
+  sgsmaintrq DATE,
+  sgssxksrq  DATE,
+  sgssxjsrq  DATE
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 2M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.SUPPLIERGOODS
+  is '[SGS]供应商商品';
+-- Add comments to the columns 
+comment on column DBUSRPUB.SUPPLIERGOODS.sgssupid
+  is '供应商';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsgdid
+  is '商品代码';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsstatus
+  is '状态';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsflag
+  is '标志';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsdhunit
+  is '订货单位';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgssupcode
+  is '供应商商品代码';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgscdcode
+  is '产地';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsdesc
+  is '来源描述';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsjxtax
+  is '进项税率';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgshsjj
+  is '含税进价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsbhsjj
+  is '不含税进价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsjysj
+  is '建议售价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsjyhyj
+  is '建议会员价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsjypfj
+  is '建议批发价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsjypsj
+  is '建议配送价';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsminzk
+  is '最底折扣';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsfjhrq
+  is '首次进货日期';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsljhrq
+  is '最后进货日期';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsttrq
+  is '淘汰日期';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsmaint
+  is '维护员';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgsmaintrq
+  is '维护日期';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgssxksrq
+  is 'SGSSXKSRQ';
+comment on column DBUSRPUB.SUPPLIERGOODS.sgssxjsrq
+  is 'SGSSXJSRQ';
+-- Create/Recreate indexes 
+create index DBUSRPUB.INDEX_SGS_GDID on DBUSRPUB.SUPPLIERGOODS (SGSGDID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.INDEX_SGS_SUPID on DBUSRPUB.SUPPLIERGOODS (SGSSUPID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.SUPPLIERGOODS
+  add constraint PK_SUPPLIERGOODS primary key (SGSSUPID, SGSGDID)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

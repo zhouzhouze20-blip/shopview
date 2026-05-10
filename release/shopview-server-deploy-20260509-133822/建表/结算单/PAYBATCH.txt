@@ -1,0 +1,143 @@
+-- Create table
+create table DBUSRSET.PAYBATCH
+(
+  pbseq       NUMBER not null,
+  pbsupid     VARCHAR2(20) not null,
+  pbwmid      CHAR(1) not null,
+  pbmkt       VARCHAR2(20) not null,
+  pbmfid      VARCHAR2(20) not null,
+  pbmcontno   VARCHAR2(20) not null,
+  pbcontno    VARCHAR2(20) not null,
+  pbjsno      VARCHAR2(20) not null,
+  pbbillno    VARCHAR2(20) not null,
+  pbdjlb      CHAR(1) not null,
+  pbfeetype   CHAR(1),
+  pbbilltype  CHAR(1) not null,
+  pbjssdate   DATE,
+  pbjsedate   DATE,
+  pbxssr      NUMBER,
+  pbtc        NUMBER not null,
+  pbyf        NUMBER not null,
+  pbpay       NUMBER default 0 not null,
+  pbsf        NUMBER default 0 not null,
+  pbdate      DATE not null,
+  pbisgen     CHAR(1) default 'N' not null,
+  pbpaybillno VARCHAR2(20),
+  pbpaystatus CHAR(1),
+  pbselected  CHAR(1) default 'Y',
+  pbkp        NUMBER(14,2),
+  pbbckp      NUMBER(14,2),
+  pbykp       NUMBER(14,2),
+  pbjh        NUMBER(14,2),
+  pbzkfd      NUMBER(14,2),
+  pbyfk       NUMBER(14,2),
+  pbsy        NUMBER(14,2),
+  pbzj        NUMBER(14,2),
+  pbfy1       NUMBER(14,2),
+  pbfy2       NUMBER(14,2),
+  pbn1        NUMBER(14,2),
+  pbn2        NUMBER(14,2),
+  pbn3        NUMBER(14,2),
+  pbn4        NUMBER(14,2)
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 8K
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRSET.PAYBATCH
+  is '付款批次临时表';
+-- Add comments to the columns 
+comment on column DBUSRSET.PAYBATCH.pbseq
+  is '结算批次号';
+comment on column DBUSRSET.PAYBATCH.pbsupid
+  is '供应商';
+comment on column DBUSRSET.PAYBATCH.pbwmid
+  is '经营方式';
+comment on column DBUSRSET.PAYBATCH.pbmkt
+  is '付款位置';
+comment on column DBUSRSET.PAYBATCH.pbmfid
+  is '柜组';
+comment on column DBUSRSET.PAYBATCH.pbmcontno
+  is '主合同号';
+comment on column DBUSRSET.PAYBATCH.pbcontno
+  is '子合同号';
+comment on column DBUSRSET.PAYBATCH.pbjsno
+  is '结算单号';
+comment on column DBUSRSET.PAYBATCH.pbbillno
+  is '单据号';
+comment on column DBUSRSET.PAYBATCH.pbdjlb
+  is '单据类别';
+comment on column DBUSRSET.PAYBATCH.pbfeetype
+  is '费用类型[账扣,非账扣]';
+comment on column DBUSRSET.PAYBATCH.pbbilltype
+  is 'J-结算 F-费用 P-联营预付款';
+comment on column DBUSRSET.PAYBATCH.pbjssdate
+  is '结算开始日期';
+comment on column DBUSRSET.PAYBATCH.pbjsedate
+  is '结算截止日期';
+comment on column DBUSRSET.PAYBATCH.pbxssr
+  is '销售收入';
+comment on column DBUSRSET.PAYBATCH.pbtc
+  is '提成或费用或预付款金额';
+comment on column DBUSRSET.PAYBATCH.pbyf
+  is '应付金额';
+comment on column DBUSRSET.PAYBATCH.pbpay
+  is '已付';
+comment on column DBUSRSET.PAYBATCH.pbsf
+  is '本次付款';
+comment on column DBUSRSET.PAYBATCH.pbdate
+  is '生成日期';
+comment on column DBUSRSET.PAYBATCH.pbisgen
+  is '是否生成付款单';
+comment on column DBUSRSET.PAYBATCH.pbpaybillno
+  is '付款单号';
+comment on column DBUSRSET.PAYBATCH.pbpaystatus
+  is '付款状态';
+-- Create/Recreate indexes 
+create index DBUSRSET.IDX_PBDATE on DBUSRSET.PAYBATCH (PBDATE)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRSET.PK_BILLNOMFID on DBUSRSET.PAYBATCH (PBPAYBILLNO, PBJSNO, PBMFID)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRSET.PAYBATCH
+  add constraint PK_PAYBATCH primary key (PBSEQ, PBSUPID, PBWMID, PBMKT, PBMFID, PBMCONTNO, PBJSNO, PBBILLNO, PBDJLB, PBBILLTYPE, PBCONTNO)
+  using index 
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

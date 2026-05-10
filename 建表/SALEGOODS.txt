@@ -1,0 +1,383 @@
+-- Create table
+create table DBUSRPOSNEW.SALEGOODS
+(
+  billno       NUMBER(18) not null,
+  rowno        INTEGER not null,
+  mkt          VARCHAR2(20),
+  yyyh         VARCHAR2(10),
+  barcode      VARCHAR2(20),
+  code         VARCHAR2(20),
+  sptype       CHAR(1),
+  gz           VARCHAR2(20),
+  catid        VARCHAR2(10),
+  ppcode       VARCHAR2(10),
+  unitid       VARCHAR2(2),
+  batch        VARCHAR2(20),
+  yhdjbh       VARCHAR2(20),
+  name         VARCHAR2(60),
+  unit         VARCHAR2(4),
+  bzhl         NUMBER(12,2),
+  sl           NUMBER(10,4),
+  lsj          NUMBER(12,2),
+  jg           NUMBER(12,2),
+  hjje         NUMBER(12,2),
+  hjzk         NUMBER(12,2),
+  hyzke        NUMBER(12,2),
+  hyzkfd       NUMBER(10,4),
+  yhzke        NUMBER(12,2),
+  yhzkfd       NUMBER(10,4),
+  lszke        NUMBER(12,2),
+  lszre        NUMBER(12,2),
+  lszzk        NUMBER(12,2),
+  lszzr        NUMBER(12,2),
+  lszkfd       NUMBER(10,4),
+  plzke        NUMBER(12,2),
+  plzkfd       NUMBER(10,4),
+  zsdjbh       VARCHAR2(20),
+  zszke        NUMBER(12,2),
+  zszkfd       NUMBER(10,4),
+  sqkh         VARCHAR2(20),
+  sqktype      CHAR(1),
+  sqkzkfd      NUMBER(10,4),
+  hyzklje      NUMBER(12,2),
+  cjzke        NUMBER(12,2),
+  ltzke        NUMBER(12,2),
+  qtzke        NUMBER(12,2),
+  qtzre        NUMBER(12,2),
+  sswr_sysy    NUMBER(12,2),
+  fk_sysy      NUMBER(12,2),
+  isvipzk      CHAR(1),
+  xxtax        NUMBER(12,2),
+  flag         CHAR(1),
+  yjhxcode     VARCHAR2(20),
+  ysyjh        VARCHAR2(8),
+  yfphm        INTEGER,
+  fhdd         VARCHAR2(20),
+  hydjbh       VARCHAR2(20),
+  memo         VARCHAR2(100),
+  str1         VARCHAR2(100),
+  str2         VARCHAR2(100),
+  str3         VARCHAR2(100),
+  str4         VARCHAR2(100),
+  str5         VARCHAR2(100),
+  num1         NUMBER(12,2),
+  num2         NUMBER(12,2),
+  num3         NUMBER(12,2),
+  num4         NUMBER(12,2),
+  num5         NUMBER(12,2),
+  rqsj         DATE,
+  str6         VARCHAR2(100),
+  str7         VARCHAR2(100),
+  str8         VARCHAR2(100),
+  str9         VARCHAR2(100),
+  str10        VARCHAR2(100),
+  num6         NUMBER,
+  num7         NUMBER,
+  num8         NUMBER,
+  num9         NUMBER,
+  num10        NUMBER,
+  sdjfbs       NUMBER(14,4),
+  sdpopisjf    NUMBER(5,4),
+  sdpopjfbs    NUMBER(14,4),
+  sdmjrule     VARCHAR2(20),
+  sdfqrule     VARCHAR2(20),
+  sdflrule     VARCHAR2(20),
+  sdsarule     NUMBER,
+  sdsazk       NUMBER,
+  sdpoprule    VARCHAR2(10),
+  sdspsx       VARCHAR2(20),
+  sdpoppayje   VARCHAR2(2000),
+  sgfph        VARCHAR2(20),
+  sdrulezke    NUMBER,
+  sdrulezkfd   NUMBER(10,4),
+  sdruledjbh   VARCHAR2(20),
+  sdmjzke      NUMBER,
+  sdmjzkfd     NUMBER(10,4),
+  sdmjdjbh     VARCHAR2(20),
+  sdspzkfd     NUMBER(10,4),
+  sdypopzke    NUMBER(10,4),
+  inputbarcode VARCHAR2(100),
+  iszt         CHAR(1),
+  custname     VARCHAR2(20),
+  custtel      VARCHAR2(50),
+  addr1        VARCHAR2(300),
+  isinstall    CHAR(1),
+  sjcm         VARCHAR2(50),
+  dkqje        NUMBER(12,2),
+  cjqno        VARCHAR2(20),
+  cdqje        NUMBER(12,2),
+  cjqzkfd      VARCHAR2(20),
+  sjqno        VARCHAR2(30),
+  sdqje        NUMBER(12,2),
+  dyqno        VARCHAR2(20),
+  dyqje        NUMBER(12,2),
+  dyqzkfd      NUMBER(12,2),
+  ycf          NUMBER(12,2),
+  iscyhd       CHAR(1),
+  psrq         VARCHAR2(20),
+  yrowno       INTEGER
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 50M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPOSNEW.SALEGOODS
+  is '小票商品明细';
+-- Add comments to the columns 
+comment on column DBUSRPOSNEW.SALEGOODS.billno
+  is '小票单据号
+(对应SALEHEAD)';
+comment on column DBUSRPOSNEW.SALEGOODS.rowno
+  is '商品行号';
+comment on column DBUSRPOSNEW.SALEGOODS.yyyh
+  is '营业员';
+comment on column DBUSRPOSNEW.SALEGOODS.barcode
+  is '商品条码';
+comment on column DBUSRPOSNEW.SALEGOODS.code
+  is '商品编码';
+comment on column DBUSRPOSNEW.SALEGOODS.sptype
+  is '商品编码类型';
+comment on column DBUSRPOSNEW.SALEGOODS.gz
+  is '商品柜组';
+comment on column DBUSRPOSNEW.SALEGOODS.catid
+  is '商品品类';
+comment on column DBUSRPOSNEW.SALEGOODS.ppcode
+  is '商品品牌';
+comment on column DBUSRPOSNEW.SALEGOODS.batch
+  is '商品批号';
+comment on column DBUSRPOSNEW.SALEGOODS.yhdjbh
+  is '促销单据编号';
+comment on column DBUSRPOSNEW.SALEGOODS.name
+  is '商品名称';
+comment on column DBUSRPOSNEW.SALEGOODS.unit
+  is '商品单位';
+comment on column DBUSRPOSNEW.SALEGOODS.bzhl
+  is '包装含量';
+comment on column DBUSRPOSNEW.SALEGOODS.sl
+  is '销售数量';
+comment on column DBUSRPOSNEW.SALEGOODS.lsj
+  is '商品零售价';
+comment on column DBUSRPOSNEW.SALEGOODS.jg
+  is '销售价格';
+comment on column DBUSRPOSNEW.SALEGOODS.hjje
+  is '合计总金额';
+comment on column DBUSRPOSNEW.SALEGOODS.hjzk
+  is '合计总折扣';
+comment on column DBUSRPOSNEW.SALEGOODS.hyzke
+  is '会员折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.hyzkfd
+  is '会员折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.yhzke
+  is '促销折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.yhzkfd
+  is '促销折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.lszke
+  is '手工折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.lszre
+  is '手工折让额';
+comment on column DBUSRPOSNEW.SALEGOODS.lszzk
+  is '手工总品折扣';
+comment on column DBUSRPOSNEW.SALEGOODS.lszzr
+  is '手工总品折让';
+comment on column DBUSRPOSNEW.SALEGOODS.lszkfd
+  is '手工折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.plzke
+  is '批量折扣';
+comment on column DBUSRPOSNEW.SALEGOODS.plzkfd
+  is '批量折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.zsdjbh
+  is '规则促销单据号';
+comment on column DBUSRPOSNEW.SALEGOODS.zszke
+  is '规则促销折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.zszkfd
+  is '规则促销折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.sqkh
+  is '单品授权卡号';
+comment on column DBUSRPOSNEW.SALEGOODS.sqktype
+  is '单品授权类别';
+comment on column DBUSRPOSNEW.SALEGOODS.sqkzkfd
+  is '单品授权折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.hyzklje
+  is '会员折扣率折扣';
+comment on column DBUSRPOSNEW.SALEGOODS.cjzke
+  is '厂家折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.ltzke
+  is '零头折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.qtzke
+  is '其他折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.qtzre
+  is '其他折让额';
+comment on column DBUSRPOSNEW.SALEGOODS.sswr_sysy
+  is '四舍五入收银损溢';
+comment on column DBUSRPOSNEW.SALEGOODS.fk_sysy
+  is '付款方式收银损溢';
+comment on column DBUSRPOSNEW.SALEGOODS.isvipzk
+  is '是否允许VIP折扣';
+comment on column DBUSRPOSNEW.SALEGOODS.xxtax
+  is '商品税率';
+comment on column DBUSRPOSNEW.SALEGOODS.flag
+  is '商品标志
+(1-赠送商品/2-电子秤商品/
+ 3-削价商品/4-普通商品)';
+comment on column DBUSRPOSNEW.SALEGOODS.yjhxcode
+  is '以旧换新条码';
+comment on column DBUSRPOSNEW.SALEGOODS.ysyjh
+  is '原收银机号';
+comment on column DBUSRPOSNEW.SALEGOODS.yfphm
+  is '原小票号';
+comment on column DBUSRPOSNEW.SALEGOODS.fhdd
+  is '发货地点';
+comment on column DBUSRPOSNEW.SALEGOODS.hydjbh
+  is '会员折扣单号';
+comment on column DBUSRPOSNEW.SALEGOODS.memo
+  is '备注';
+comment on column DBUSRPOSNEW.SALEGOODS.str1
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.str2
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.str3
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.str4
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.str5
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.num1
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.num2
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.num3
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.num4
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.num5
+  is '备用';
+comment on column DBUSRPOSNEW.SALEGOODS.rqsj
+  is '交易时间';
+comment on column DBUSRPOSNEW.SALEGOODS.num6
+  is '已退货数量';
+comment on column DBUSRPOSNEW.SALEGOODS.num7
+  is '1:已红冲';
+comment on column DBUSRPOSNEW.SALEGOODS.sdjfbs
+  is '业务系统积分倍数';
+comment on column DBUSRPOSNEW.SALEGOODS.sdpopisjf
+  is '忽略其他积分优惠(1是,0否)';
+comment on column DBUSRPOSNEW.SALEGOODS.sdpopjfbs
+  is '促销积分倍率';
+comment on column DBUSRPOSNEW.SALEGOODS.sdmjrule
+  is '满减规则(买券时记录档期)';
+comment on column DBUSRPOSNEW.SALEGOODS.sdfqrule
+  is '返券规则';
+comment on column DBUSRPOSNEW.SALEGOODS.sdflrule
+  is '满赠规则_返礼品';
+comment on column DBUSRPOSNEW.SALEGOODS.sdsarule
+  is '追送规则序号';
+comment on column DBUSRPOSNEW.SALEGOODS.sdsazk
+  is '追送折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.sdpoprule
+  is '促销类型 1010,打折,满减,返券,返礼';
+comment on column DBUSRPOSNEW.SALEGOODS.sdspsx
+  is '商品属性码';
+comment on column DBUSRPOSNEW.SALEGOODS.sdpoppayje
+  is '记录分摊金额 付款行号:付款代码:分摊金额,付款行号:付款代码:分摊金额.......';
+comment on column DBUSRPOSNEW.SALEGOODS.sdrulezke
+  is '规则促销折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.sdrulezkfd
+  is '规则促销折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.sdruledjbh
+  is '规则促销折扣单据编号';
+comment on column DBUSRPOSNEW.SALEGOODS.sdmjzke
+  is '满减促销折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.sdmjzkfd
+  is '满减促销折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.sdspzkfd
+  is '规则促销折扣单据编号';
+comment on column DBUSRPOSNEW.SALEGOODS.sdypopzke
+  is '营促销折扣额';
+comment on column DBUSRPOSNEW.SALEGOODS.inputbarcode
+  is '编码';
+comment on column DBUSRPOSNEW.SALEGOODS.iszt
+  is '是否自提';
+comment on column DBUSRPOSNEW.SALEGOODS.custname
+  is '会员姓名';
+comment on column DBUSRPOSNEW.SALEGOODS.custtel
+  is '会员手机号';
+comment on column DBUSRPOSNEW.SALEGOODS.addr1
+  is '配送地址';
+comment on column DBUSRPOSNEW.SALEGOODS.isinstall
+  is '是否安装';
+comment on column DBUSRPOSNEW.SALEGOODS.sjcm
+  is '串码';
+comment on column DBUSRPOSNEW.SALEGOODS.dkqje
+  is '抵扣券金额';
+comment on column DBUSRPOSNEW.SALEGOODS.cjqno
+  is '厂家券号';
+comment on column DBUSRPOSNEW.SALEGOODS.cdqje
+  is '厂担券金额';
+comment on column DBUSRPOSNEW.SALEGOODS.cjqzkfd
+  is '厂家折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.sjqno
+  is '商家券号';
+comment on column DBUSRPOSNEW.SALEGOODS.sdqje
+  is '商担券金额';
+comment on column DBUSRPOSNEW.SALEGOODS.dyqno
+  is '店长优惠券号';
+comment on column DBUSRPOSNEW.SALEGOODS.dyqje
+  is '店长优惠券金额';
+comment on column DBUSRPOSNEW.SALEGOODS.dyqzkfd
+  is '店长优惠券折扣分担';
+comment on column DBUSRPOSNEW.SALEGOODS.ycf
+  is '远程费';
+comment on column DBUSRPOSNEW.SALEGOODS.iscyhd
+  is '是否参与赠品活动';
+comment on column DBUSRPOSNEW.SALEGOODS.psrq
+  is '配送日期';
+comment on column DBUSRPOSNEW.SALEGOODS.yrowno
+  is '原行号';
+-- Create/Recreate indexes 
+create index DBUSRPOSNEW.IDX_RQSJ on DBUSRPOSNEW.SALEGOODS (RQSJ)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPOSNEW.IDX_SG_MKTYSYJFPH on DBUSRPOSNEW.SALEGOODS (MKT, YSYJH, YFPHM)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 5M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPOSNEW.SALEGOODS
+  add constraint PK_SALEGOODS primary key (BILLNO, ROWNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 20M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

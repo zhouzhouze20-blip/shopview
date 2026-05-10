@@ -1,0 +1,1 @@
+"""ShopView Python application package."""

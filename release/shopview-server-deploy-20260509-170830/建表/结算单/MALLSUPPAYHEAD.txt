@@ -1,0 +1,131 @@
+-- Create table
+create table DBUSRSET.MALLSUPPAYHEAD
+(
+  sphbillno     VARCHAR2(20) not null,
+  sphdjbh       VARCHAR2(20),
+  sphtype       CHAR(1) not null,
+  sphmkt        VARCHAR2(20) not null,
+  sphflag       CHAR(1) not null,
+  sphsupid      VARCHAR2(20) not null,
+  sphmoney      NUMBER(14,4) not null,
+  sphmoneyupper VARCHAR2(100) not null,
+  sphhl         NUMBER(12,4),
+  sphbz         VARCHAR2(10),
+  sphbbje       NUMBER(14,4),
+  sphbank       VARCHAR2(60),
+  sphaccntno    VARCHAR2(40),
+  sphtaxno      VARCHAR2(40),
+  sphmktbank    VARCHAR2(60),
+  sphmktaccntno VARCHAR2(40),
+  sphmkttaxno   VARCHAR2(40),
+  sphpaydate    DATE not null,
+  inputor       VARCHAR2(20) not null,
+  inputdate     DATE not null,
+  auditor       VARCHAR2(20),
+  auditdate     DATE,
+  sphn1         NUMBER,
+  sphn2         NUMBER,
+  sphn3         NUMBER,
+  sphvc1        VARCHAR2(20),
+  sphvc2        VARCHAR2(200),
+  sphvc3        VARCHAR2(20),
+  sphmemo       VARCHAR2(60),
+  sphmfid       VARCHAR2(20),
+  sphwmid       CHAR(1),
+  sphcontno     VARCHAR2(30),
+  sphyckfs      NUMBER
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 16K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRSET.MALLSUPPAYHEAD
+  is '[SPH]付款单头';
+-- Add comments to the columns 
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphbillno
+  is '单号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphdjbh
+  is '手工号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphtype
+  is '单据类型';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmkt
+  is '门店';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphflag
+  is '状态';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphsupid
+  is '供应商';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmoney
+  is '金额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmoneyupper
+  is '大写金额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphhl
+  is '记帐汇率';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphbz
+  is '币种';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphbbje
+  is '本币金额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphbank
+  is '开户银行';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphaccntno
+  is '银行帐号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphtaxno
+  is '纳税号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmktbank
+  is '商场开户银行';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmktaccntno
+  is '商场银行帐号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmkttaxno
+  is '商场纳税号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphpaydate
+  is '付款日期';
+comment on column DBUSRSET.MALLSUPPAYHEAD.inputor
+  is '录入人';
+comment on column DBUSRSET.MALLSUPPAYHEAD.inputdate
+  is '录入日期';
+comment on column DBUSRSET.MALLSUPPAYHEAD.auditor
+  is '审核人';
+comment on column DBUSRSET.MALLSUPPAYHEAD.auditdate
+  is '审核日期';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphn1
+  is '可抵扣金额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphn2
+  is '实际收款金额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphn3
+  is '预存款余额';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphvc1
+  is '转帐标志(0/未处理1/自动转帐2/手工转帐) 抵扣项目';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphvc2
+  is '转帐备注';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmemo
+  is '备注';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphmfid
+  is '柜组';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphwmid
+  is '经营方式';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphcontno
+  is '合同号';
+comment on column DBUSRSET.MALLSUPPAYHEAD.sphyckfs
+  is '预存款发生额 正数为存入,负数为使用';
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRSET.MALLSUPPAYHEAD
+  add constraint PK_MALLSUPPAYHEAD primary key (SPHBILLNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

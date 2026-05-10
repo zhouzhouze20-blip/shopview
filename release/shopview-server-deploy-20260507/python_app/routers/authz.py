@@ -1,0 +1,197 @@
+"""
+Shared authorization helpers.
+"""
+from dataclasses import dataclass, field
+from typing import Iterable
+
+from fastapi import HTTPException, status
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
+
+from models.models import DataPolicy, DataPolicyItem, Permission, Role, RolePermission, User, UserRole
+
+
+ADMIN_ROLE_CODES = {"super_admin", "system_admin"}
+
+
+@dataclass
+class DataScope:
+    all_access: bool = False
+    allow: dict[str, set[str]] = field(default_factory=dict)
+    deny: dict[str, set[str]] = field(default_factory=dict)
+
+    def has_any_allow(self) -> bool:
+        return self.all_access or any(values for values in self.allow.values())
+
+
+def _norm(value: object) -> str:
+    return str(value or "").strip().upper()
+
+
+def _add_value(target: dict[str, set[str]], dimension: str, value: object) -> None:
+    normalized = _norm(value)
+    if not normalized:
+        return
+    target.setdefault(dimension, set()).add(normalized)
+
+
+def get_role_codes(db: Session, user_id: int) -> set[str]:
+    rows = (
+        db.query(Role.role_code)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .filter(
+            UserRole.user_id == user_id,
+            Role.is_active == True,
+            or_(UserRole.expires_at.is_(None), UserRole.expires_at > func.now()),
+        )
+        .all()
+    )
+    return {row.role_code for row in rows}
+
+
+def is_admin(db: Session, user: User) -> bool:
+    return bool(get_role_codes(db, user.user_id) & ADMIN_ROLE_CODES)
+
+
+def require_permission(db: Session, user: User, permission_code: str) -> None:
+    if is_admin(db, user):
+        return
+
+    exists = (
+        db.query(Permission.id)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(UserRole, UserRole.role_id == RolePermission.role_id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            UserRole.user_id == user.user_id,
+            Role.is_active == True,
+            Permission.permission_code == permission_code,
+            or_(UserRole.expires_at.is_(None), UserRole.expires_at > func.now()),
+        )
+        .first()
+    )
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无功能权限")
+
+
+def load_data_scope(db: Session, user: User, resource_code: str, action_code: str) -> DataScope:
+    if is_admin(db, user):
+        return DataScope(all_access=True)
+
+    role_ids = [
+        row.id
+        for row in (
+            db.query(Role.id)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .filter(
+                UserRole.user_id == user.user_id,
+                Role.is_active == True,
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > func.now()),
+            )
+            .all()
+        )
+    ]
+
+    subject_filters = [(DataPolicy.subject_type == "USER") & (DataPolicy.subject_id == user.user_id)]
+    if role_ids:
+        subject_filters.append((DataPolicy.subject_type == "ROLE") & (DataPolicy.subject_id.in_(role_ids)))
+
+    policies = (
+        db.query(DataPolicy)
+        .filter(
+            DataPolicy.resource_code == resource_code,
+            DataPolicy.action_code == action_code,
+            DataPolicy.is_active == True,
+            or_(*subject_filters),
+        )
+        .order_by(DataPolicy.priority.asc(), DataPolicy.id.asc())
+        .all()
+    )
+
+    scope = DataScope()
+    for policy in policies:
+        effect_target = scope.deny if policy.effect == "DENY" else scope.allow
+        if policy.scope_mode == "ALL":
+            if policy.effect == "DENY":
+                _add_value(effect_target, "__all__", "*")
+            else:
+                scope.all_access = True
+            continue
+        if policy.scope_mode == "SELF":
+            _add_value(effect_target, "self", user.user_id)
+            continue
+
+        items = db.query(DataPolicyItem).filter(DataPolicyItem.policy_id == policy.id).all()
+        for item in items:
+            _add_value(effect_target, item.dimension_type, item.dimension_value)
+
+    return scope
+
+
+def load_business_scope(db: Session, user: User, *, fallback_resource_code: str | None = None) -> DataScope:
+    """Load the unified business data scope used by contracts, sales, settlements and revenue."""
+    scope = load_data_scope(db, user, "business_scope", "view")
+    if scope.has_any_allow() or not fallback_resource_code:
+        return scope
+    return load_data_scope(db, user, fallback_resource_code, "view")
+
+
+def _matches(values: Iterable[object], allowed: set[str]) -> bool:
+    return any(_norm(value) in allowed for value in values)
+
+
+def scope_allows_business(
+    scope: DataScope,
+    *,
+    store_id: object = None,
+    department_code: object = None,
+    department_name: object = None,
+    group_code: object = None,
+    supplier_code: object = None,
+    brand_code: object = None,
+    brand_name: object = None,
+    category_code: object = None,
+    category_name: object = None,
+) -> bool:
+    if "__all__" in scope.deny:
+        return False
+
+    if _matches([store_id], scope.deny.get("store", set())):
+        return False
+    if _matches([department_code, department_name], scope.deny.get("department", set())):
+        return False
+    if _matches([group_code], scope.deny.get("group", set())):
+        return False
+    if _matches([supplier_code], scope.deny.get("supplier", set())):
+        return False
+    if _matches([brand_code, brand_name], scope.deny.get("brand", set())):
+        return False
+    if _matches([category_code, category_name], scope.deny.get("category", set())):
+        return False
+
+    if scope.all_access:
+        return True
+    if _matches([group_code], scope.allow.get("group", set())):
+        return True
+    if _matches([department_code, department_name], scope.allow.get("department", set())):
+        return True
+    if _matches([store_id], scope.allow.get("store", set())):
+        return True
+    if _matches([supplier_code], scope.allow.get("supplier", set())):
+        return True
+    if _matches([brand_code, brand_name], scope.allow.get("brand", set())):
+        return True
+    if _matches([category_code, category_name], scope.allow.get("category", set())):
+        return True
+    return False
+
+
+def scope_allows_contract(scope: DataScope, *, store_id: object = None, department_code: object = None, department_name: object = None, group_code: object = None) -> bool:
+    return scope_allows_business(
+        scope,
+        store_id=store_id,
+        department_code=department_code,
+        department_name=department_name,
+        group_code=group_code,
+    )
