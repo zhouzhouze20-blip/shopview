@@ -1,0 +1,232 @@
+-- Create table
+create table DBUSRSET.SUPSETCHARGE
+(
+  sscbillno      VARCHAR2(20) not null,
+  sscrowno       NUMBER(6) not null,
+  sscdjbh        VARCHAR2(20) not null,
+  ssctype        CHAR(1) not null,
+  sscflag        CHAR(1) not null,
+  sscsupid       VARCHAR2(20) not null,
+  sscwmid        CHAR(1),
+  sscmarket      VARCHAR2(20),
+  sscmfid        VARCHAR2(20),
+  sscdate        DATE not null,
+  sscfsdate      DATE not null,
+  sscfsmon       CHAR(6) not null,
+  sscid          CHAR(2) not null,
+  sscname        VARCHAR2(32),
+  sscmoney       NUMBER(12,2) not null,
+  sscjsno        VARCHAR2(20),
+  ssccontno      VARCHAR2(20),
+  inputor        VARCHAR2(20) not null,
+  inputdate      DATE not null,
+  auditor        VARCHAR2(20),
+  auditdate      DATE,
+  person1        VARCHAR2(20),
+  person2        VARCHAR2(20),
+  person3        VARCHAR2(20),
+  person4        VARCHAR2(20),
+  person5        VARCHAR2(20),
+  sscmemo        VARCHAR2(2000),
+  sscsetpl       VARCHAR2(20),
+  sscgdmoney     NUMBER(12,2),
+  sscmoneyupper  VARCHAR2(100),
+  sscret         CHAR(1) default 'N',
+  sscretdate     DATE,
+  sscretstatus   CHAR(1) default 'N',
+  sscretmoney    NUMBER,
+  sscrecretdate  DATE,
+  sscyretbillno  VARCHAR2(20),
+  sscrettype     CHAR(1) default '1',
+  sscpaymkt      VARCHAR2(20),
+  sscsyjid       VARCHAR2(20),
+  sscinvno       VARCHAR2(20),
+  sscchecker     VARCHAR2(20),
+  sscvc1         VARCHAR2(20),
+  sscvc2         VARCHAR2(20),
+  sscvc3         VARCHAR2(20),
+  sscfsstartdate DATE,
+  sscfsenddate   DATE,
+  sscpayer       VARCHAR2(20),
+  sscpaydate     DATE,
+  sscdate1       DATE,
+  sscdate2       DATE,
+  sscdate3       DATE,
+  sscnum1        NUMBER,
+  sscnum2        NUMBER,
+  sscnum3        NUMBER,
+  sscisqs        CHAR(1),
+  sscqssettleno  VARCHAR2(20),
+  sscpaybillno   VARCHAR2(20)
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 3M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRSET.SUPSETCHARGE
+  is '[SSC]供应商结算费用明细';
+-- Add comments to the columns 
+comment on column DBUSRSET.SUPSETCHARGE.sscbillno
+  is '费用单号';
+comment on column DBUSRSET.SUPSETCHARGE.sscrowno
+  is '行号';
+comment on column DBUSRSET.SUPSETCHARGE.sscdjbh
+  is 'SSCDJBH';
+comment on column DBUSRSET.SUPSETCHARGE.ssctype
+  is '单据类型';
+comment on column DBUSRSET.SUPSETCHARGE.sscflag
+  is '标志(录入	N/已生成结算单	M/结算审核	Y/费用审核	S/已收款	G)';
+comment on column DBUSRSET.SUPSETCHARGE.sscsupid
+  is '供应商';
+comment on column DBUSRSET.SUPSETCHARGE.sscwmid
+  is '经营方式';
+comment on column DBUSRSET.SUPSETCHARGE.sscmarket
+  is '门店';
+comment on column DBUSRSET.SUPSETCHARGE.sscmfid
+  is '柜组';
+comment on column DBUSRSET.SUPSETCHARGE.sscdate
+  is '制单日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscfsdate
+  is '发生日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscfsmon
+  is '发生月';
+comment on column DBUSRSET.SUPSETCHARGE.sscid
+  is '费用代码';
+comment on column DBUSRSET.SUPSETCHARGE.sscname
+  is '费用名称';
+comment on column DBUSRSET.SUPSETCHARGE.sscmoney
+  is '费用金额';
+comment on column DBUSRSET.SUPSETCHARGE.sscjsno
+  is '结算单号';
+comment on column DBUSRSET.SUPSETCHARGE.ssccontno
+  is 'SSCCONTNO';
+comment on column DBUSRSET.SUPSETCHARGE.inputor
+  is 'INPUTOR';
+comment on column DBUSRSET.SUPSETCHARGE.inputdate
+  is 'INPUTDATE';
+comment on column DBUSRSET.SUPSETCHARGE.auditor
+  is 'AUDITOR';
+comment on column DBUSRSET.SUPSETCHARGE.auditdate
+  is 'AUDITDATE';
+comment on column DBUSRSET.SUPSETCHARGE.person1
+  is 'PERSON1';
+comment on column DBUSRSET.SUPSETCHARGE.person2
+  is 'PERSON2';
+comment on column DBUSRSET.SUPSETCHARGE.person4
+  is '能源区间读数';
+comment on column DBUSRSET.SUPSETCHARGE.sscmemo
+  is 'SSCMEMO';
+comment on column DBUSRSET.SUPSETCHARGE.sscgdmoney
+  is '商品费用金额';
+comment on column DBUSRSET.SUPSETCHARGE.sscmoneyupper
+  is '大写金额';
+comment on column DBUSRSET.SUPSETCHARGE.sscret
+  is '是否返还';
+comment on column DBUSRSET.SUPSETCHARGE.sscretdate
+  is '返还日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscretstatus
+  is '是否终止返回';
+comment on column DBUSRSET.SUPSETCHARGE.sscretmoney
+  is '返还金额';
+comment on column DBUSRSET.SUPSETCHARGE.sscrecretdate
+  is '最近返还日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscyretbillno
+  is '原返还单号';
+comment on column DBUSRSET.SUPSETCHARGE.sscvc2
+  is '付款方式';
+comment on column DBUSRSET.SUPSETCHARGE.sscfsstartdate
+  is '发生开始日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscfsenddate
+  is '发生结算日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscpayer
+  is '付款人';
+comment on column DBUSRSET.SUPSETCHARGE.sscpaydate
+  is '付款日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscdate1
+  is '实际付款日期';
+comment on column DBUSRSET.SUPSETCHARGE.sscpaybillno
+  is '付款单号';
+-- Create/Recreate indexes 
+create index DBUSRSET.IDX_SSC_DATEMKT on DBUSRSET.SUPSETCHARGE (AUDITDATE, SSCMARKET)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRSET.IDX_SSC_DJBH on DBUSRSET.SUPSETCHARGE (SSCDJBH)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRSET.IDX_SSC_JSNO on DBUSRSET.SUPSETCHARGE (SSCJSNO)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRSET.IDX_SSC_SSCFSDATE on DBUSRSET.SUPSETCHARGE (SSCFSDATE)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRSET.IDX_SSC_SUPID on DBUSRSET.SUPSETCHARGE (SSCSUPID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRSET.SUPSETCHARGE
+  add constraint PK_SUPSETCHARGE primary key (SSCBILLNO, SSCROWNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

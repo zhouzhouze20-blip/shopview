@@ -1,0 +1,75 @@
+  Select class2 as "楼层",
+                      spbm as "库区" ,
+                     sglmfid as "柜组",
+                     sglsupid as "供应商",
+                     sglgdid as "商品编码",
+                     sglbarcode as "商品条码",
+                      gbcname as "商品名称" ,
+                     sglbasekl as "原扣率",
+                     kl as "销售扣率",
+                     yhkl as "优惠扣率",
+                     sum(rkje) as "让扣金额",
+                     sum(JGLSL) as "销售数量", 
+                      sum(sjje) as "售价金额",
+                       sum(JGLN3) as "销售收入" ,
+                      sum(ML) as "毛利",
+                     decode(sum(JGLN3),0,0,round(sum(ML)/sum(JGLN3),4)) as "毛利率",
+                      sum(XSJEJE) as "销售净额", 
+                      sum(NETML) as "净毛利",
+                      decode(sum(XSJEJE),0,0,round(sum(NETML)/sum(XSJEJE),4))  as "净毛利率" ,
+                     sum(xscb) as "销售成本",
+                      sum(jxscb) as "净销售成本",
+                      sum(JGLN4) as "总折扣", 
+                       sum(JGLZK1) as "会员折扣",
+                      sum(JGLZK2) as "促销折扣",
+                       sum(JGLZK3) as "授权折扣" ,
+                      sum(JGLZK4) as "其他折扣"
+                FROM (SELECT VIEW_MFRAME_ALL.CLASS2,
+       VIEW_MFRAME_ALL.SPBM,
+       SGLMFID,
+       SGLSUPID,
+       SGLGDID,
+       SGLBARCODE,
+       GOODSBASE.GBCNAME,
+       SGLBILLNO,SGLROWNO,
+       SUM(SGLSL) JGLSL,sglbasekl,sglkl kl,decode(sglkl,sglbasekl,0,sglkl) yhkl,sum(sglsjje*(sglbasekl-sglkl))   rkje,
+       sum(sglsjje)sjje,
+       SUM(SGLXSSR) JGLN3, 
+       sum(case   when sglwmid = '1' then sglxssr-nvl(sgln13,0)+(case when sglxssr = '0' and (sgln14  is null or sgln14 = '0') then sgln2 else sgln14 end) else SGLN2 end) ML,
+       DECODE(  SUM(SGLXSSR) ,0,0,sum(case   when sglwmid = '1' then sglxssr-nvl(sgln13,0)+(case when sglxssr = '0' and (sgln14  is null or sgln14 = '0') then sgln2 else sgln14 end) else SGLN2 end) /  SUM(SGLXSSR) )SGLKL,
+       SUM(sglxssr-sglgcert+sglsysy) XSJEJE,  
+       SUM((case   when sglwmid = '1' then sglxssr-nvl(sgln13,0)+(case when sglxssr = '0' and (sgln14  is null or sgln14 = '0') then sgln2 else sgln14 end) else SGLN2 end)-sglgcert+sglsysy) NETML,   
+       DECODE(SUM(sglxssr-sglgcert+sglsysy), 0, 0, SUM((case   when sglwmid = '1' then sglxssr-nvl(sgln13,0)+(case when sglxssr = '0' and (sgln14  is null or sgln14 = '0') then sgln2 else sgln14 end) else SGLN2 end)-sglgcert+sglsysy)/ SUM(sglxssr-sglgcert+sglsysy)) JMLL,
+       sum(nvl(sgln13,0)+nvl(sgln14,0)) xscb ,
+sum((case   when sglwmid in '4,5' then sglxssr*(1-sglkl) else nvl(sgln13,0)+nvl(sgln14,0) end)) jxscb,
+       SUM(SGLTOTZK) JGLN4,
+       SUM(SGLCUSTZK) JGLZK1,
+       SUM(SGLPOPZK) JGLZK2,
+       SUM(SGLGRANTZK) JGLZK3,
+       SUM(SGLTOTZK-SGLCUSTZK-SGLPOPZK-SGLGRANTZK) JGLZK4,
+       SUM(SGLSYSY) JGLN1  
+FROM SALEGOODSLIST,GOODSBASE,VIEW_MFRAME_ALL
+WHERE  GOODSBASE.GBID=SALEGOODSLIST.SGLGDID  AND
+      VIEW_MFRAME_ALL.CLASS3=SALEGOODSLIST.SGLMFID AND
+    
+         SGLDATE>= TO_DATE('2026-05-01','YYYY-MM-DD')   AND  SGLDATE < TO_DATE('2026-05-08','YYYY-MM-DD')+1 AND
+          sglsjje<>0 and
+ 'SALEGOODSLIST.SGLHSRQ'='SALEGOODSLIST.SGLHSRQ' AND
+      'VIEW_MFRAME_ALL.CLASS2'='VIEW_MFRAME_ALL.CLASS2' AND
+      'SALEGOODSLIST.SGLWMID'='SALEGOODSLIST.SGLWMID' AND
+      'VIEW_MFRAME_ALL.SPBM'='VIEW_MFRAME_ALL.SPBM' AND
+      'VIEW_MFRAME_ALL.CLASS3'='VIEW_MFRAME_ALL.CLASS3' AND
+      'SALEGOODSLIST.SGLGDID'='SALEGOODSLIST.SGLGDID' AND
+ 'SALEGOODSLIST.SGLSUPID'='SALEGOODSLIST.SGLSUPID' 
+GROUP BY VIEW_MFRAME_ALL.CLASS2,
+         VIEW_MFRAME_ALL.SPBM,
+         SGLMFID,
+        SGLSUPID ,
+         SGLGDID,
+         SGLBARCODE,
+         GOODSBASE.GBCNAME,SGLBASEKL,SGLKL,SGLBILLNO,SGLROWNO) TA,
+         (SELECT SPGBILLNO,SPGgdROW  ,ROM SELLPAYGOODS,SELLHEAD
+WHERE SPGBILLNO=SHBILLNO AND SHDATE>= TO_DATE('2026-05-01','YYYY-MM-DD')   AND  SHDATE < TO_DATE('2026-05-08','YYYY-MM-DD')+1
+GROUP BY SPGBILLNO,SPGgdROW) TB 
+WHERE TA.SGLBILLNO=TB.SPGBILLNO(+) AND TA.SGLROWNO=TB.SPGgdROW
+group by class2,spbm,sglmfid,sglsupid,sglgdid ,sglbarcode ,gbcname, sglbasekl,kl,yhkl 

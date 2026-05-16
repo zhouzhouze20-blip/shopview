@@ -1,0 +1,91 @@
+-- Create table
+create table DBUSRPUB.PAYMODE
+(
+  pmcode    VARCHAR2(4) not null,
+  pmtype    CHAR(1) not null,
+  pmname    VARCHAR2(20) not null,
+  pmscode   CHAR(3) not null,
+  pmpcode   VARCHAR2(4) not null,
+  pmclass   CHAR(1) not null,
+  pmflag    CHAR(1) not null,
+  pmrange   CHAR(1) default '1' not null,
+  pmiswb    CHAR(1) not null,
+  pmhl      NUMBER not null,
+  pmiszl    CHAR(1) not null,
+  pmisyy    CHAR(1) not null,
+  pmminje   NUMBER not null,
+  pmmaxje   NUMBER not null,
+  pmstatus  CHAR(1) not null,
+  pmisjkgc  CHAR(1) default 'N' not null,
+  pmxyktype VARCHAR2(2),
+  pmrevrate NUMBER default 1,
+  pmsupzkfd NUMBER default 0
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 256K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.PAYMODE
+  is '[PM]付款方式';
+-- Add comments to the columns 
+comment on column DBUSRPUB.PAYMODE.pmcode
+  is '代码';
+comment on column DBUSRPUB.PAYMODE.pmtype
+  is '类别';
+comment on column DBUSRPUB.PAYMODE.pmname
+  is '名称';
+comment on column DBUSRPUB.PAYMODE.pmscode
+  is '间码';
+comment on column DBUSRPUB.PAYMODE.pmpcode
+  is '上级代码';
+comment on column DBUSRPUB.PAYMODE.pmclass
+  is '级次';
+comment on column DBUSRPUB.PAYMODE.pmflag
+  is '末级标志';
+comment on column DBUSRPUB.PAYMODE.pmrange
+  is '使用范围';
+comment on column DBUSRPUB.PAYMODE.pmiswb
+  is '是否外币';
+comment on column DBUSRPUB.PAYMODE.pmhl
+  is '汇率';
+comment on column DBUSRPUB.PAYMODE.pmiszl
+  is '是否找零';
+comment on column DBUSRPUB.PAYMODE.pmisyy
+  is '是否溢余';
+comment on column DBUSRPUB.PAYMODE.pmminje
+  is '最小金额';
+comment on column DBUSRPUB.PAYMODE.pmmaxje
+  is '最大金额';
+comment on column DBUSRPUB.PAYMODE.pmstatus
+  is '状态';
+comment on column DBUSRPUB.PAYMODE.pmisjkgc
+  is '是否金卡工程';
+comment on column DBUSRPUB.PAYMODE.pmxyktype
+  is '信用卡费率代码';
+comment on column DBUSRPUB.PAYMODE.pmrevrate
+  is '折算收入比例';
+comment on column DBUSRPUB.PAYMODE.pmsupzkfd
+  is '不计收入付款方式金额供应商承担比例';
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.PAYMODE
+  add constraint PK_PAYMODE primary key (PMCODE)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

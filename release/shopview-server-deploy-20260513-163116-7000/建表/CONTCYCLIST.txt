@@ -1,0 +1,76 @@
+-- Create table
+create table CONTCYCLIST
+(
+  cclcontno    VARCHAR2(20) not null,
+  cclseqno     NUMBER not null,
+  cclmkt       VARCHAR2(20),
+  cclmfid      VARCHAR2(20),
+  ccleffdate   DATE,
+  ccllapdate   DATE,
+  cclitemid    VARCHAR2(20),
+  cclitemunit  CHAR(1),
+  cclitemprice NUMBER,
+  cclsumamount NUMBER,
+  cclystype    NUMBER,
+  cclysnum     NUMBER,
+  cclisfree    CHAR(1),
+  cclflag      CHAR(1) default 'Y',
+  cclpchflag   CHAR(1) default 'N'
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the columns 
+comment on column CONTCYCLIST.cclcontno
+  is '合同号';
+comment on column CONTCYCLIST.cclseqno
+  is '序号';
+comment on column CONTCYCLIST.cclmkt
+  is '门店';
+comment on column CONTCYCLIST.cclmfid
+  is '柜组';
+comment on column CONTCYCLIST.ccleffdate
+  is '开始日期';
+comment on column CONTCYCLIST.ccllapdate
+  is '结束日期';
+comment on column CONTCYCLIST.cclitemid
+  is '项目编号';
+comment on column CONTCYCLIST.cclitemunit
+  is '项目单位';
+comment on column CONTCYCLIST.cclitemprice
+  is '价格';
+comment on column CONTCYCLIST.cclsumamount
+  is '总金额';
+comment on column CONTCYCLIST.cclystype
+  is '预收类型';
+comment on column CONTCYCLIST.cclysnum
+  is '一次收取月数';
+comment on column CONTCYCLIST.cclisfree
+  is '是否免除';
+comment on column CONTCYCLIST.cclflag
+  is '费用状态';
+comment on column CONTCYCLIST.cclpchflag
+  is '是否参与提成比高';
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table CONTCYCLIST
+  add constraint PK_CONTCYCLIST primary key (CCLCONTNO, CCLSEQNO)
+  using index 
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

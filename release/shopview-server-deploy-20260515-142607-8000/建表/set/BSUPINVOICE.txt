@@ -1,0 +1,128 @@
+CREATE OR REPLACE Package Body BSUPINVOICE Is
+	vbdate Varchar(20);
+	vedate Varchar(20);
+	--审核
+	Procedure Approve
+	(
+		p_billno In Char,
+		p_person In Char,
+		p_billid In Char,
+		p_djlb   In Char
+	) Is
+		bh             SUPINVOICEHD%Rowtype;
+		bd             SUPINVOICEDET%Rowtype;
+		CurrentMkt     ManaFrame.mfcode%Type;
+		CurrentMktType Char(1);
+		lcnt           Number;
+		ld_hsje_hd     Number;
+		ld_hsje_det    Number;
+		ld_hsje_ex     Number;
+	Begin
+		/*CurrentMkt     := fGetSysPlace;
+      CurrentMktType := FGetSysType(CurrentMkt);
+      If CurrentMktType Not In (MF_Mkt) Then
+         raise_application_error(errcode, p_billno || '->0 操作地点错误！');
+      End If;*/
+	
+		Begin
+			Select * Into bh From SUPINVOICEHD Where sihbillno = p_billno For Update;
+		Exception
+			When no_data_found Then
+				raise_application_error(errcode, p_billno || '->1 单据不存在！');
+		End;
+		If bh.sihdjlb <> p_djlb Then
+			raise_application_error(errcode, p_billno || '->2 单据类别不一致！');
+		End If;
+		If bh.sihFlag In (FlagApproved, FlagCanceled) Then
+			raise_application_error(errcode, p_billno || '->3 单据已经认证或已红冲！');
+		End If;
+	
+		/*If p_djlb In (Typesupinvoice) And CurrentMktType = MF_Mkt Then
+         Null;
+      Else
+         raise_application_error(errcode, p_billno || '->6 参数错误！');
+      End If;*/
+	
+		--Select nvl(sihhsje, 0) Into ld_hsje_hd From supinvoicehd Where sihbillno = p_billno;
+		--Select nvl(Sum(sidhsje), 0) Into ld_hsje_det From supinvoicedet Where sidbillno = p_billno;
+		--Select nvl(Sum(sishsje), 0) Into ld_hsje_ex From supinvoiceset Where sidbillno = p_billno;
+	
+		Select nvl(Count(*), 0)
+		  Into lcnt
+		  From (Select *
+					 From supinvoicehd
+					Where sihid = bh.sihid And
+							sihflag In (FlagApproved) And
+							sihbillno <> p_billno);
+		If lcnt > 0 Then
+			raise_application_error(errcode, p_billno || '->3 单据 发票[' || bh.sihid || ']已经在其他单据中认证！');
+		End If;
+	
+		Update SUPINVOICEHD
+			Set sihFlag   = FlagApproved,
+				 auditor   = p_person,
+				 auditdate = Sysdate,
+				 sihhsye   = bh.sihhsje,
+				 sihbhsye  = bh.sihbhsje
+		 Where sihBillno = p_billno;
+	
+		Commit;
+	Exception
+		When Others Then
+			Rollback;
+			Raise;
+	End Approve;
+
+
+	-------------------------------------------------------------------------
+	-- 发票红冲：
+	--     1、检查单据状态
+	--     2、检查是否付款（未完成）
+   --        1、付款单已经审核，不能红冲
+   --        2、付款单生成未审核，删除对应的付款单，删除对应表，清空结算单付款标志
+   -- 方案2：
+   --     1、有使用就报错，允许手工删除生成状态的付款单再红冲
+	------------------------------------------------------------------------
+	Procedure Cancel
+	(
+		p_billno In Char,
+		p_person In Char,
+		p_billid In Char,
+		p_djlb   In Char
+	) Is
+		bh SUPINVOICEHD%Rowtype;
+		bd SUPINVOICEDET%Rowtype;
+	Begin
+		Begin
+			Select * Into bh From SupInvoiceHd Where SihBillNo = p_BillNo For Update;
+		Exception
+			When Others Then
+				raise_application_error(errcode, p_billno || '->1 单据不存在！');
+		End;
+		If bh.sihdjlb <> p_djlb Then
+			raise_application_error(errcode, p_billno || '->2 单据类别不一致！');
+		End If;
+		If bh.sihFlag Not In (FlagApproved) Then
+			raise_application_error(errcode, p_billno || '->3 单据状态不正确，不能红冲！');
+		End If;
+	
+		If bh.sihhsje <> bh.sihhsye Then
+			raise_application_error(errcode, p_billno || '->4 单据对应发票已经付款，不能红冲！');
+		End If;
+	
+		Update SUPINVOICEHD
+			Set sihFlag = 'H',
+				 qxr     = p_person,
+				 qxdate  = Sysdate
+		 Where sihBillno = p_billno;
+	
+		Commit;
+	
+	Exception
+		When Others Then
+			Rollback;
+			Raise;
+	End Cancel;
+
+
+End BSUPINVOICE;

@@ -1,0 +1,512 @@
+-- Create table
+create table SALEGOODSLIST
+(
+  sgldate     DATE not null,
+  sgltpid     CHAR(2) not null,
+  sglsummary  VARCHAR2(10) not null,
+  sglmarket   VARCHAR2(20) not null,
+  sglmfid     VARCHAR2(20) not null,
+  sglgdid     VARCHAR2(20) not null,
+  sglbarcode  VARCHAR2(20) not null,
+  sglgdtype   CHAR(1) not null,
+  sglcatid    VARCHAR2(10) not null,
+  sgltaxtype  CHAR(1) not null,
+  sglxstax    NUMBER(8,4) not null,
+  sglxftax    NUMBER(8,4) not null,
+  sglppcode   VARCHAR2(10) not null,
+  sgluid      VARCHAR2(6) default '00' not null,
+  sglhsrq     DATE not null,
+  sglbatchno  VARCHAR2(20) default '0' not null,
+  sglsupid    VARCHAR2(20) not null,
+  sglanalcode VARCHAR2(20),
+  sglsj       NUMBER(16,4) not null,
+  sglkl       NUMBER(5,4) not null,
+  sgljs       NUMBER(16,4) not null,
+  sglsl       NUMBER(16,4) not null,
+  sglsjje     NUMBER(16,4) not null,
+  sglxssr     NUMBER(16,4) not null,
+  sglxsse     NUMBER(16,4) not null,
+  sglxfse     NUMBER(16,4) not null,
+  sglqtsr     NUMBER(16,4) not null,
+  sglsysy     NUMBER(16,4) not null,
+  sglpopsr    NUMBER(16,4) not null,
+  sglcustsr   NUMBER(16,4) not null,
+  sglfcdsr    NUMBER(16,4) not null,
+  sglpfsr     NUMBER(16,4) not null,
+  sglyxssr    NUMBER(16,4) not null,
+  sgltotzk    NUMBER(16,4) not null,
+  sglsupzk    NUMBER(16,4) not null,
+  sglpopzk    NUMBER(16,4) not null,
+  sglcustzk   NUMBER(16,4) not null,
+  sglfcdzk    NUMBER(16,4) not null,
+  sglpfzk     NUMBER(16,4) not null,
+  sglgrantzk  NUMBER(16,4) not null,
+  sglyjhx     NUMBER(16,4) not null,
+  sglzszk     NUMBER(16,4) not null,
+  sglthss     NUMBER(16,4) not null,
+  sgladjustzk NUMBER(16,4) not null,
+  sglcash     NUMBER(16,4) not null,
+  sglcheck    NUMBER(16,4) not null,
+  sglccard    NUMBER(16,4) not null,
+  sglfcard    NUMBER(16,4) not null,
+  sglgcert    NUMBER(16,4) not null,
+  sglgzje     NUMBER(16,4) not null,
+  sglopay     NUMBER(16,4) not null,
+  sgltimes    NUMBER(16,4),
+  sgln1       NUMBER(16,4),
+  sgln2       NUMBER(16,4),
+  sgln3       NUMBER(16,4),
+  sgln4       NUMBER(16,4),
+  sgln5       NUMBER(16,4),
+  sglvc1      VARCHAR2(20),
+  sglvc2      VARCHAR2(20),
+  sglvc3      VARCHAR2(64),
+  sglwmid     CHAR(1) default '1' not null,
+  sglfqje     NUMBER(16,4) default 0,
+  sglsqje     NUMBER(16,4) default 0,
+  sglqxssr    NUMBER(16,4) default 0,
+  sgln6       NUMBER(16,4),
+  sgln7       NUMBER(16,4),
+  sgln8       NUMBER(16,4),
+  sgln9       NUMBER(16,4),
+  sgln10      NUMBER(16,4),
+  sglxyksr1   NUMBER(16,4) default 0,
+  sglxyksr2   NUMBER(16,4) default 0,
+  sglxyksr3   NUMBER(16,4) default 0,
+  sglxyksr4   NUMBER(16,4) default 0,
+  sglxyksr5   NUMBER(16,4) default 0,
+  sglxyksr6   NUMBER(16,4) default 0,
+  sglxyksr7   NUMBER(16,4) default 0,
+  sglxyksr8   NUMBER(16,4) default 0,
+  sglxyksr9   NUMBER(16,4) default 0,
+  sglxyksr10  NUMBER(16,4) default 0,
+  sglbillno   NUMBER not null,
+  sglrowno    NUMBER not null,
+  sglbasekl   NUMBER(5,4),
+  sgln11      NUMBER,
+  sgln12      NUMBER,
+  sgln13      NUMBER,
+  sgln14      NUMBER,
+  sgln15      NUMBER,
+  sgln16      NUMBER,
+  sgln17      NUMBER,
+  sgln18      NUMBER,
+  sgln19      NUMBER,
+  sgln20      NUMBER,
+  sgln21      NUMBER,
+  sgln22      NUMBER,
+  sgln23      NUMBER,
+  sgln24      NUMBER,
+  sgln25      NUMBER,
+  sglvc4      VARCHAR2(20),
+  sglvc5      VARCHAR2(20),
+  sglvc6      VARCHAR2(20),
+  sglvc7      VARCHAR2(20),
+  sglvc8      VARCHAR2(20),
+  sglvc9      VARCHAR2(20),
+  sglvc10     VARCHAR2(20),
+  sglvc11     VARCHAR2(20),
+  sglvc12     VARCHAR2(20),
+  sglvc13     VARCHAR2(20),
+  sglvc14     VARCHAR2(20),
+  sglvc15     VARCHAR2(20),
+  sglsaledate DATE,
+  sglnetml    NUMBER,
+  sglcardtype VARCHAR2(10),
+  sglsyjid    VARCHAR2(20),
+  sglinvno    NUMBER,
+  sglchecker  VARCHAR2(20),
+  sglposcls   CHAR(1),
+  sglshdate   DATE,
+  sgltmtype   CHAR(1) default '0',
+  sglmd       CHAR(1) default '1',
+  sglfysl     NUMBER(16,4),
+  sglvip1sr   NUMBER(16,4),
+  sglvip2sr   NUMBER(16,4),
+  sglvip3sr   NUMBER(16,4),
+  sglvip4sr   NUMBER(16,4),
+  sglvip5sr   NUMBER(16,4),
+  sglxykfy1   NUMBER,
+  sglxykfy2   NUMBER,
+  sglxykfy3   NUMBER,
+  sglxykfy4   NUMBER,
+  sglxykfy5   NUMBER,
+  sglxykfy6   NUMBER,
+  sglxykfy7   NUMBER,
+  sglxykfy8   NUMBER,
+  sglxykfy9   NUMBER,
+  sglxykfy10  NUMBER,
+  sglspsx     VARCHAR2(20) default '0',
+  sgljjtax    NUMBER(8,4),
+  sgln26      NUMBER,
+  sgln27      NUMBER,
+  sgln28      NUMBER,
+  sgln29      NUMBER
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 50M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table SALEGOODSLIST
+  is '[SGL]销售单品日汇总';
+-- Add comments to the columns 
+comment on column SALEGOODSLIST.sgldate
+  is '日期';
+comment on column SALEGOODSLIST.sgltpid
+  is '时段ID';
+comment on column SALEGOODSLIST.sglsummary
+  is '摘要';
+comment on column SALEGOODSLIST.sglmarket
+  is '门店';
+comment on column SALEGOODSLIST.sglmfid
+  is '柜组';
+comment on column SALEGOODSLIST.sglgdid
+  is '商品代码';
+comment on column SALEGOODSLIST.sglbarcode
+  is '商品条码';
+comment on column SALEGOODSLIST.sglgdtype
+  is '编码类别';
+comment on column SALEGOODSLIST.sglcatid
+  is '商品类别';
+comment on column SALEGOODSLIST.sgltaxtype
+  is '税种';
+comment on column SALEGOODSLIST.sglxstax
+  is '销售税率';
+comment on column SALEGOODSLIST.sglxftax
+  is '消费税率';
+comment on column SALEGOODSLIST.sglppcode
+  is '品牌';
+comment on column SALEGOODSLIST.sgluid
+  is '单位代码';
+comment on column SALEGOODSLIST.sglhsrq
+  is '核算日期';
+comment on column SALEGOODSLIST.sglbatchno
+  is '批号';
+comment on column SALEGOODSLIST.sglsupid
+  is '供应商';
+comment on column SALEGOODSLIST.sglanalcode
+  is '分析码';
+comment on column SALEGOODSLIST.sglsj
+  is '售价';
+comment on column SALEGOODSLIST.sglkl
+  is '扣率';
+comment on column SALEGOODSLIST.sgljs
+  is '件数';
+comment on column SALEGOODSLIST.sglsl
+  is '数量';
+comment on column SALEGOODSLIST.sglsjje
+  is '售价金额';
+comment on column SALEGOODSLIST.sglxssr
+  is '销售收入';
+comment on column SALEGOODSLIST.sglxsse
+  is '销售税额';
+comment on column SALEGOODSLIST.sglxfse
+  is '消费税额';
+comment on column SALEGOODSLIST.sglqtsr
+  is '其他收入';
+comment on column SALEGOODSLIST.sglsysy
+  is '收银损益';
+comment on column SALEGOODSLIST.sglpopsr
+  is '促销收入';
+comment on column SALEGOODSLIST.sglcustsr
+  is '会员收入';
+comment on column SALEGOODSLIST.sglfcdsr
+  is '储值卡收入';
+comment on column SALEGOODSLIST.sglpfsr
+  is '批发收入';
+comment on column SALEGOODSLIST.sglyxssr
+  is '预销售收入';
+comment on column SALEGOODSLIST.sgltotzk
+  is '总折扣';
+comment on column SALEGOODSLIST.sglsupzk
+  is '供应商折扣';
+comment on column SALEGOODSLIST.sglpopzk
+  is '促销折扣';
+comment on column SALEGOODSLIST.sglcustzk
+  is '会员折扣';
+comment on column SALEGOODSLIST.sglfcdzk
+  is '储值卡折扣';
+comment on column SALEGOODSLIST.sglpfzk
+  is '批发折扣';
+comment on column SALEGOODSLIST.sglgrantzk
+  is '授权折扣';
+comment on column SALEGOODSLIST.sglyjhx
+  is '以旧换新';
+comment on column SALEGOODSLIST.sglzszk
+  is '赠送折扣';
+comment on column SALEGOODSLIST.sglthss
+  is '退货损失';
+comment on column SALEGOODSLIST.sgladjustzk
+  is '调整折扣(售价)';
+comment on column SALEGOODSLIST.sglcash
+  is '现金';
+comment on column SALEGOODSLIST.sglcheck
+  is '支票';
+comment on column SALEGOODSLIST.sglccard
+  is '信用卡';
+comment on column SALEGOODSLIST.sglfcard
+  is '面值卡';
+comment on column SALEGOODSLIST.sglgcert
+  is '礼券';
+comment on column SALEGOODSLIST.sglgzje
+  is '挂帐金额';
+comment on column SALEGOODSLIST.sglopay
+  is '其他方式';
+comment on column SALEGOODSLIST.sgltimes
+  is '券溢余';
+comment on column SALEGOODSLIST.sgln1
+  is '进价销售毛利（收入-成本+成本调整+供应商折扣）';
+comment on column SALEGOODSLIST.sgln2
+  is '核算价销售毛利（收入-成本+成本调整+供应商折扣）';
+comment on column SALEGOODSLIST.sgln3
+  is '信用卡内卡';
+comment on column SALEGOODSLIST.sgln4
+  is '信用卡外卡';
+comment on column SALEGOODSLIST.sgln5
+  is 'VIP1销售收入,VIP2销售收入＝SGLCUSTSR-SGLN5';
+comment on column SALEGOODSLIST.sglvc1
+  is 'SGLVC1';
+comment on column SALEGOODSLIST.sglvc2
+  is 'SGLVC2';
+comment on column SALEGOODSLIST.sglvc3
+  is 'SGLVC3';
+comment on column SALEGOODSLIST.sglfqje
+  is '返券金额';
+comment on column SALEGOODSLIST.sglsqje
+  is '收券金额';
+comment on column SALEGOODSLIST.sglqxssr
+  is '用券销售收入(包括返和收)';
+comment on column SALEGOODSLIST.sgln6
+  is 'CRM消费积分额';
+comment on column SALEGOODSLIST.sgln7
+  is 'CRM促销积分额';
+comment on column SALEGOODSLIST.sgln8
+  is '会员毛利';
+comment on column SALEGOODSLIST.sgln9
+  is '返券毛利';
+comment on column SALEGOODSLIST.sgln10
+  is '收买券金额';
+comment on column SALEGOODSLIST.sglxyksr1
+  is '信用卡收入1';
+comment on column SALEGOODSLIST.sglxyksr2
+  is '信用卡收入2';
+comment on column SALEGOODSLIST.sglxyksr3
+  is '信用卡收入3';
+comment on column SALEGOODSLIST.sglxyksr4
+  is '信用卡收入4';
+comment on column SALEGOODSLIST.sglxyksr5
+  is '信用卡收入5';
+comment on column SALEGOODSLIST.sglxyksr6
+  is '信用卡收入6';
+comment on column SALEGOODSLIST.sglxyksr7
+  is '信用卡收入7';
+comment on column SALEGOODSLIST.sglxyksr8
+  is '信用卡收入8';
+comment on column SALEGOODSLIST.sglxyksr9
+  is '信用卡收入9';
+comment on column SALEGOODSLIST.sglxyksr10
+  is '信用卡收入10';
+comment on column SALEGOODSLIST.sgln11
+  is '折算买券付款金额';
+comment on column SALEGOODSLIST.sgln13
+  is '销售成本';
+comment on column SALEGOODSLIST.sgln14
+  is '销售成本调整';
+comment on column SALEGOODSLIST.sgln15
+  is 'CRM促销档期积分';
+comment on column SALEGOODSLIST.sgln16
+  is 'CRM分摊费用';
+comment on column SALEGOODSLIST.sgln17
+  is 'GPP分摊费用';
+comment on column SALEGOODSLIST.sgln21
+  is '返券折扣';
+comment on column SALEGOODSLIST.sgln22
+  is '返券折扣供应商承担';
+comment on column SALEGOODSLIST.sgln23
+  is '支付方式折扣供应商承担';
+comment on column SALEGOODSLIST.sgln24
+  is '支付方式折扣';
+comment on column SALEGOODSLIST.sgln25
+  is 'CRM身份积分额';
+comment on column SALEGOODSLIST.sglvc4
+  is '调整单据类型';
+comment on column SALEGOODSLIST.sglvc5
+  is '调整单号';
+comment on column SALEGOODSLIST.sglvc6
+  is '营业员';
+comment on column SALEGOODSLIST.sglsaledate
+  is '销售发生时间';
+comment on column SALEGOODSLIST.sglnetml
+  is '净毛利（销售收入-销售成本+成本调整+供应商折扣-收券额+折算买券付款金额+GPP分摊费用+CRM分摊费用）';
+comment on column SALEGOODSLIST.sglcardtype
+  is '会员卡类别';
+comment on column SALEGOODSLIST.sglsyjid
+  is '收银机id';
+comment on column SALEGOODSLIST.sglinvno
+  is '小票号';
+comment on column SALEGOODSLIST.sglchecker
+  is '收银员';
+comment on column SALEGOODSLIST.sglposcls
+  is '班次';
+comment on column SALEGOODSLIST.sglshdate
+  is '小票时间';
+comment on column SALEGOODSLIST.sgltmtype
+  is '特卖类型-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglmd
+  is '子库存';
+comment on column SALEGOODSLIST.sglfysl
+  is '提取费用的数量-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglvip1sr
+  is 'VIP1销售收入-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglvip2sr
+  is 'VIP2销售收入-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglvip3sr
+  is 'VIP3销售收入-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglvip4sr
+  is 'VIP4销售收入-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglvip5sr
+  is 'VIP5销售收入-增加SALESUPDAY部分';
+comment on column SALEGOODSLIST.sglspsx
+  is '商品属性码';
+comment on column SALEGOODSLIST.sgljjtax
+  is '进项税率';
+comment on column SALEGOODSLIST.sgln26
+  is '用券不计收入折扣';
+comment on column SALEGOODSLIST.sgln27
+  is '用券不计收入折扣供应商承担';
+comment on column SALEGOODSLIST.sgln28
+  is '用券不计收入折扣商场承担';
+comment on column SALEGOODSLIST.sgln29
+  is '支付方式折扣商场承担';
+-- Create/Recreate indexes 
+create index IDX_SGL_BILLNOROWNO on SALEGOODSLIST (SGLBILLNO, SGLROWNO)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 20M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_SGL_DATECATID on SALEGOODSLIST (SGLDATE, SGLCATID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 3M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_SGL_DATEGDID on SALEGOODSLIST (SGLDATE, SGLGDID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 3M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_SGL_DATEMFID on SALEGOODSLIST (SGLDATE, SGLMFID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 4M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_SGL_HSRQMFID on SALEGOODSLIST (SGLHSRQ, SGLMFID, SGLMARKET)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 4M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_SGL_SGLDATEMFID on SALEGOODSLIST (SGLGDID, SGLMFID, SGLMARKET, SGLDATE)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index INX_SGL_CAT_PID on SALEGOODSLIST (SGLCATID, SGLTPID, SGLHSRQ, SGLDATE, SGLMARKET)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 13M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index INX_SGL_GDIDMFID on SALEGOODSLIST (SGLGDID, SGLMFID, SGLMARKET, SGLSUMMARY)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index INX_SGL_SGLSALEDATE on SALEGOODSLIST (SGLSALEDATE)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table SALEGOODSLIST
+  add constraint PK_SALEGOODSLIST primary key (SGLDATE, SGLTPID, SGLSUMMARY, SGLMFID, SGLGDID, SGLBARCODE, SGLCATID, SGLTAXTYPE, SGLXSTAX, SGLHSRQ, SGLSUPID, SGLWMID, SGLBILLNO, SGLROWNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 25M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
