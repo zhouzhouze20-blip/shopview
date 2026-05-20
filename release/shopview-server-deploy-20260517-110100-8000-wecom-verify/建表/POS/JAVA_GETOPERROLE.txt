@@ -1,0 +1,16 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETOPERROLE
+AS
+  -- 返回结果集为
+    -- 角色代码,操作数据范围,是否允许授权,是否能退货,是否能取消交易,重新打印小票权限,议价权限,可改价,保留,单品折扣限额,总品折扣限额,退货限额,保留,保留,保留,保留,保留,授权范围,菜单功能
+  PROCEDURE GETOPERROLE
+    (
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select porid,pordatarange,porisgrant,porgthpriv,porgqxpriv,porgdypriv,porggjpriv,porgpriv1||porgpriv2||porgpriv3||porgpriv4||porgpriv5,porgdpzkl,porgzzkl,porgthxe,porgprivje1,porgprivje2,porgprivje3,0,0,decode(porgrflag,'Y','ALL',nvl(porgrrange,'ALL')),java_fmergerolerange(porid) from posoperrole;
+  END GETOPERROLE;
+
+END JAVA_GETOPERROLE;
+

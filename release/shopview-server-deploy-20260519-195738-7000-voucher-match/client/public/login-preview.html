@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShopView 登录页预览</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family:
+          Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+          Arial, sans-serif;
+        color: #102033;
+        background: #07111d;
+      }
+
+      .page {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        background-image:
+          linear-gradient(90deg, rgba(5, 14, 27, 0.72) 0%, rgba(5, 14, 27, 0.38) 42%, rgba(5, 14, 27, 0.2) 100%),
+          url("./assets/login-bg-changzhou-commerce.png");
+        background-size: cover;
+        background-position: center;
+      }
+
+      .page::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(94, 202, 188, 0.24), transparent 28%),
+          linear-gradient(180deg, rgba(6, 12, 22, 0.14), rgba(6, 12, 22, 0.38));
+        pointer-events: none;
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 430px;
+        gap: 64px;
+        align-items: center;
+        width: min(1180px, calc(100vw - 96px));
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+
+      .brand {
+        color: #f7fbff;
+        max-width: 560px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        height: 38px;
+        padding: 0 16px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 14px;
+        backdrop-filter: blur(14px);
+      }
+
+      .badge-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #54d7bc;
+        box-shadow: 0 0 20px rgba(84, 215, 188, 0.88);
+      }
+
+      h1 {
+        margin: 28px 0 18px;
+        font-size: 54px;
+        line-height: 1.08;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin: 0;
+        width: 500px;
+        color: rgba(242, 248, 255, 0.78);
+        font-size: 18px;
+        line-height: 1.8;
+      }
+
+      .stores {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        width: 480px;
+        margin-top: 34px;
+      }
+
+      .store {
+        min-height: 54px;
+        padding: 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        background: rgba(5, 14, 27, 0.32);
+        color: rgba(255, 255, 255, 0.84);
+        font-size: 15px;
+        backdrop-filter: blur(12px);
+      }
+
+      .login-card {
+        width: 430px;
+        padding: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 28px 80px rgba(0, 14, 28, 0.28);
+        backdrop-filter: blur(24px);
+      }
+
+      .card-title {
+        margin: 0 0 8px;
+        color: #102033;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .card-desc {
+        margin: 0 0 22px;
+        color: #66788f;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 4px;
+        margin-bottom: 24px;
+        border: 1px solid #d8e2ee;
+        border-radius: 8px;
+        background: #edf3f8;
+      }
+
+      .tab {
+        height: 42px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        color: #52677d;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .tab.active {
+        background: #ffffff;
+        color: #0f766e;
+        box-shadow: 0 8px 18px rgba(20, 55, 86, 0.1);
+      }
+
+      .field {
+        margin-bottom: 16px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        color: #34465d;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .input {
+        display: flex;
+        align-items: center;
+        height: 46px;
+        padding: 0 14px;
+        border: 1px solid #d6e1eb;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #93a3b5;
+        font-size: 14px;
+      }
+
+      .input-icon {
+        width: 18px;
+        margin-right: 10px;
+        color: #8fa1b5;
+      }
+
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 4px 0 22px;
+        color: #66788f;
+        font-size: 13px;
+      }
+
+      .checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .box {
+        width: 15px;
+        height: 15px;
+        border: 1px solid #b8c7d8;
+        border-radius: 4px;
+        background: #ffffff;
+      }
+
+      .link {
+        color: #0f766e;
+        font-weight: 600;
+      }
+
+      .primary {
+        display: grid;
+        place-items: center;
+        height: 46px;
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #0f766e, #1a9b8d);
+        color: white;
+        font-size: 15px;
+        font-weight: 700;
+        box-shadow: 0 14px 28px rgba(15, 118, 110, 0.24);
+      }
+
+      .scan-preview {
+        display: grid;
+        grid-template-columns: 124px 1fr;
+        gap: 18px;
+        align-items: center;
+        margin-top: 22px;
+        padding: 16px;
+        border: 1px dashed #b8d0ce;
+        border-radius: 8px;
+        background: rgba(240, 250, 248, 0.78);
+      }
+
+      .qr {
+        width: 124px;
+        height: 124px;
+        padding: 10px;
+        border: 1px solid #d6e5e3;
+        border-radius: 8px;
+        background: #fff;
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        grid-template-rows: repeat(7, 1fr);
+        gap: 4px;
+      }
+
+      .qr span {
+        border-radius: 2px;
+        background: #0f766e;
+      }
+
+      .qr span:nth-child(2n) {
+        opacity: 0.34;
+      }
+
+      .qr span:nth-child(3n) {
+        background: #102033;
+        opacity: 0.84;
+      }
+
+      .scan-title {
+        margin: 0 0 8px;
+        color: #183248;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .scan-desc {
+        margin: 0;
+        color: #66788f;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .footer {
+        margin-top: 22px;
+        color: #7b8da2;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      @media (max-width: 920px) {
+        .shell {
+          grid-template-columns: 1fr;
+          width: min(430px, calc(100vw - 36px));
+          gap: 28px;
+          justify-items: center;
+        }
+
+        .brand,
+        .subtitle,
+        .stores,
+        .login-card {
+          width: 100%;
+        }
+
+        h1 {
+          font-size: 36px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="shell">
+        <div class="brand">
+          <div class="badge"><span class="badge-dot"></span>ShopView 统一经营管理平台</div>
+          <h1>一站式掌握商业经营现场</h1>
+          <p class="subtitle">
+            汇聚购物中心、百货、商业综合体与书店文化空间的经营数据，为门店、柜位、合同与销售分析提供统一入口。
+          </p>
+          <div class="stores">
+            <div class="store">常州购物中心</div>
+            <div class="store">常州百货大楼</div>
+            <div class="store">常州新世纪</div>
+            <div class="store">常州半山书局</div>
+          </div>
+        </div>
+
+        <form class="login-card">
+          <h2 class="card-title">欢迎登录</h2>
+          <p class="card-desc">请选择登录方式，进入 ShopView 经营管理工作台。</p>
+
+          <div class="tabs">
+            <div class="tab active">用户密码登录</div>
+            <div class="tab">企业微信扫码登录</div>
+          </div>
+
+          <div class="field">
+            <label>用户名</label>
+            <div class="input"><span class="input-icon">◎</span>请输入用户名</div>
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <div class="input"><span class="input-icon">◇</span>请输入密码</div>
+          </div>
+
+          <div class="row">
+            <span class="checkbox"><span class="box"></span>记住账号</span>
+            <span class="link">忘记密码？</span>
+          </div>
+
+          <button class="primary" type="button">登录</button>
+
+          <div class="scan-preview">
+            <div class="qr" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div>
+              <p class="scan-title">企业微信扫码登录</p>
+              <p class="scan-desc">切换到扫码 tab 后展示企业微信二维码，员工可使用企业微信 App 扫码授权进入系统。</p>
+            </div>
+          </div>
+
+          <div class="footer">© Changzhou Commercial Group</div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,3003 @@
+CREATE OR REPLACE Package Body Htth Is
+
+  Currentmkt Varchar2(20);
+
+  Currentmu Varchar2(20) := Fgetprivatepara('1M');
+
+  --
+  Function f_Getstringpara(Vstr     In Char,
+                           Vflag    In Char,
+                           Vn       In Number,
+                           Vdefault In Char) Return Char As
+    l_1    Number; --1
+    l_2    Number; --8
+    l_Loop Number;
+    Lret   Varchar2(40);
+    l_Str  Varchar2(255);
+  Begin
+    l_1    := 0;
+    l_Loop := 1;
+    l_Str  := Vflag || Vstr || Vflag;
+    Loop
+      l_1 := Instr(l_Str, Vflag, l_1 + 1);
+      If l_1 = 0 Then
+        Exit;
+      End If;
+      If l_Loop = Vn Then
+        Exit;
+      End If;
+      l_Loop := l_Loop + 1;
+    End Loop;
+    l_2 := Instr(l_Str, Vflag, l_1 + 1);
+    If l_1 = 0 Or l_2 = 0 Then
+      Lret := '';
+    Else
+      Lret := Substr(l_Str, l_1 + 1, l_2 - l_1 - 1);
+    End If;
+    Return Nvl(Lret, Vdefault);
+  End f_Getstringpara;
+
+  Function f_Gethgstring(Vje In Number, Vstr In Char) Return Char As
+    Ljf       Number;
+    Lje       Number;
+    Lkjf      Number;
+    Vhgbillno Varchar2(20);
+    Vhggdid   Varchar2(20);
+    Vhgsl     Number;
+    --lret      VARCHAR2(40);
+    Lstr    Varchar2(255);
+    Ljftype Varchar2(20);
+  Begin
+    Ljftype   := f_Getstringpara(Vstr, ',', 1, '');
+    Ljf       := To_Number(f_Getstringpara(Vstr, ',', 2, ''));
+    Lje       := To_Number(f_Getstringpara(Vstr, ',', 3, ''));
+    Vhgbillno := f_Getstringpara(Vstr, ',', 4, '');
+    Lkjf      := Round(Vje * (Ljf / Lje), 0);
+    Lstr      := Ljftype || ',' || To_Char(Lkjf) || ',' || To_Char(Ljf) || ',' ||
+                 To_Char(Lje);
+    --积分换购
+    If Vhgbillno Is Not Null Then
+      Vhggdid := f_Getstringpara(Vstr, ',', 5, '');
+      Vhgsl   := Round(Lkjf / Ljf, 2);
+      Lstr    := Lstr || ',' || Vhgbillno || ',' || Vhggdid || ',' ||
+                 To_Char(Vhgsl);
+    End If;
+    Return Lstr;
+  End f_Gethgstring;
+
+  Function f_Isdzq(p_Payerid In Varchar2) Return Char Is
+  Begin
+    If Substr(p_Payerid, 1, 1) Between 'A' And 'Z' Then
+      Return 'Y';
+    Elsif Substr(p_Payerid, 1, 1) = 'b' Then
+      Return 'Y';
+    Else
+      Return 'N';
+    End If;
+  End f_Isdzq;
+
+  Function Fgetthkhzxl(Vqtype In Varchar2, v_Mkt In Varchar2) Return Number Is
+    l_Rate Number;
+  Begin
+    If Vqtype = 'a' Then
+      Return 1;
+    Else
+      Return Dbusrpop.Gppinterface.Fgetthkhzxl(Vqtype,v_Mkt);
+    End If;
+  Exception
+    When Others Then
+      Return 1;
+  End;
+
+  Function Fgetoriginalinv_Hh(Vsyjid In Varchar2,
+                              Vinvno In Varchar2,
+                              Vtype  In Char) Return Varchar2 Is
+    /*退货单号对应的原销售收银机和小票号*/
+    Lsyjid  Char(4);
+    Linvno  Number;
+    Lhhflag Char(1);
+    Lbillno Number;
+    Ldjlb   Char(1);
+    Lysyjid Char(4);
+    Lyinvno Number;
+    Lishh   Boolean;
+  Begin
+    Lsyjid := Vsyjid;
+    Linvno := To_Number(Vinvno);
+    Loop
+      Select Shishh, Shbillno, Shdjlb
+        Into Lhhflag, Lbillno, Ldjlb
+        From Sellhead
+       Where Shsyjid = Lsyjid
+         And Shinvno = Linvno;
+      If Lhhflag = 'Y' Then
+        If Lsyjid = Vsyjid And Linvno = To_Number(Vinvno) Then
+          Lishh := True;
+        End If;
+        Select Sdysyjid, Sdyinvno
+          Into Lysyjid, Lyinvno
+          From Selldetail
+         Where Sdbillno = Lbillno
+           And Rownum = 1;
+      Else
+        Lysyjid := Null;
+        Lyinvno := Null;
+      End If;
+      If Lysyjid Is Null And (Lyinvno = 0 Or Lyinvno Is Null) Then
+        Exit;
+      Else
+        Lsyjid := Lysyjid;
+        Linvno := Lyinvno;
+      End If;
+    End Loop;
+    If Vtype = '1' Then
+      Return Lsyjid;
+    Else
+      Return To_Char(Linvno);
+    End If;
+  Exception
+    When Others Then
+      If Vtype = '1' Then
+        Return Vsyjid;
+      Else
+        Return Vinvno;
+      End If;
+  End;
+
+  Procedure Sp_Htthougtpay(Vsyjid In Varchar2,
+                           Vzje   In Number,
+                           vmkt   IN VARCHAR2,
+                           Rysje  Out Number,
+                           Rsysy  Out Number) Is
+    Vsswrfs Char(1);
+  Begin
+    --收银截断方式
+    Begin
+      Select Syjrmode Into Vsswrfs From Syjmain Where SYJMKT=vmkt AND Syjid = Vsyjid;
+    Exception
+      When Others Then
+        Vsswrfs := '1';
+    End;
+    If Vsswrfs = '0' Then
+      --精确到分
+      Rysje := Vzje;
+      Rsysy := 0;
+    Elsif Vsswrfs = '1' Then
+      --四舍五入到角
+      Rysje := Round(Vzje, 1);
+      Rsysy := Round(Rysje - Vzje, 2);
+    Elsif Vsswrfs = '2' Then
+      ---截断到角
+      Rysje := Trunc(Vzje, 1);
+      Rsysy := Round(Rysje - Vzje, 2);
+    Elsif Vsswrfs = '3' Then
+      --四舍五入到元
+      Rysje := Round(Vzje);
+      Rsysy := Round(Rysje - Vzje, 2);
+    Elsif Vsswrfs = '4' Then
+      --截断到元
+      Rysje := Trunc(Vzje);
+      Rsysy := Round(Rysje - Vzje, 2);
+
+    Elsif Vsswrfs = '5' Then
+      --进位到角
+      If Vzje > Trunc(Vzje, 1) Then
+        Rysje := Trunc(Vzje, 1) + 0.1;
+      Else
+        Rysje := Vzje;
+      End If;
+      Rsysy := Round(Rysje - Vzje, 2);
+    Elsif Vsswrfs = '6' Then
+      --进位到元
+      If Vzje > Trunc(Vzje) Then
+        Rysje := Trunc(Vzje) + 1;
+      Else
+        Rysje := Vzje;
+      End If;
+      Rsysy := Round(Rysje - Vzje, 2);
+    Else
+      --截断到角
+      Rysje := Trunc(Vzje, 1);
+      Rsysy := Round(Rysje - Vzje, 2);
+    End If;
+  End;
+  --
+  /*Procedure htthpayment
+  (
+     p_billno    In Number, --原小票号
+     p_newbillno In Number, --新小票号
+     p_thje      In Number, --退货成交金额
+     out_ysje    Out Number, --应收金额
+     out_sysy    Out Number --收银损溢
+  ) Is
+     row_sh          sellhead%Rowtype; --小票行变量
+     l_payid         Varchar(100);
+     l_PayNo         SellPayMent.SpNo%Type;
+     ld_paytot       Number; --原小票付款总金额
+     ld_paytot_gcert Number; --原小票付款活动券金额
+     --
+     l_money         Number; --付款金额sellpayment.spmoney;
+     l_row           Number := 0; --行号
+     l_thpaytot      Number; --退货付款金额
+     l_zl            Number := 0; --找零标识
+     l_yy            Number := 0; --溢余标识
+     l_thtot_gcert   Number; --退货小票付款活动券金额
+     l_payrow_cjje_o Number;
+     l_payrow_cjje_n Number;
+  Begin
+     Begin
+        Select *
+          Into row_sh
+          From sellhead
+         Where shbillno = p_billno And
+               shdjlb = '1';
+     Exception
+        When no_data_found Then
+           raise_application_error(errcode, to_char(p_billno) || '->销售小票类别错误');
+     End;
+     --
+     sp_htthougtpay(row_sh.shsyjid, p_thje, out_ysje, out_sysy);
+     --活动券
+     Select nvl(Sum(spmoney * sperate), 0),
+            nvl(Sum(decode(ppmtype,
+                           '5',
+                           Case
+                              When substr(sppayerid, 1, 1) Between 'A' And 'Z' Then
+                               1
+                              Else
+                               0
+                           End,
+                           0) * spmoney * sperate),
+                0)
+       Into ld_paytot,
+            ld_paytot_gcert
+       From View_SellPayMent,
+            pospaymode
+      Where spbillno = p_billno And
+            sppmcode = ppmcode;
+     --减 找零和收银损溢
+     ld_paytot := ld_paytot - nvl(row_sh.shgchange, 0) - nvl(row_sh.shsysy, 0);
+     --
+     Select nvl(Sum(sdcjje), 0)
+       Into l_payrow_cjje_n
+       From htthselldetail
+      Where sdbillno = p_newbillno And
+            sdgdid In (Select Distinct spggdid
+                         From View_SellPayGoods
+                        Where spgbillno = p_billno And
+                              spgpmtype = '5' And
+                              substr(spgpayerid, 1, 1) Between 'A' And 'Z');
+     Select nvl(Sum(sdcjje), 0)
+       Into l_payrow_cjje_o
+       From selldetail
+      Where sdbillno = p_billno And
+            sdgdid In (Select Distinct spggdid
+                         From View_SellPayGoods
+                        Where spgbillno = p_billno And
+                              spgpmtype = '5' And
+                              substr(spgpayerid, 1, 1) Between 'A' And 'Z');
+     If l_payrow_cjje_o <> 0 Then
+        l_thtot_gcert := ld_paytot_gcert * (l_payrow_cjje_n / l_payrow_cjje_o);
+     Else
+        l_thtot_gcert := 0;
+     End If;
+     --先删除
+     Delete From htthsellpayment
+      Where spbillno = p_newbillno And
+            sprowno > 0;
+     --退货分担付款方式
+     For vr In (Select t.*,
+                       ppmtype,
+                       ppmiszl,
+                       ppmisyy,
+                       substr(sppayerid, 1, 1) qtype
+                  From pospaymode,
+                       View_SellPayMent t
+                 Where spbillno = p_billno And
+                       sppmcode = ppmcode
+                 Order By ppmtype,
+                          sprowno)
+     Loop
+        l_row := l_row + 1;
+        If vr.ppmtype = '5' And (vr.qtype Between 'A' And 'Z' Or vr.sppmcode = '0508') Then
+           --new payrow_cjje
+           Select nvl(Sum(sdcjje), 0)
+             Into l_payrow_cjje_n
+             From htthselldetail
+            Where sdbillno = p_newbillno And
+                  sdgdid In (Select spggdid
+                               From View_SellPayGoods
+                              Where spgbillno = vr.spbillno And
+                                    spgrowno = vr.sprowno And
+                                    spgpmtype = '5' And
+                                    substr(spgpayerid, 1, 1) = vr.qtype);
+           --old payrow_cjje
+           Select nvl(Sum(sdcjje), 0)
+             Into l_payrow_cjje_o
+             From selldetail
+            Where sdbillno = p_billno And
+                  sdgdid In (Select spggdid
+                               From View_SellPayGoods
+                              Where spgbillno = vr.spbillno And
+                                    spgrowno = vr.sprowno And
+                                    spgpmtype = '5' And
+                                    substr(spgpayerid, 1, 1) = vr.qtype);
+           If l_payrow_cjje_o <> 0 Then
+              -- 减去收券溢余
+              l_money := (vr.spmoney - vr.sppayyy) * (l_payrow_cjje_n / l_payrow_cjje_o);
+           Else
+              l_money := 0;
+           End If;
+        Else
+           If vr.ppmiszl = 'Y' And nvl(row_sh.shgchange, 0) <> 0 And l_zl = 0 Then
+              -- 原小票有找零时，生成退货小票，
+              -- 应该是用允许找零[如:人民币]的付款方式减去找零金额
+              -- 再来分摊各种付款方式的金额
+              l_zl       := 1;
+              vr.spmoney := vr.spmoney - nvl(row_sh.shgchange, 0);
+           End If;
+           --
+           If vr.ppmisyy = 'Y' And nvl(row_sh.shsysy, 0) <> 0 And vr.spmoney >= nvl(row_sh.shsysy, 0) And l_yy = 0 Then
+              l_yy       := 1;
+              vr.spmoney := vr.spmoney - nvl(row_sh.shsysy, 0);
+           End If;
+           --非礼券,则要分担
+           If ld_paytot - ld_paytot_gcert = 0 Then
+              l_money := 0;
+           Else
+              -- 付款 * 汇率 / (原小票总付款金额 - 原小票总券[a+b券] ) * (总退货金额 - (退货A券 + 退货B券))
+              -- 减去收券溢余 (vr.spmoney - vr.sppayyy)
+              l_money := (vr.spmoney - vr.sppayyy) * vr.sperate / (ld_paytot - ld_paytot_gcert) * (p_thje - l_thtot_gcert);
+              --(out_ysje - l_thtot_gcert);
+           End If;
+        End If;
+        --四舍五入到角？
+        --l_money := round(l_money, 2);
+        l_money := round(l_money, 2);
+
+        If l_money > 0 Then
+           --零钞转为人民币
+           l_payid := '';
+           If vr.sppmcode = '0111' Then
+              Update htthsellpayment
+                 Set spmoney = spmoney + l_money
+               Where spbillno = p_newbillno And
+                     sppmcode In (Select ppmcode From pospaymode Where ppmtype = '1') And
+                     rownum = 1;
+              If Sql%Rowcount = 0 Then
+                 Insert Into htthsellpayment
+                    (spbillno,
+                     sppmcode,
+                     spmoney,
+                     sperate,
+                     spno,
+                     sppayerid,
+                     sprowno)
+                 Values
+                    (p_newbillno,
+                     '01',
+                     l_money,
+                     1,
+                     Null,
+                     Null,
+                     l_row);
+              End If;
+           Else
+              If vr.sppmcode In ('0508', '0509') Then
+                 l_payid := f_gethgstring(l_money, vr.sppayerid);
+              Else
+                 l_payid := vr.sppayerid;
+              End If;
+              If Vr.Ppmtype = '4' Or Vr.SpNo = 'AUTO' Then
+                 l_PayNo := '';
+              Else
+                 l_PayNo := Vr.SpNo;
+              End If;
+
+              Update HtthSellPayMent
+                 Set SpMoney = SpMoney + round(l_money / vr.sperate, 1)
+               Where SpBillNo = p_NewBillNo And
+                     SpPmCode = Vr.SpPmCode And
+                     Nvl(SpNo,'@@') = Nvl(l_PayNo,'@@') And
+                     Nvl(SpPayerId,'@@') = Nvl(l_payid,'@@');
+              If Sql%Rowcount = 0 Then
+                 Insert Into htthsellpayment
+                    (spbillno,
+                     sppmcode,
+                     spmoney,
+                     sperate,
+                     spno,
+                     sppayerid,
+                     sprowno)
+                 Values
+                    (p_newbillno,
+                     vr.sppmcode,
+                     round(l_money / vr.sperate, 1),
+                     vr.sperate,
+                     l_PayNo,
+                     l_payid,
+                     l_row);
+              End If;
+           End If;
+        Else
+           -- 小于零,零钞转存,修改其他付款方式
+           Update htthsellpayment
+              Set spmoney = spmoney + l_money
+            Where spbillno = p_newbillno And
+                  sppmcode In (Select ppmcode From pospaymode Where ppmtype = '1') And
+                  rownum = 1;
+           If Sql%Rowcount = 0 Then
+              Update htthsellpayment
+                 Set spmoney = spmoney + l_money
+               Where spbillno = p_newbillno And
+                     sppmcode In (Select ppmcode From pospaymode Where ppmtype <> '5') And
+                     rownum = 1;
+           End If;
+        End If;
+     End Loop;
+     --
+     Select nvl(Sum(spmoney * sperate), 0) Into l_thpaytot From htthsellpayment Where spbillno = p_newbillno;
+     If out_sysy <> 0 Or abs(l_thpaytot - out_ysje) >= 0.01 Then
+        --收银损溢，或者是分担时小数位的问题
+        l_money := l_thpaytot - out_ysje;
+        If l_money <> 0 Then
+           -- 考虑收银损溢
+           Update htthsellpayment
+              Set spmoney = spmoney - l_money
+            Where spbillno = p_newbillno And
+                  sppmcode In (Select ppmcode From pospaymode Where ppmtype = '1') And
+                  rownum = 1;
+           If Sql%Rowcount = 0 Then
+              Update htthsellpayment
+                 Set spmoney = spmoney - l_money
+               Where spbillno = p_newbillno And
+                     sppmcode In (Select ppmcode From pospaymode Where ppmtype <> '5') And
+                     rownum = 1;
+           End If;
+        End If;
+     End If;
+  Exception
+     When Others Then
+        Raise;
+  End;*/
+  --
+  Procedure Htthpayment(p_Billno    In Number, --原小票号
+                        p_Newbillno In Number, --新小票号
+                        p_Thje      In Number, --退货成交金额
+                        Out_Ysje    Out Number, --应收金额
+                        Out_Sysy    Out Number --收银损溢
+                        ) Is
+    Row_Sh          Sellhead%Rowtype; --小票行变量
+    l_Payid         Varchar(100);
+    l_Payno         Sellpayment.Spno%Type;
+    Ld_Paytot       Number; --原小票付款总金额
+    Ld_Paytot_Gcert Number; --原小票付款活动券金额
+    --
+    l_Money         Number; --付款金额sellpayment.spmoney;
+    l_Sqyy          Number; --收券溢余
+    l_Row           Number := 1; --行号
+    l_Thpaytot      Number; --退货付款金额
+    l_Zl            Number := 0; --找零标识
+    l_Yy            Number := 0; --溢余标识
+    l_Thtot_Gcert   Number; --退货小票付款活动券金额
+    l_Payrow_Cjje_o Number;
+    l_Payrow_Cjje_n Number;
+    l_Qyy           Number;
+    l_Sysytmp       Number;
+    l_Jftype        Varchar2(20); ----
+    l_Jfrule        Varchar2(200); ----
+    l_Jfjs          Number; ---
+    l_Jejs          Number; ---
+    l_Jfmoney       Number; ---
+  Begin
+    Begin
+      Select *
+        Into Row_Sh
+        From Sellhead
+       Where Shbillno = p_Billno
+         And Shdjlb = '1';
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode,
+                                To_Char(p_Billno) || '->销售小票类别错误');
+    End;
+    --
+    --Sp_Htthougtpay(Row_Sh.Shsyjid, p_Thje,Out_Ysje, l_Sysytmp);
+    Sp_Htthougtpay(Row_Sh.Shsyjid, p_Thje, Row_Sh.SHMARKET,Out_Ysje, l_Sysytmp);
+    Out_Sysy := l_Sysytmp;
+    --活动券
+    Select Nvl(Sum(Sbpmoney * Sbperate), 0),
+           Nvl(Sum(Decode(Ppmtype,
+                          '5',
+                          Case
+                            When f_Isdzq(Sbppayerid) = 'Y' Then
+                             1
+                            Else
+                             0
+                          End,
+                          0) * Sbpmoney * Sbperate),
+               0)
+      Into Ld_Paytot, Ld_Paytot_Gcert
+      From View_Sellpayment, Pospaymode
+     Where Sbpbillno = p_Billno
+       And Sbppmcode = Ppmcode;
+    --减 找零和收银损溢
+    Ld_Paytot := Ld_Paytot - Nvl(Row_Sh.Shgchange, 0) -
+                 Nvl(Row_Sh.Shsysy, 0);
+    --
+    --先删除
+    Delete From Htthsellpayment
+     Where Spbillno = p_Newbillno
+       And Sprowno > 0;
+    --退货分担付款方式
+    /*For vr In (Select SpgPmType PPmType,
+          SpgPmCode SpPmCode,
+          SpgPayerId SpPayerId,
+          SpNo,
+          SpgErate SpeRate,
+          Sum(SpgGdMoney * SdCjje / SPGGDCJJE) SpMoney
+     From HtthSellDetail,
+          View_SellPayGoods,
+          SellPayMent
+    Where SpgBillNo = p_billno And
+          SdBillNo = p_newbillno And
+          SpgBillNo = SpBillNo And
+          SpgRowNo = SpRowNo And
+          SDOROWNO = SpgGdRow
+    Group By SpgPmType,
+             SpgPmCode,
+             SpgPayerId,
+             SpNo,
+             SpgErate)*/
+    For Vr In (Select Spgpmtype Ppmtype,
+                      Spgpmcode Sppmcode,
+                      Spgpayerid Sppayerid,
+                      Spgno Spno,
+                      Spgerate Sperate,
+                      Sum(Spggdmoney * Sdcjje / Spggdcjje) Spmoney,
+                      Sum(Nvl(Spgsqyy, 0) * Sdcjje / Spggdcjje) Sqyy,
+                      Sdjfrule ----
+                 From Htthselldetail, View_Sellpaygoods
+                Where Spgbillno = p_Billno
+                  And Sdbillno = p_Newbillno
+                  And Sdorowno = Spggdrow
+                Group By Spgpmtype,
+                         Spgpmcode,
+                         Spgpayerid,
+                         Spgno,
+                         Spgerate,
+                         Sdjfrule) Loop
+      --四舍五入到角？
+      --l_money := round(l_money, 2);
+      l_Money := Round(Vr.Spmoney / Vr.Sperate, 2) +
+                 Round(Vr.Sqyy / Vr.Sperate, 2);
+      l_Sqyy  := Round(Vr.Sqyy / Vr.Sperate, 2);
+      If l_Money > 0 Then
+        --零钞转为人民币
+        l_Payid := '';
+        If Vr.Sppmcode = '0111' Then
+          Update Htthsellpayment
+             Set Spmoney = Spmoney + l_Money
+           Where Spbillno = p_Newbillno
+             And Sppmcode In
+                 (Select Ppmcode From Pospaymode Where Ppmtype = '1')
+             And Rownum = 1
+             And Sprowno > 0;
+          If Sql%Rowcount = 0 Then
+            Insert Into Htthsellpayment
+              (Spbillno,
+               Sppmcode,
+               Spmoney,
+               Sperate,
+               Spno,
+               Sppayerid,
+               Sprowno,
+               Sppayyy)
+            Values
+              (p_Newbillno, '01', l_Money, 1, Null, Null, l_Row, l_Sqyy);
+            l_Row := l_Row + 1;
+          End If;
+        Else
+          /*If Vr.Sppmcode In ('0508', '0509') Then
+              l_Payid := f_Gethgstring(l_Money, Vr.Sppayerid);
+            Else
+              If Vr.Sppmcode = '04' Then
+                Vr.Sppmcode := '0400';
+              End If;
+              l_Payid := Vr.Sppayerid;
+            End If;
+            If Vr.Ppmtype = '4' Or Vr.Spno = 'AUTO' Then
+              l_Payno := '';
+            Else
+              l_Payno := Vr.Spno;
+            End If;
+            Update Htthsellpayment
+               Set Spmoney = Spmoney + l_Money --round(l_money / vr.sperate, 1)
+             Where Spbillno = p_Newbillno
+               And Sppmcode = Vr.Sppmcode
+               And Sprowno > 0
+               And Nvl(Spno, '@@') = Nvl(l_Payno, '@@')
+               And Nvl(Sppayerid, '@@') = Nvl(l_Payid, '@@');
+            If Sql%Rowcount = 0 Then
+              Insert Into Htthsellpayment
+                (Spbillno,
+                 Sppmcode,
+                 Spmoney,
+                 Sperate,
+                 Spno,
+                 Sppayerid,
+                 Sprowno,
+                 Sppayyy)
+              Values
+                (p_Newbillno,
+                 Vr.Sppmcode,
+                 --round(l_money / vr.sperate, 1),
+                 l_Money,
+                 Vr.Sperate,
+                 l_Payno,
+                 l_Payid,
+                 l_Row,
+                 l_Sqyy);
+              l_Row := l_Row + 1;
+            End If;
+          End If;*/
+          If Vr.Sppmcode In ('0508') Then
+            l_Payid  := f_Gethgstring(l_Money, Vr.Sppayerid);
+            l_Jftype := f_Getstringpara(Vr.Sppayerid, ',', 1, Null);
+            l_Jfrule := Substr(Vr.Sdjfrule,
+                               Instr(Vr.Sdjfrule, l_Jftype, 1),
+                               Length(Vr.Sdjfrule));
+            If Instr(l_Jfrule, ';', 1) > 0 Then
+              l_Jfrule := Substr(l_Jfrule, 1, Instr(l_Jfrule, ';', 1) - 1);
+            End If;
+            l_Jfjs := To_Number(f_Getstringpara(l_Jfrule, '|', 4, Null));
+            l_Jejs := To_Number(f_Getstringpara(l_Jfrule, '|', 5, Null));
+            Select Round(l_Money * Decode(l_Jejs, 0, 0, (l_Jfjs / l_Jejs)),
+                         2) d
+              Into l_Jfmoney
+              From Dual;
+
+          Elsif Vr.Sppmcode = '0509' Then
+            l_Payid := f_Gethgstring(l_Money, Vr.Sppayerid);
+            --l_payid :=  vr.sppayerid;
+          Else
+            If Vr.Sppmcode = '04' Then
+              Vr.Sppmcode := '0400';
+            End If;
+            l_Payid  := Vr.Sppayerid;
+            l_Jftype := '@@';
+          End If;
+          If Vr.Ppmtype = '4' Or Vr.Spno = 'AUTO' Then
+            l_Payno := '';
+          Else
+            l_Payno := Vr.Spno;
+          End If;
+          If Vr.Sppmcode = '0508' Then
+            Update Htthsellpayment
+               Set Spmoney   = Spmoney + l_Money, --round(l_money / vr.sperate, 1),
+                   Spjfmoney = Spjfmoney + l_Jfmoney
+             Where Spbillno = p_Newbillno
+               And Sppmcode = Vr.Sppmcode
+               And Sprowno > 0
+               And Nvl(Spno, '@@') = Nvl(l_Payno, '@@')
+               And
+                  /*Nvl(SpPayerId, '@@') = Nvl(l_payid, '@@')*/
+                   Nvl(Spjftype, '@@') = Nvl(l_Jftype, '@@');
+            If Sql%Rowcount = 0 Then
+              Insert Into Htthsellpayment
+                (Spbillno,
+                 Sppmcode,
+                 Spmoney,
+                 Sperate,
+                 Spno,
+                 Sppayerid,
+                 Sprowno,
+                 Sppayyy,
+                 Spjftype,
+                 Spjfmoney)
+              Values
+                (p_Newbillno,
+                 Vr.Sppmcode,
+                 --round(l_money / vr.sperate, 1),
+                 l_Money,
+                 Vr.Sperate,
+                 l_Payno,
+                 l_Payid,
+                 l_Row,
+                 l_Sqyy,
+                 l_Jftype,
+                 l_Jfmoney);
+              l_Row := l_Row + 1;
+            End If;
+          Else
+            Update Htthsellpayment
+               Set Spmoney   = Spmoney + l_Money, --round(l_money / vr.sperate, 1),
+                   Spjfmoney = Spjfmoney + l_Jfmoney
+             Where Spbillno = p_Newbillno
+               And Sppmcode = Vr.Sppmcode
+               And Sprowno > 0
+               And Nvl(Spno, '@@') = Nvl(l_Payno, '@@')
+               And Nvl(Sppayerid, '@@') = Nvl(l_Payid, '@@');
+            If Sql%Rowcount = 0 Then
+              Insert Into Htthsellpayment
+                (Spbillno,
+                 Sppmcode,
+                 Spmoney,
+                 Sperate,
+                 Spno,
+                 Sppayerid,
+                 Sprowno,
+                 Sppayyy,
+                 Spjftype,
+                 Spjfmoney)
+              Values
+                (p_Newbillno,
+                 Vr.Sppmcode,
+                 --round(l_money / vr.sperate, 1),
+                 l_Money,
+                 Vr.Sperate,
+                 l_Payno,
+                 l_Payid,
+                 l_Row,
+                 l_Sqyy,
+                 l_Jftype,
+                 l_Jfmoney);
+              l_Row := l_Row + 1;
+            End If;
+          End If;
+        End If;
+      Else
+        -- 小于零,零钞转存,修改其他付款方式
+        Update Htthsellpayment
+           Set Spmoney = Spmoney + l_Money
+         Where Spbillno = p_Newbillno
+           And Sprowno > 0
+           And Sppmcode In
+               (Select Ppmcode From Pospaymode Where Ppmtype = '1')
+           And Rownum = 1;
+        If Sql%Rowcount = 0 Then
+          Update Htthsellpayment
+             Set Spmoney = Spmoney + l_Money
+           Where Spbillno = p_Newbillno
+             And Sprowno > 0
+             And Sppmcode In
+                 (Select Ppmcode From Pospaymode Where Ppmtype <> '5')
+             And Rownum = 1;
+        End If;
+      End If;
+      l_Qyy := Nvl(l_Qyy, 0) + l_Sqyy;
+      --Out_Sysy := Out_Sysy + l_Sqyy;
+    End Loop;
+    If l_Qyy >= Out_Sysy Then
+      Out_Sysy := l_Qyy;
+    End If;
+    --
+    Update Htthsellpayment
+       Set Sppayerid = Spjftype || ',' || Spjfmoney || ',' || Spmoney
+     Where Spbillno = p_Newbillno
+       And Sppmcode = '0508';
+
+    Select Nvl(Sum(Spmoney * Sperate), 0) - Nvl(Sum(Sppayyy), 0)
+      Into l_Thpaytot
+      From Htthsellpayment
+     Where Spbillno = p_Newbillno
+       And Sprowno > 0;
+    If (Out_Sysy <> 0 And Out_Sysy <> l_Qyy) Or
+       Abs(l_Thpaytot - Out_Ysje) >= 0.01 Then
+      --收银损溢，或者是分担时小数位的问题
+      l_Money := l_Thpaytot - Out_Ysje;
+      If l_Qyy > 0 Then
+        For Vr In (Select Htthsellpayment.*, Rowid
+                     From Htthsellpayment
+                    Where Spbillno = p_Newbillno
+                      And Sprowno > 0
+                      And Sppayyy > 0) Loop
+          Update Htthsellpayment
+             Set Sppayyy = Sppayyy + l_Money
+           Where Rowid = Vr.Rowid;
+          l_Money := 0;
+          Return;
+        End Loop;
+
+      End If;
+      If l_Money <> 0 Then
+        -- 考虑收银损溢
+        Update Htthsellpayment
+           Set Spmoney = Spmoney - l_Money
+         Where Spbillno = p_Newbillno
+           And Sprowno > 0
+           And Sppmcode In
+               (Select Ppmcode From Pospaymode Where Ppmtype = '1')
+           And Rownum = 1;
+        If Sql%Rowcount = 0 Then
+          Update Htthsellpayment
+             Set Spmoney = Spmoney - l_Money
+           Where Spbillno = p_Newbillno
+             And Sprowno > 0
+             And Sppmcode In
+                 (Select Ppmcode From Pospaymode Where Ppmtype <> '5')
+             And Rownum = 1;
+        End If;
+        /*If Sql%Rowcount = 0 Then
+          Update Htthsellpayment
+             Set Spmoney = Spmoney - l_Money
+           Where Spbillno = p_Newbillno
+             And Sprowno > 0
+                \*And Sppmcode In
+                (Select Ppmcode From Pospaymode Where Ppmtype <> '5')*\
+             And Rownum = 1;
+        End If;*/
+
+      End If;
+    End If;
+    /* Select Nvl(Sum(Sppayyy), 0) + l_Sysytmp
+        Into Out_Sysy
+        From Htthsellpayment
+       Where Spbillno = p_Newbillno
+         And Sprowno > 0;
+    */
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  --
+  Procedure Htthnew(p_Billno In Number,
+                    p_Rowno  In Varchar2,
+                    p_Gh     In Varchar2,
+                    o_Billno Out Number) Is
+    Row_Sh       Sellhead%Rowtype; --原小票行变量
+    l_Newbillno  Number; --后台退货小票单号
+    Ld_Th        Number; --退货总金额
+    Ld_Ysje      Number; --应收金额
+    Ld_Sysy      Number; --收银损溢
+    l_Thbillno   Number;
+    l_Count      Number;
+    l_Newmfid    Varchar(20);
+    l_Gbmanamode Goodsbase.Gbmanamode%Type;
+    l_Gbisdj     Goodsbase.Gbmanamode%Type;
+  Begin
+    Begin
+      Select *
+        Into Row_Sh
+        From Sellhead
+       Where Shbillno = p_Billno
+         And Shdjlb = '1';
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode,
+                                To_Char(p_Billno) || '->销售小票类别错误');
+    End;
+    If Row_Sh.Shstatus <> 'Y' Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->销售小票还未处理,请稍等或联系管理员。');
+    End If;
+    Currentmkt := Row_Sh.Shmarket;
+    Begin
+      Select Shbillno
+        Into l_Thbillno
+        From Htthsellhead
+       Where Shsyjid = Row_Sh.Shsyjid
+         And Shinvno = Row_Sh.Shinvno
+         And Shstatus <> 'Q'
+         And Shisth = 'N'
+         And Rownum = 1;
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->销售小票还有退货未处理,退货单号[' ||
+                              l_Thbillno || ']');
+    Exception
+      When No_Data_Found Then
+        Null;
+    End;
+    --raise_application_error(errcode, to_char(p_billno) ||' 会员卡：'|| row_sh.shcustno ||'->该卡当还有退货未处理，请先处理。退货单号：'||l_thbillno);
+    --同一张卡如果还有未前台确认的小票不允许做新的退货小票 add by niexc 2012.01.02
+    If Row_Sh.Shcustno Is Not Null And Nvl(Row_Sh.Shfqje, 0) <> 0 Then
+      Begin
+        Select Shbillno
+          Into l_Thbillno
+          From Htthsellhead
+         Where Shisth = 'N'
+           And Shstatus <> 'Q'
+           And Shcustno = Row_Sh.Shcustno
+           And Shdate >= Trunc(Sysdate)
+           And Rownum = 1;
+        Raise_Application_Error(Errcode,
+                                To_Char(p_Billno) || ' 会员卡：' ||
+                                Row_Sh.Shcustno ||
+                                '->该卡当前还有退货未处理，请先处理。退货单号：' || l_Thbillno);
+      Exception
+        When No_Data_Found Then
+          Null; --raise_application_error(errcode, to_char(p_billno) ||' 会员卡：'|| row_sh.shcustno ||'->该卡当还有退货未处理，请先处理。退货单号：'||l_thbillno);
+      End;
+    End If;
+    --下面这段新百已经注释掉，卓展有这段的处理
+    /*If Row_Sh.Shishh = 'Y' Then
+       CardCRM_Pos.Sp_Get_HHPayMent(p_BillNo);
+    Else
+       CardCRM_Pos.Sp_Get_HisPayMent(p_BillNo);
+    End If;*/
+    Select Seq_Htthinvno.Nextval Into l_Newbillno From Dual;
+    -- htthsellhead
+    Insert Into Htthsellhead
+      (Shbillno,
+       Shstatus,
+       Shsyjid,
+       Shinvno,
+       Shdate,
+       Shdjlb,
+       Shposcls,
+       Shchecker,
+       Shoughtpay,
+       Shfactpay,
+       Shgchange,
+       Shpopzk,
+       Shcustno,
+       Shcustzk,
+       Shgrantno,
+       Shgranttype,
+       Shgrantzk,
+       Shgrantzr,
+       Shsysy,
+       Shsenddate,
+       Shcustinfo1,
+       Shcustinfo2,
+       Shcustinfo3,
+       Shfhdd,
+       Shiskbxs,
+       Shisth,
+       Shmanaunit,
+       Shmarket,
+       Shcusttype,
+       Shybillno,
+       Shypresale,
+       Shpresale)
+      Select l_Newbillno,
+             'N',
+             Shsyjid,
+             Shinvno,
+             Sysdate,
+             '4',
+             Shposcls,
+             Shchecker, --p_Gh,
+             Shoughtpay,
+             Shfactpay,
+             0,
+             Shpopzk,
+             Shcustno,
+             Shcustzk,
+             Shgrantno,
+             Shgranttype,
+             Shgrantzk,
+             0,
+             0,
+             Shdate,
+             Null,
+             --shcustinfo1,退货原因，生成时置为空 add by niexc 2010-03-17
+             p_Gh, --Shcustinfo2,
+             To_Char(Sysdate, 'YYYY-MM-DD HH24:MI:SS'), --Shcustinfo3,
+             Shfhdd,
+             Shiskbxs,
+             'N',
+             Currentmu,
+             Currentmkt,
+             Shcusttype,
+             Shbillno,
+             Shpresale,
+             Nvl(Shpresale, 'N')
+        From Sellhead
+       Where Shbillno = p_Billno;
+    If Sql%Rowcount = 0 Or Sql%Rowcount Is Null Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->生成后台退货小票头出错,' ||
+                              Sqlerrm);
+    End If;
+    -- htthselldetail
+    /*Insert Into Htthselldetail
+      (Sdbillno,
+       Sdrowno,
+       Sdmfid,
+       Sdsaleman,
+       Sdgdid,
+       Sdbarcode,
+       Sdgdtype,
+       Sdisflag,
+       Sdbatchno,
+       Sdmsuid,
+       Sdbzhl,
+       Sdsl,
+       Sdsj,
+       Sdsjje,
+       Sdprice,
+       Sdcjje,
+       Sdpopzk,
+       Sdpopzkfd,
+       Sdpopbno,
+       Sdcustzk,
+       Sdgrantzk,
+       Sdgno,
+       Sdgtype,
+       Sdthss,
+       Sdpfzkfd,
+       Sdcatid,
+       Sdppcode,
+       Sdanalcode,
+       Sdzkfd,
+       Sdysyjid,
+       Sdyinvno,
+       Sdfhdd,
+       Sdiskbxs,
+       Sdissgzk,
+       Sdzpzke,
+       Sddpzke,
+       Sdgbm,
+       Sdftfaqje,
+       Sdftfbqje,
+       Sdftsaqje,
+       Sdftsbqje,
+       Sdmanamode,
+       Sdisdj,
+       Sdorowno,
+       Sdobillno,
+       Sdspsx,
+       Sdrulebno,
+       Sdrulezke,
+       Sdrulezkfd,
+       Sdftsqyy,
+       Sdn1,
+       Sdn2,
+       Sdn3,
+       Sdpoprule,
+       Sdpoppayje,
+       Sdnum1,
+       Sdnum2,
+       Sdstr1,
+       Sdstr2,
+       Sdjfbs,
+       Sdpopisjf,
+       Sdpopjfbs,
+       Sdfqrule,
+       Sdflrule,
+       Sdsarule)
+      Select l_Newbillno,
+             Sdrowno,
+             Sdmfid,
+             Sdsaleman,
+             Sdgdid,
+             Sdbarcode,
+             Sdgdtype,
+             Sdisflag,
+             Sdbatchno,
+             Sdmsuid,
+             Sdbzhl,
+             (Sdsl - Nvl(Sdnum6, 0)) Sdsl,
+             Sdsj,
+             Round(Sdsjje * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdsjje,
+             Sdprice,
+             Round(Sdcjje * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdcjje,
+             Round(Sdpopzk * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdpopzk,
+             Sdpopzkfd,
+             Sdpopbno,
+             Round(Sdcustzk * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdcustzk,
+             Round(Sdgrantzk * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdgrantzk,
+             Sdgno,
+             Sdgtype,
+             Sdthss,
+             Sdpfzkfd,
+             Sdcatid,
+             Sdppcode,
+             Sdanalcode,
+             Sdzkfd,
+             Row_Sh.Shsyjid,
+             Row_Sh.Shinvno,
+             Sdfhdd,
+             Sdiskbxs,
+             Sdissgzk,
+             Round(Sdzpzke * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sdzpzke,
+             Round(Sddpzke * (Sdsl - Nvl(Sdnum6, 0)) / Sdsl, 2) Sddpzke,
+             Sdgbm,
+             0 Sdftfaqje,
+             0 Sdftfbqje,
+             Sdftsaqje,
+             Sdftsbqje,
+             Gbmanamode,
+             Gbisdj,
+             Sdrowno,
+             p_Billno,
+             Sdspsx,
+             Sdrulebno,
+             Sdrulezke,
+             Sdrulezkfd,
+             Sdftsqyy,
+             Sdn1,
+             Sdn2,
+             Sdn3,
+             Sdpoprule,
+             Sdpoppayje,
+             Sdnum1,
+             Sdnum2,
+             Sdstr1,
+             Sdstr2,
+             Sdjfbs,
+             Sdpopisjf,
+             Sdpopjfbs,
+             Sdfqrule,
+             Sdflrule,
+             Sdsarule
+        From Selldetail
+        Left Join Goodsbase
+          On Selldetail.Sdgdid = Goodsbase.Gbid
+       Where Sdbillno = p_Billno
+         And
+            --(instr(p_rowno, to_char(sdrowno)) > 0 Or p_rowno Is Null);
+             (Instr(',' || p_Rowno || ',', ',' || To_Char(Sdrowno) || ',') > 0 Or
+             p_Rowno Is Null)
+         And Sdsl - Nvl(Sdnum6, 0) > 0;
+    If Sql%Rowcount Is Null Or Sql%Rowcount = 0 Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) ||
+                              '->生成后台退货小票错误,小票已经没有可退货的商品' || Sqlerrm);
+    End If;*/
+    For Vr In (Select *
+                 From Selldetail
+                Where Sdbillno = p_Billno
+                  And (Instr(',' || p_Rowno || ',',
+                             ',' || To_Char(Sdrowno) || ',') > 0 Or
+                      p_Rowno Is Null)
+                  And Sdsl - Nvl(Sdnum6, 0) > 0) Loop
+      Select Gbmanamode, Gbisdj
+        Into l_Gbmanamode, l_Gbisdj
+        From Goodsbase
+       Where Gbid = Vr.Sdgdid;
+      --Gmfstr1中记录的是原柜组，根据Gmfstr1找到对应商品的新柜组，如果未找到，则取商品档案的柜组（如果是多柜组，取第一条）
+      Begin
+        Select Gmfmfid
+          Into l_Newmfid
+          From Goodsmframe
+         Where Gmfgdid = Vr.Sdgdid
+           And Gmfmarket = Currentmkt
+           And Gmfstr1 = Vr.Sdmfid
+           And Gmfstatus = 'Y';
+      Exception
+        When No_Data_Found Then
+          Select Gmfmfid
+            Into l_Newmfid
+            From Goodsmframe, Manaframe
+           Where Gmfmfid = Mfcode
+             And Mfcglx <> '5'
+             And Gmfmarket = Currentmkt
+             And Gmfstatus = 'Y'
+             And Gmfmfid = Vr.Sdmfid
+             And Rownum = 1;
+      End;
+
+      Begin
+        Insert Into Htthselldetail
+          (Sdbillno,
+           Sdrowno,
+           Sdmfid,
+           Sdsaleman,
+           Sdgdid,
+           Sdbarcode,
+           Sdgdtype,
+           Sdisflag,
+           Sdbatchno,
+           Sdmsuid,
+           Sdbzhl,
+           Sdsl,
+           Sdsj,
+           Sdsjje,
+           Sdprice,
+           Sdcjje,
+           Sdpopzk,
+           Sdpopzkfd,
+           Sdpopbno,
+           Sdcustzk,
+           Sdgrantzk,
+           Sdgno,
+           Sdgtype,
+           Sdthss,
+           Sdpfzkfd,
+           Sdcatid,
+           Sdppcode,
+           Sdanalcode,
+           Sdzkfd,
+           Sdysyjid,
+           Sdyinvno,
+           Sdfhdd,
+           Sdiskbxs,
+           Sdissgzk,
+           Sdzpzke,
+           Sddpzke,
+           Sdgbm,
+           Sdftfaqje,
+           Sdftfbqje,
+           Sdftsaqje,
+           Sdftsbqje,
+           Sdmanamode,
+           Sdisdj,
+           Sdorowno,
+           Sdobillno,
+           Sdspsx,
+           Sdrulebno,
+           Sdrulezke,
+           Sdrulezkfd,
+           Sdftsqyy,
+           Sdn1,
+           Sdn2,
+           Sdn3,
+           Sdpoprule,
+           Sdpoppayje,
+           Sdnum1,
+           Sdnum2,
+           Sdstr1,
+           Sdstr2,
+           Sdjfbs,
+           Sdpopisjf,
+           Sdpopjfbs,
+           Sdfqrule,
+           Sdflrule,
+           Sdsarule)
+          Select l_Newbillno,
+                 Vr.Sdrowno,
+                 l_Newmfid,
+                 Vr.Sdsaleman,
+                 Vr.Sdgdid,
+                 Vr.Sdbarcode,
+                 Vr.Sdgdtype,
+                 Vr.Sdisflag,
+                 Vr.Sdbatchno,
+                 Vr.Sdmsuid,
+                 Vr.Sdbzhl,
+                 (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) Sdsl,
+                 Vr.Sdsj,
+                 Round(Vr.Sdsjje * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) / Vr.Sdsl,
+                       2) Sdsjje,
+                 Vr.Sdprice,
+                 Round(Vr.Sdcjje * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) / Vr.Sdsl,
+                       2) Sdcjje,
+                 Round(Vr.Sdpopzk * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) / Vr.Sdsl,
+                       2) Sdpopzk,
+                 Vr.Sdpopzkfd,
+                 Vr.Sdpopbno,
+                 Round(Vr.Sdcustzk * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) /
+                       Vr.Sdsl,
+                       2) Sdcustzk,
+                 Round(Vr.Sdgrantzk * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) /
+                       Vr.Sdsl,
+                       2) Sdgrantzk,
+                 Vr.Sdgno,
+                 Vr.Sdgtype,
+                 Vr.Sdthss,
+                 Vr.Sdpfzkfd,
+                 Vr.Sdcatid,
+                 Vr.Sdppcode,
+                 Vr.Sdanalcode,
+                 Vr.Sdzkfd,
+                 Row_Sh.Shsyjid,
+                 Row_Sh.Shinvno,
+                 Vr.Sdfhdd,
+                 Vr.Sdiskbxs,
+                 Vr.Sdissgzk,
+                 Round(Vr.Sdzpzke * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) / Vr.Sdsl,
+                       2) Sdzpzke,
+                 Round(Vr.Sddpzke * (Vr.Sdsl - Nvl(Vr.Sdnum6, 0)) / Vr.Sdsl,
+                       2) Sddpzke,
+                 Vr.Sdgbm,
+                 0 Sdftfaqje,
+                 0 Sdftfbqje,
+                 Vr.Sdftsaqje,
+                 Vr.Sdftsbqje,
+                 l_Gbmanamode,
+                 l_Gbisdj,
+                 Vr.Sdrowno,
+                 p_Billno,
+                 Vr.Sdspsx,
+                 Vr.Sdrulebno,
+                 Vr.Sdrulezke,
+                 Vr.Sdrulezkfd,
+                 Vr.Sdftsqyy,
+                 Vr.Sdn1,
+                 Vr.Sdn2,
+                 Vr.Sdn3,
+                 Vr.Sdpoprule,
+                 Vr.Sdpoppayje,
+                 Vr.Sdnum1,
+                 Vr.Sdnum2,
+                 Vr.Sdstr1,
+                 Vr.Sdstr2,
+                 Vr.Sdjfbs,
+                 Vr.Sdpopisjf,
+                 Vr.Sdpopjfbs,
+                 Vr.Sdfqrule,
+                 Vr.Sdflrule,
+                 Vr.Sdsarule
+            From Dual;
+      Exception
+        When Others Then
+          Raise_Application_Error(Errcode,
+                                  To_Char(p_Billno) || '->更新后台退货小票明细出错,' ||
+                                  Sqlerrm);
+      End;
+    End Loop;
+
+    -- 退货总额
+    Select Nvl(Sum(Sdcjje), 0)
+      Into Ld_Th
+      From Htthselldetail
+     Where Sdbillno = l_Newbillno;
+    -- htthsellpayment
+    -- 分担付款
+    -- 后台退货四舍五入,收银机id/退货金额/实收金额/收银损溢
+    Htthpayment(p_Billno, l_Newbillno, Ld_Th, Ld_Ysje, Ld_Sysy);
+    -- 更新后台退货表头
+    Update Htthsellhead
+       Set Shoughtpay = Ld_Th,
+           Shfactpay  = Ld_Th + Ld_Sysy,
+           Shsysy     = Ld_Sysy
+     Where Shbillno = l_Newbillno;
+    If Sql%Rowcount = 0 Or Sql%Rowcount Is Null Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->更新后台退货小票头出错,' ||
+                              Sqlerrm);
+    End If;
+    o_Billno := l_Newbillno;
+    Commit;
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  Procedure Genpossellbill(p_Sh        Htthsellhead%Rowtype,
+                           o_Posbillno Out Number,
+                           o_Ret       Out Number,
+                           o_Retmsg    Out Varchar2) As
+    l_Invno Varchar2(20);
+    l_Count Number;
+  Begin
+    Select Dbusrposnew.Seq_Salehead.Nextval Into o_Posbillno From Dual;
+    l_Invno := To_Char(p_Sh.Shinvno + 0.1);
+    Delete From Sellhead
+     Where Shsyjid = p_Sh.Shsyjid
+       And Shinvno = l_Invno
+       And Shmarket = Currentmkt
+       And Shmanaunit = Currentmu
+       And Shdjlb = '4';
+    --sellhead_crm
+    Insert Into Dbusrposnew.Salehead
+      (Billno,
+       Status,
+       Syjh,
+       Fphm,
+       Djlb,
+       Rqsj,
+       Bc,
+       Syyh,
+       Hykh,
+       Ysje,
+       Sjfk,
+       Zl,
+       Yhzke,
+       Hyzke,
+       Sqkh,
+       Sqktype,
+       Lszke,
+       Sswr_Sysy,
+       Sendrqsj,
+       Buyerinfo,
+       Jdfhdd,
+       Ybillno,
+       Ysyjh,
+       Yfphm,
+       Mkt,
+       Custtype,
+       Hhflag,
+       Manaunit,
+       Jfflag,
+       Bcjf,
+       Ljjf,
+       Fqflag,
+       Saflag,
+       Fqje,
+       Yhzszk,
+       Thsq,
+       Crmbillno)
+    Values
+      (o_Posbillno,
+       'Y',
+       p_Sh.Shsyjid,
+       l_Invno,
+       p_Sh.Shdjlb,
+       Sysdate,
+       '#',
+       p_Sh.Shchecker,
+       p_Sh.Shcustno,
+       p_Sh.Shoughtpay,
+       p_Sh.Shfactpay,
+       p_Sh.Shgchange,
+       p_Sh.Shpopzk,
+       p_Sh.Shcustzk,
+       p_Sh.Shgrantno,
+       p_Sh.Shgranttype,
+       p_Sh.Shgrantzk,
+       p_Sh.Shsysy,
+       p_Sh.Shsenddate,
+       '##',
+       p_Sh.Shybillno,
+       Null,
+       Null,
+       Null,
+       Currentmkt,
+       p_Sh.Shcusttype,
+       'N',
+       Currentmu,
+       'N',
+       0,
+       0,
+       'N',
+       'N',
+       0,
+       0,
+       '',
+       '');
+    Select Count(*)
+      Into l_Count
+      From Dbusrposnew.Salehead
+     Where Billno = o_Posbillno;
+    --selldetail_crm
+    Insert Into Dbusrposnew.Salegoods
+      (Billno,
+       Rowno,
+       Rqsj,
+       Mkt,
+       Gz,
+       Yyyh,
+       Code,
+       Barcode,
+       Sptype,
+       Flag,
+       Batch,
+       Unitid,
+       Bzhl,
+       Sl,
+       Lsj,
+       Hjje,
+       Hjzk,
+       Yhzke,
+       Yhzkfd,
+       Yhdjbh,
+       Hyzke,
+       Lszke,
+       Sqkh,
+       Sqktype,
+       Sqkzkfd,
+       Catid,
+       Ppcode,
+       Yjhxcode,
+       Hyzkfd,
+       Ysyjh,
+       Yfphm,
+       Fhdd,
+       Zsdjbh,
+       Zszke,
+       Zszkfd,
+       Num2,
+       Sdspsx,
+       Sdpopjfbs,
+       Sdpopisjf,
+       Sdjfbs,
+       Str2,
+       Str1,
+       Num1,
+       Sdpoprule,
+       Sdfqrule,
+       Sdflrule,
+       Sdsarule)
+      Select o_Posbillno,
+             Sdrowno,
+             Sysdate,
+             Currentmkt,
+             Sdmfid,
+             Sdsaleman,
+             Sdgdid,
+             Sdbarcode,
+             Sdgdtype,
+             Sdisflag,
+             Sdbatchno,
+             Sdmsuid,
+             Sdbzhl,
+             Sdsl,
+             Sdsj,
+             Sdsjje,
+             Sdpopzk + Sdcustzk + Sdgrantzk,
+             Sdpopzk,
+             Sdpopzkfd,
+             Sdpopbno,
+             Sdcustzk,
+             Sdgrantzk,
+             Sdgno,
+             Sdgtype,
+             Sdpfzkfd,
+             Sdcatid,
+             Sdppcode,
+             Sdanalcode,
+             Sdzkfd,
+             Sdysyjid,
+             Sdyinvno,
+             Sdfhdd,
+             Sdrulebno,
+             Sdrulezke,
+             Sdrulezkfd,
+             Sdorowno,
+             Sdspsx,
+             1,
+             0,
+             1,
+             '0',
+             '0',
+             Sdnum1,
+             Sdpoprule,
+             Sdfqrule,
+             Sdflrule,
+             Sdsarule
+        From Htthselldetail
+       Where Sdbillno = p_Sh.Shbillno;
+    --sellpayment_crm
+    /*Insert Into Sellpayment
+    (Spbillno,
+     Sprowno,
+     Sppmcode,
+     Spmoney,
+     Sperate,
+     Spno,
+     Sppayerid,
+     Sppayyy,
+     Spispop)
+    Select o_Posbillno,
+           Sprowno,
+           Sppmcode,
+           Spmoney,
+           Sperate,
+           Spno,
+           Sppayerid,
+           Sppayyy,
+           'N'
+    From   Htthsellpayment
+    Where  Spbillno = p_Sh.Shbillno And Spmoney > 0;*/
+    Insert Into Dbusrposnew.Salepay
+      (Billno, Rowno, Paycode, Ybje, Hl, Payno, Idno, Num1, Ispop, Flag)
+      Select o_Posbillno,
+             Sprowno,
+             Sppmcode,
+             Spmoney,
+             Sperate,
+             Spno,
+             Sppayerid,
+             Sppayyy,
+             'N',
+             '1'
+        From Htthsellpayment
+       Where Spbillno = p_Sh.Shbillno
+         And Spmoney > 0;
+    If p_Sh.Shcrmbillno Is Not Null Then
+      Update Mzgiftselldetailhtth
+         Set Msdcrmno = o_Posbillno
+       Where Msdcrmno = p_Sh.Shcrmbillno;
+    End If;
+    o_Ret    := 0; --成功
+    o_Retmsg := '成功'; --
+  Exception
+    When Others Then
+      o_Ret    := 1; --执行失败
+      o_Retmsg := Substr('生成CRM小票失败,' || Sqlerrm, 1, 255); --
+  End;
+
+  Procedure Gencrmbill(p_Sh        Htthsellhead%Rowtype,
+                       o_Crmbillno Out Number,
+                       o_Ret       Out Number,
+                       o_Retmsg    Out Varchar2) As
+    l_Invno Varchar2(20);
+  Begin
+    Select Seq_Sellhead_Crm.Nextval Into o_Crmbillno From Dual;
+    l_Invno := To_Char(p_Sh.Shinvno + 0.1);
+    Delete From Sellhead_Crm
+     Where Shsyjid = p_Sh.Shsyjid
+       And Shinvno = l_Invno
+       And Shmarket = Currentmkt
+       And Shmanaunit = Currentmu
+       And Shdjlb = '4';
+    --sellhead_crm
+    Insert Into Sellhead_Crm
+      (Shbillno,
+       Shstatus,
+       Shsyjid,
+       Shinvno,
+       Shdate,
+       Shdjlb,
+       Shposcls,
+       Shchecker,
+       Shoughtpay,
+       Shfactpay,
+       Shgchange,
+       Shpopzk,
+       Shcustno,
+       Shcustzk,
+       Shgrantno,
+       Shgranttype,
+       Shgrantzk,
+       Shgrantzr,
+       Shsysy,
+       Shsenddate,
+       Shcustinfo1,
+       Shcustinfo2,
+       Shcustinfo3,
+       Shfhdd,
+       Shiskbxs,
+       Shissend,
+       Shisth,
+       Shmanaunit,
+       Shmarket,
+       Shfqflag,
+       Shjfflag,
+       Shbcjf,
+       Shjfye,
+       Shsaflag,
+       Shfqje,
+       Shishh,
+       Shcusttype)
+    Values
+      (o_Crmbillno,
+       'Y',
+       p_Sh.Shsyjid,
+       l_Invno,
+       Sysdate,
+       p_Sh.Shdjlb,
+       '#',
+       p_Sh.Shchecker,
+       p_Sh.Shoughtpay,
+       p_Sh.Shfactpay,
+       p_Sh.Shgchange,
+       p_Sh.Shpopzk,
+       p_Sh.Shcustno,
+       p_Sh.Shcustzk,
+       p_Sh.Shgrantno,
+       p_Sh.Shgranttype,
+       p_Sh.Shgrantzk,
+       p_Sh.Shgrantzr,
+       p_Sh.Shsysy,
+       p_Sh.Shsenddate,
+       '##',
+       '',
+       '',
+       p_Sh.Shybillno,
+       --对应CRM小票中的SHFHDD,记录退货原小票的billno
+       p_Sh.Shiskbxs,
+       p_Sh.Shissend,
+       p_Sh.Shisth,
+       Currentmu,
+       Currentmkt,
+       'N',
+       'N',
+       0,
+       0,
+       'N',
+       0,
+       'N',
+       p_Sh.Shcusttype);
+    --selldetail_crm
+    Insert Into Selldetail_Crm
+      (Sdbillno,
+       Sdrowno,
+       Sdmfid,
+       Sdsaleman,
+       Sdgdid,
+       Sdbarcode,
+       Sdgdtype,
+       Sdisflag,
+       Sdbatchno,
+       Sdmsuid,
+       Sdbzhl,
+       Sdsl,
+       Sdsj,
+       Sdsjje,
+       Sdprice,
+       Sdcjje,
+       Sdpopzk,
+       Sdpopzkfd,
+       Sdpopbno,
+       Sdcustzk,
+       Sdgrantzk,
+       Sdgno,
+       Sdgtype,
+       Sdthss,
+       Sdpfzkfd,
+       Sdcatid,
+       Sdppcode,
+       Sdanalcode,
+       Sdzkfd,
+       Sdysyjid,
+       Sdyinvno,
+       Sdfhdd,
+       Sdiskbxs,
+       Sdissgzk,
+       Sdzpzke,
+       Sddpzke,
+       Sdgbm,
+       Sdftfaqje,
+       Sdftfbqje,
+       Sdftsaqje,
+       Sdftsbqje,
+       Sdrulebno,
+       Sdrulezke,
+       Sdrulezkfd,
+       Sdftsqyy,
+       Sdn1,
+       Sdn2,
+       Sdn3,
+       Sdspsx,
+       Sdpoprule,
+       Sdpoppayje,
+       Sdnum1,
+       Sdnum2,
+       Sdstr1,
+       Sdstr2,
+       Sdjfbs,
+       Sdpopisjf,
+       Sdpopjfbs,
+       Sdmjrule,
+       Sdfqrule,
+       Sdflrule)
+      Select o_Crmbillno,
+             Sdrowno,
+             Sdmfid,
+             Sdsaleman,
+             Sdgdid,
+             Sdbarcode,
+             Sdgdtype,
+             Sdisflag,
+             Sdbatchno,
+             Sdmsuid,
+             Sdbzhl,
+             Sdsl,
+             Sdsj,
+             Sdsjje,
+             Sdprice,
+             Sdcjje,
+             Sdpopzk,
+             Sdpopzkfd,
+             Sdpopbno,
+             Sdcustzk,
+             Sdgrantzk,
+             Sdgno,
+             Sdgtype,
+             Sdthss,
+             Sdpfzkfd,
+             Sdcatid,
+             Sdppcode,
+             Sdanalcode,
+             Sdzkfd,
+             Sdysyjid,
+             Sdyinvno,
+             Sdfhdd,
+             Sdiskbxs,
+             Sdissgzk,
+             Sdzpzke,
+             Sddpzke,
+             Sdgbm,
+             Sdftfaqje,
+             Sdftfbqje,
+             Sdftsaqje,
+             Sdftsbqje,
+             Sdrulebno,
+             Sdrulezke,
+             Sdrulezkfd,
+             Sdftsqyy,
+             Sdn1,
+             Sdn2,
+             Sdn3,
+             Sdspsx,
+             '',
+             0,
+             0,
+             Sdorowno,
+             '0',
+             '0',
+             1,
+             0,
+             1,
+             '',
+             '',
+             ''
+        From Htthselldetail
+       Where Sdbillno = p_Sh.Shbillno;
+    --sellpayment_crm
+    Insert Into Sellpayment_Crm
+      (Spbillno,
+       Sprowno,
+       Sppmcode,
+       Spmoney,
+       Sperate,
+       Spno,
+       Sppayerid,
+       Sppayyy,
+       Spispop)
+      Select o_Crmbillno,
+             Sprowno,
+             Sppmcode,
+             Spmoney,
+             Sperate,
+             Spno,
+             Sppayerid,
+             Sppayyy,
+             'N'
+        From Htthsellpayment
+       Where Spbillno = p_Sh.Shbillno
+         And Spmoney > 0;
+    If p_Sh.Shcrmbillno Is Not Null Then
+      --Update mzgiftselldetailhtth Set msdnum5 = o_crmbillno Where msdnum5 = p_sh.shcrmbillno;
+      --MSDCRMNO
+      Update Mzgiftselldetailhtth
+         Set Msdcrmno = o_Crmbillno
+       Where Msdcrmno = p_Sh.Shcrmbillno;
+    End If;
+    o_Ret    := 0; --成功
+    o_Retmsg := '成功'; --
+  Exception
+    When Others Then
+      o_Ret    := 1; --执行失败
+      o_Retmsg := Substr('生成CRM小票失败,' || Sqlerrm, 1, 255); --
+  End;
+
+  Procedure Checkkh(p_Billno    In Number,
+                    p_Upt       In Varchar2 Default '0',
+                    p_Debug     In Varchar2 Default '0', --0:正常处理 1:断点1, 2断点2
+                    o_Ret       Out Number,
+                    o_Retmsg    Out Varchar2,
+                    o_Jfkh      Out Number,
+                    o_Jfkhdesc  Out Varchar2,
+                    o_Jfmemo    Out Varchar2,
+                    o_Qkh       Out Number,
+                    o_Qkhdesc   Out Varchar2,
+                    o_Fqmemo    Out Varchar2,
+                    o_Descmemo  Out Varchar2,
+                    o_Crmbillno Out Number,
+                    o_Mjjfhk    Out Number) As
+    Row_h Htthsellhead%Rowtype;
+    -- 生成CRM小票信息,计算扣回
+    l_Crm_Billno Number;
+    l_Pos_Billno Number; --返券需要在POS计算扣回
+    l_Tmp        Number;
+    l_Qtmemo     Varchar2(100);
+  Begin
+    Begin
+      Select * Into Row_h From Htthsellhead Where Shbillno = p_Billno;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, p_Billno || '->无此退货小票！');
+    End;
+    Currentmkt := Row_h.Shmarket;
+    /*If Row_h.Shsyjid = '0000' Then
+      o_Ret       := 0;
+      o_Retmsg    := '';
+      o_Jfkh      := 0;
+      o_Jfkhdesc  := '';
+      o_Jfmemo    := '';
+      o_Qkh       := 0;
+      o_Qkhdesc   := '';
+      o_Fqmemo    := '';
+      o_Descmemo  := '';
+      o_Crmbillno := '';
+      Return;
+    End If;*/
+    --1生成CRM小票,2调用扣回过程
+    Gencrmbill(Row_h, l_Crm_Billno, o_Ret, o_Retmsg);
+    Genpossellbill(Row_h, l_Pos_Billno, o_Ret, o_Retmsg);
+    If o_Ret <> 0 Then
+      Raise_Application_Error(Errcode, p_Billno || '->' || o_Retmsg);
+    End If;
+    Update Htthsellhead
+       Set Shcrmbillno = l_Crm_Billno, Shposbillno = l_Pos_Billno
+     Where Shbillno = p_Billno;
+    --
+    If p_Debug = '1' Then
+      If p_Upt = '0' Then
+        Rollback;
+      Else
+        Delete From Sellhead_Crm Where Shbillno = l_Crm_Billno;
+        Delete From Dbusrposnew.Salehead Where Billno = l_Pos_Billno;
+        Delete From Sellmail Where Smkey = l_Pos_Billno;
+        Delete From Sellhead Where shbillno=l_Pos_Billno;
+        Commit;
+      End If;
+      Return;
+    End If;
+    Htth_Getsalekhje(l_Crm_Billno,
+                     l_Pos_Billno,
+                     p_Upt,
+                     --1:upt 0:only calc
+                     p_Billno,
+                     --后台退货billno
+                     --
+                     o_Ret,
+                     o_Retmsg,
+                     o_Jfkh,
+                     o_Jfkhdesc,
+                     o_Jfmemo,
+                     o_Qkh,
+                     o_Qkhdesc,
+                     o_Fqmemo,
+                     l_Tmp,
+                     o_Descmemo,
+                     o_Mjjfhk);
+    o_Crmbillno := l_Crm_Billno;
+    If o_Ret <> 0 Then
+      Rollback;
+      Raise_Application_Error(-20009, o_Retmsg);
+    End If;
+    If p_Debug = '2' Then
+      If p_Upt = '0' Then
+        Rollback;
+      Else
+        Commit;
+      End If;
+      Return;
+    End If;
+    If p_Upt = '0' Then
+      Rollback;
+    Else
+      --审核记录
+      Insert Into Sellhead_Htth_Crm
+        Select * From Sellhead_Crm Where Shbillno = l_Crm_Billno;
+      Insert Into Selldetail_Htth_Crm
+        Select * From Selldetail_Crm Where Sdbillno = l_Crm_Billno;
+      Insert Into Sellpayment_Htth_Crm
+        Select spbillno,sprowno,sppmcode,spmoney,sperate,spno,sppayerid,sppayyy,spispop From Sellpayment_Crm Where Spbillno = l_Crm_Billno;
+      Insert Into Salehead_Htth
+        Select * From Dbusrposnew.Salehead Where Billno = l_Pos_Billno;
+      Update Salehead_Htth
+         Set Crmbillno = p_Billno
+       Where Billno = l_Pos_Billno;
+      /*      Insert Into Selldetail_Htth
+        Select * From Selldetail Where Sdbillno = l_Pos_Billno;
+      Insert Into Sellpayment_Htth
+        Select * From Sellpayment Where Spbillno = l_Pos_Billno;*/
+    End If;
+    --生成用于计算扣回的CRM小票要删除
+    -- 退货完成 或者 取消时再删除
+    --by zhouwd 只要是后台退货的小票,计算完后，都删除
+    --If p_upt = '0' Then
+    Delete From Sellhead_Crm Where Shbillno = l_Crm_Billno;
+    --delete from crm_sellmail where shbillno = l_crm_billno;
+    Delete From Dbusrposnew.Salehead Where Billno = l_Pos_Billno;
+    Delete From Sellmail Where Smkey = l_Pos_Billno;
+    Delete From Sellhead Where shbillno=l_Pos_Billno;
+    --End If;
+    --Commit;
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  Procedure Checkispapercoupon(p_Cardno In Varchar2) Is
+    Lcnt Number;
+  Begin
+    Select Count(*)
+      Into Lcnt
+      From Tktcardfqtotal
+     Where Tcfttype = '2'
+       And Tcftvipno = p_Cardno
+       And Rownum = 1;
+    If Lcnt <= 0 Then
+      Raise_Application_Error(Errcode, '查找卡主档信息失败!');
+    End If;
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  --
+  -- Create Synonym CustInterface For DBUSRVIP.CustInterface@CRM;
+  --  in_optype C-查询 J-积分消费 Z-零钞 Q-券 W-积分*/
+  Procedure Checkcard(p_Cardno In Varchar2, p_Opertype In Char) Is
+  Begin
+    Custinterface.Chkcard(p_Cardno, '4', p_Opertype);
+  Exception
+    When Others Then
+      If p_Opertype = 'Q' Then
+        Checkispapercoupon(p_Cardno);
+      Else
+        Raise;
+      End If;
+  End;
+
+  Procedure Checktranscard(p_Cardno In Varchar2, o_Cardno Out Varchar2) Is
+  Begin
+    Custinterface.Checktranscard(p_Cardno, o_Cardno);
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  Procedure Checkcardtrack(p_Mkt      In Varchar2,
+                           p_Track2   In Varchar2,
+                           p_Opertype In Char,
+                           o_Cardno   Out Varchar2) Is
+    l_Mktcode   Varchar2(40);
+    l_Djlb      Char(1);
+    l_Ret       Number;
+    l_Retmsg    Varchar2(255);
+    l_Type      Varchar2(10);
+    l_Name      Varchar2(40);
+    l_Strdummy  Varchar2(100);
+    l_Numdummy  Number;
+    l_Custgroup Varchar2(100);
+  Begin
+    l_Mktcode := Currentmu || ',' || p_Mkt;
+    l_Djlb    := '4';
+    Custinterface.Getcust(In_Mktcode     => l_Mktcode,
+                          In_Track       => p_Track2,
+                          In_Djlb        => l_Djlb,
+                          In_Optype      => p_Opertype,
+                          in_pwd         => '',
+                          Out_Ret        => l_Ret,
+                          Out_Rcode      => o_Cardno,
+                          Out_Rtype      => l_Type,
+                          Out_Rname      => l_Name,
+                          Out_Rstatus    => l_Strdummy,
+                          Out_Rmaxdate   => l_Strdummy,
+                          Out_Rtrack     => l_Strdummy,
+                          Out_Rmemo      => l_Strdummy,
+                          Out_Rvaluememo => l_Numdummy,
+                          Out_Rishy      => l_Strdummy,
+                          Out_Riszk      => l_Strdummy,
+                          Out_Risjf      => l_Strdummy,
+                          Out_rpwd       => l_Strdummy,
+                          Out_Rfunc      => l_Strdummy,
+                          Out_Rzkl       => l_Numdummy,
+                          Out_Rvalue1    => l_Numdummy,
+                          Out_Rvalue2    => l_Numdummy,
+                          Out_Rvalue3    => l_Numdummy,
+                          Out_Rvalue4    => l_Numdummy,
+                          Out_Rvalue5    => l_Numdummy,
+                          Out_Rvalstr1   => l_Retmsg,
+                          Out_Rvalstr2   => l_Strdummy,
+                          Out_Rvalstr3   => l_Custgroup);
+    If l_Ret = 0 Then
+      Raise_Application_Error(Errcode, l_Retmsg);
+    End If;
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  Procedure Bapprove(p_Billno In Varchar2,
+                     p_Person In Varchar2,
+                     p_Billid In Varchar2,
+                     p_Djlb   In Varchar2) Is
+    l_Billno  Number;
+    l_Ret     Number;
+    l_Retmsg  Varchar2(1000);
+    Rjfkhje   Number; --
+    Rjfdesc   Varchar2(1000);
+    Rjfmemo   Varchar2(1000);
+    Rfqkhje   Number;
+    Rfqdesc   Varchar2(1000);
+    Rfqmemo   Varchar2(1000);
+    Rdescmemo Varchar2(100);
+    Rmjjfkhje Number;
+    --
+    Row_h      Htthsellhead%Rowtype;
+    Rcrmbillno Number;
+    l_Rate     Number;
+    l_Thje     Number;
+    l_Spgmoney Number;
+    --
+    l_y      Char(1); --指定原小票退货Y/N
+    Row_Th   Sellhead%Rowtype;
+    l_Gdcjje Number;
+    l_Row    Number := 0;
+    --
+    Row_Tcft  Tktcardfqtotal%Rowtype;
+    l_Tcflseq Number;
+    l_Crmmkt  Varchar2(20);
+    Row_h_Crm Sellhead_Crm%Rowtype;
+    r_Ch      Htthcheck%Rowtype;
+    l_Totje   Number;
+    l_Ygdcjje Number; --原小票商品成交金额
+    l_Gdpay   Number;
+    l_Yxqje   Number;
+    l_Qtfkje  Number;
+    l_Wqje    Number;
+    l_Qrow    Number;
+    l_Qcnt    Number;
+    l_Gdcnt   Number;
+    l_Maxpay  Number;
+    l_Yfje    Number;
+    l_Yxje    Number;
+    r_Thpg    Htthsellpaygoods%Rowtype;
+    r_Thpay   Htthsellpayment%Rowtype;
+    l_Totyy   Number;
+    l_Ftpay   Number;
+    l_Ftyy    Number;
+    l_Rowyy   Number;
+    l_Rowpay  Number;
+    l_Type    Char(1); ---Y 成交金额 N 按收券占比
+    l_Transno Varchar2(50);
+  Begin
+    --
+    l_Billno := To_Number(p_Billno);
+    Select * Into Row_h From Htthsellhead Where Shbillno = l_Billno;
+    If Row_h.Shstatus = 'Y' Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->CHK01 该小票已经审核!');
+    End If;
+    Currentmkt := Row_h.Shmarket;
+   /* Begin
+      Select * Into r_Ch From Htthcheck Where Htthno = Row_h.Shbillno;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, '没有检查扣回,请检查!');
+    End;*/
+    Checkkh(l_Billno,
+            '1',
+            --1:upt 0:only calc
+            '0',
+            --0:正常处理 1:断点1, 2断点2
+            l_Ret,
+            l_Retmsg,
+            Rjfkhje,
+            Rjfdesc,
+            Rjfmemo,
+            Rfqkhje,
+            Rfqdesc,
+            Rfqmemo,
+            Rdescmemo,
+            Rcrmbillno,
+            Rmjjfkhje);
+    --
+    Begin
+      Select *
+        Into Row_Th
+        From Sellhead
+       Where Shsyjid = Row_h.Shsyjid
+         And Shinvno = Row_h.Shinvno
+         And Shmarket = Row_h.Shmarket;
+      l_y := 'Y';
+    Exception
+      When No_Data_Found Then
+        l_y := 'N';
+    End;
+    If l_y = 'N' Then
+      -- 不指定小票的退货没必要在这里处理分摊，可以交由门店销售过程处理
+      -- 退货总额
+      /*Select nvl(Sum(sdcjje), 0)
+      Into   l_thje
+      From   htthselldetail
+      Where  sdbillno = l_billno;
+      For vr In (Select t.*, ppmtype, substr(sppayerid, 1, 1) qtype
+                 From   htthsellpayment t, pospaymode
+                 Where  spbillno = l_billno And
+                        sppmcode = ppmcode And
+                        ppmtype = '5' And
+                        sprowno > 0 And
+                        substr(sppayerid, 1, 1) Between 'A' And 'Z') Loop
+        For r_det In (Select *
+                      From   htthselldetail
+                      Where  sdbillno = l_billno) Loop
+          l_rate := r_det.sdcjje / l_thje;
+          If l_rate > 0 Then
+            l_spgmoney := round(vr.spmoney * l_rate, 2);
+            Insert Into htthsellpaygoods
+              (spgbillno, spgrowno, spgpmcode, spgpayerid, spgpmtype,
+               spgmoney, spgerate, spggdrow, spggdid, spggdcjje, spggdmoney,
+               spgno, spgispop, spgsysy, spgpmisjf)
+            Values
+              (l_billno, vr.sprowno, vr.sppmcode, vr.qtype, vr.ppmtype,
+               l_spgmoney, vr.sperate, r_det.sdrowno, r_det.sdgdid,
+               r_det.sdcjje, l_spgmoney, vr.spno, 'N', 0, 'N');
+          End If;
+        End Loop;
+      End Loop;*/
+      Null;
+    Else
+      --退货非券金额
+      Select Nvl(Sum(Spmoney), 0)
+        Into l_Qtfkje
+        From Htthsellpayment, Paymode
+       Where Spbillno = l_Billno
+         And Sppmcode = Pmcode
+         And Not (Pmtype = '5' And f_Isdzq(Sppayerid) = 'Y')
+         And Sprowno > 0;
+      Select Nvl(Sum(Sdcjje), 0)
+        Into l_Wqje
+        From Htthselldetail
+       Where Sdbillno = l_Billno
+         And Sdorowno Not In
+             (Select Distinct Spggdrow
+                From View_Sellpaygoods
+               Where Spgbillno = Row_Th.Shbillno
+                 And Spgpmtype = '5'
+                 And f_Isdzq(Spgpayerid) = 'Y');
+      /*IF l_qtfkje < l_wqje THEN
+        raise_application_error(errcode, p_billno || '->CHK02 该小票券付款方式金额错误!');
+      END IF;*/
+      Select Max(Sdrowno)
+        Into l_Gdcnt
+        From Htthselldetail
+       Where Sdbillno = l_Billno
+         And Sdorowno In (Select Distinct Spggdrow
+                            From View_Sellpaygoods
+                           Where Spgbillno = Row_Th.Shbillno
+                             And Spgpmtype = '5'
+                             And f_Isdzq(Spgpayerid) = 'Y');
+      --应分摊券的有效金额
+      l_Yxje := Row_h.Shoughtpay - l_Qtfkje;
+      Select Count(*)
+        Into l_Qcnt
+        From Htthsellpayment t, Paymode
+       Where Spbillno = l_Billno
+         And Sppmcode = Pmcode
+         And Pmtype = '5'
+         And f_Isdzq(Sppayerid) = 'Y'
+         And Sprowno > 0;
+      l_Totyy := Nvl(Row_h.Shsysy, 0);
+      If l_Yxje > 0 And l_Qcnt > 0 Then
+        --按退货付款方式=券循环，只分摊退货券部分，其余付款（非券部分和原销售没有的券由门店销售处理时分摊）
+        l_Qrow := 0;
+        For Vp In (Select t.*,
+                          Substr(Sppayerid, 1, 1) Qtype,
+                          Pmtype,
+                          Pmiszl,
+                          Pmisyy
+                     From Htthsellpayment t, Paymode
+                    Where Spbillno = l_Billno
+                      And Sppmcode = Pmcode
+                      And Pmtype = '5'
+                      And f_Isdzq(Sppayerid) = 'Y'
+                      And Sprowno > 0
+                    Order By Sprowno) Loop
+          l_Qrow   := l_Qrow + 1;
+          l_Rowpay := Round(Vp.Spmoney * Vp.Sperate, 2);
+          If Vp.Pmiszl = 'N' And Vp.Pmisyy = 'Y' Then
+            /*if l_rowpay <= l_totyy then
+              l_ftyy   := l_rowpay;
+              l_totyy  := l_totyy - l_ftyy;
+              l_rowpay := 0;
+            else
+              l_rowpay := l_rowpay - l_totyy;
+              l_ftyy   := l_totyy;
+              l_totyy  := 0;
+            end if;*/
+            l_Rowpay := l_Rowpay -
+                        Round(Nvl(Vp.Sppayyy, 0) * Vp.Sperate, 2);
+            l_Ftyy   := Round(Nvl(Vp.Sppayyy, 0) * Vp.Sperate, 2);
+            l_Totyy  := l_Totyy - l_Ftyy;
+          Else
+            l_Ftyy := 0;
+          End If;
+          l_Ftpay := l_Rowpay;
+          l_Rowyy := l_Ftyy;
+          For Vd In (Select a.*, Rownum Row_Num
+                       From (Select Gdid,
+                                    Rowno,
+                                    Cjje,
+                                    --行成交金额
+                                    Payqje,
+                                    --原收券金额（券种）
+                                    Totqje,
+                                    --原收券金额（各券种之和）
+                                    Cjje - Totqje Otherje,
+                                    --非券金额
+                                    Count(*) Over() Row_Count,
+                                    Sum(Cjje) Over() Cjje_Sum,
+                                    Sum(Payqje) Over() Payqje_Sum,
+                                    Sum(Totqje) Over() Totqje_Sum
+                             /*,
+                             round(payqje / SUM(payqje) over(), 4) payrate,
+                             round((cjje - totqje) / SUM(cjje - totqje) over(),4) othrate
+                             */
+                               From (Select Ta.Sdgdid Gdid,
+                                            Ta.Sdrowno Rowno,
+                                            Ta.Sdcjje Cjje,
+                                            Round(Ta.Sdcjje / Tb.Sdcjje *
+                                                  Payqje,
+                                                  4) Payqje,
+                                            Round(Ta.Sdcjje / Tb.Sdcjje *
+                                                  Totqje,
+                                                  4) Totqje
+                                       From (Select *
+                                               From Htthselldetail
+                                              Where Sdbillno = l_Billno) Ta,
+                                            --退货商品
+                                            (Select *
+                                               From Selldetail
+                                              Where Sdbillno = Row_Th.Shbillno) Tb,
+                                            --原销售商品
+                                            (Select Spggdrow,
+                                                    Sum(Spggdmoney) Payqje
+                                               From View_Sellpaygoods
+                                              Where Spgbillno = Row_Th.Shbillno
+                                                And Spgpmtype = Vp.Pmtype
+                                                And Spgpmcode = Vp.Sppmcode
+                                                And Spgpayerid = Vp.Sppayerid
+                                              Group By Spggdrow) Tc,
+                                            --原销售的商品付款券金额
+                                            (Select Spggdrow,
+                                                    Sum(Spggdmoney) Totqje
+                                               From View_Sellpaygoods
+                                              Where Spgbillno = Row_Th.Shbillno
+                                                And Spgpmtype = Vp.Pmtype
+                                                And f_Isdzq(Spgpayerid) = 'Y'
+                                              Group By Spggdrow) Td --原销售的商品付款券总金额
+                                      Where Ta.Sdorowno = Tb.Sdrowno
+                                        And Ta.Sdorowno = Tc.Spggdrow
+                                        And Ta.Sdorowno = Td.Spggdrow)
+                              Order By Rowno) a) Loop
+            r_Thpg.Spgbillno  := l_Billno;
+            r_Thpg.Spgrowno   := Vp.Sprowno;
+            r_Thpg.Spgpmcode  := Vp.Sppmcode;
+            r_Thpg.Spgpayerid := Vp.Sppayerid;
+            r_Thpg.Spgpmtype  := Vp.Pmtype;
+            r_Thpg.Spgmoney   := Vp.Spmoney;
+            r_Thpg.Spgerate   := Vp.Sperate;
+            r_Thpg.Spggdrow   := Vd.Rowno;
+            r_Thpg.Spggdid    := Vd.Gdid;
+            r_Thpg.Spggdcjje  := Vd.Cjje;
+            /*判断 执行哪种计算方式*/
+            If Vd.Row_Num = 1 Then
+              /*如果 待分摊的付款方式 >成交金额的合计,那么按 成交金额直接是分摊金额，剩下的分摊到其他商品上*/
+              If l_Rowpay >= Vd.Cjje_Sum Then
+                l_Type := 'Y';
+              Else
+                l_Type := 'N';
+              End If;
+            End If;
+            If l_Type = 'Y' Then
+              l_Gdpay := Vd.Cjje;
+            Else
+              If Vd.Row_Num = Vd.Row_Count Then
+                l_Gdpay  := l_Rowpay;
+                l_Rowpay := 0;
+              Else
+                l_Gdpay  := Round(l_Ftpay * (Vd.Payqje / Vd.Payqje_Sum), 2);
+                l_Rowpay := l_Rowpay - l_Gdpay;
+              End If;
+            End If;
+            /*分摊溢于*/
+            If Vd.Row_Num = Vd.Row_Count Then
+              r_Thpg.Spgsqyy := l_Rowyy;
+              l_Rowyy        := 0;
+            Else
+              r_Thpg.Spgsqyy := Round(l_Ftyy * (Vd.Cjje / Vd.Cjje_Sum), 2);
+              l_Rowyy        := l_Rowyy - r_Thpg.Spgsqyy;
+            End If;
+            /*               l_maxpay := round((vd.cjje - (l_qtfkje - l_wqje) * vd.othrate) * vd.payqje/vd.totqje,2);
+
+
+
+            IF l_gdpay>l_maxpay THEN
+              l_gdpay := l_maxpay;
+            END IF;
+
+            IF l_qrow=l_qcnt THEN
+              SELECT nvl(SUM(spggdmoney),0)
+                INTO l_yfje
+                FROM htthsellpaygoods
+               WHERE spgbillno = l_billno
+                 AND spggdrow = vd.rowno;
+              l_gdpay := (vd.cjje - (l_qtfkje - l_wqje) * vd.othrate) - l_yfje;
+            END IF;
+
+            IF l_yxje<l_gdpay THEN
+              l_gdpay := l_yxje;
+            END IF;
+
+            l_yxje := l_yxje - l_gdpay;
+
+            IF l_gdpay>0 THEN   */
+            r_Thpg.Spggdmoney := l_Gdpay;
+            r_Thpg.Spgno      := Vp.Spno;
+            r_Thpg.Spgispop   := 'N';
+            r_Thpg.Spgsysy    := 0;
+            r_Thpg.Spgpmisjf  := 'N';
+            /*CRM 没有spgsqyy,暂时都记录为0*/
+            r_Thpg.Spgsysy := 0;
+            r_Thpg.Spgsqyy := 0;
+            If l_Gdpay <> 0 Then
+              Insert Into Htthsellpaygoods
+                (Spgbillno,
+                 Spgrowno,
+                 Spgpmcode,
+                 Spgpayerid,
+                 Spgpmtype,
+                 Spgmoney,
+                 Spgerate,
+                 Spggdrow,
+                 Spggdid,
+                 Spggdcjje,
+                 Spggdmoney,
+                 Spgno,
+                 Spgispop,
+                 Spgsysy,
+                 Spgpmisjf,
+                 Spgsqyy)
+              Values
+                (r_Thpg.Spgbillno,
+                 r_Thpg.Spgrowno,
+                 r_Thpg.Spgpmcode,
+                 r_Thpg.Spgpayerid,
+                 r_Thpg.Spgpmtype,
+                 r_Thpg.Spgmoney,
+                 r_Thpg.Spgerate,
+                 r_Thpg.Spggdrow,
+                 r_Thpg.Spggdid,
+                 r_Thpg.Spggdcjje,
+                 r_Thpg.Spggdmoney,
+                 r_Thpg.Spgno,
+                 r_Thpg.Spgispop,
+                 r_Thpg.Spgsysy,
+                 r_Thpg.Spgpmisjf,
+                 r_Thpg.Spgsqyy);
+            End If;
+          End Loop;
+        End Loop;
+        For Vp In (Select t.*,
+                          Substr(Sppayerid, 1, 1) Qtype,
+                          Pmtype,
+                          Pmiszl,
+                          Pmisyy,
+                          Gdmoney
+                     From Htthsellpayment t,
+                          Paymode,
+                          (Select Spgbillno,
+                                  Spgrowno,
+                                  Spgpmcode,
+                                  Spgpayerid,
+                                  Sum(Spggdmoney) Gdmoney
+                             From Htthsellpaygoods
+                            Where Spgbillno = l_Billno
+                            Group By Spgbillno,
+                                     Spgrowno,
+                                     Spgpmcode,
+                                     Spgpayerid)
+                    Where Spbillno = l_Billno
+                      And Sppmcode = Spgpmcode
+                      And Spgrowno = Sprowno
+                      And Substr(Sppayerid, 1, 1) = Substr(Spgpayerid, 1, 1)
+                      And Sppmcode = Pmcode
+                      And Pmtype = '5'
+                      And f_Isdzq(Sppayerid) = 'Y'
+                      And Sprowno > 0
+                      And Spmoney * Sperate - Sppayyy * Sperate <> Gdmoney
+                    Order By Sprowno) Loop
+          l_Ftpay  := Vp.Spmoney * Vp.Sperate - Vp.Sppayyy * Vp.Sperate -
+                      Vp.Gdmoney;
+          l_Rowpay := l_Ftpay;
+          For Vd In (Select Htthselldetail.*,
+                            Rownum Row_Num,
+                            Count(*) Over() Row_Count,
+                            Sdcjje - Nvl(Gdmoney, 0) Wftcjje,
+                            Sum(Sdcjje - Nvl(Gdmoney, 0)) Over() Wftcjje_Sum
+                       From Htthselldetail,
+                            (Select Spggdrow, Sum(Spggdmoney) Gdmoney
+                               From Htthsellpaygoods
+                              Where Spgbillno = l_Billno
+                              Group By Spggdrow)
+                      Where Sdbillno = l_Billno
+                        And Sdrowno = Spggdrow(+)) Loop
+            If Vd.Row_Num = Vd.Row_Count Then
+              l_Gdpay := l_Rowpay;
+            Else
+              l_Gdpay  := Round(l_Ftpay * Vd.Wftcjje / Vd.Wftcjje_Sum, 2);
+              l_Rowpay := l_Rowpay - l_Gdpay;
+            End If;
+            r_Thpg.Spgbillno  := l_Billno;
+            r_Thpg.Spgrowno   := Vp.Sprowno;
+            r_Thpg.Spgpmcode  := Vp.Sppmcode;
+            r_Thpg.Spgpayerid := Vp.Sppayerid;
+            r_Thpg.Spgpmtype  := Vp.Pmtype;
+            r_Thpg.Spgmoney   := Vp.Spmoney;
+            r_Thpg.Spgerate   := Vp.Sperate;
+            r_Thpg.Spggdrow   := Vd.Sdrowno;
+            r_Thpg.Spggdid    := Vd.Sdgdid;
+            r_Thpg.Spggdcjje  := Vd.Sdcjje;
+            r_Thpg.Spggdmoney := l_Gdpay;
+            r_Thpg.Spgno      := Vp.Spno;
+            r_Thpg.Spgispop   := 'N';
+            r_Thpg.Spgsysy    := 0;
+            r_Thpg.Spgpmisjf  := 'N';
+            r_Thpg.Spgsqyy    := '0';
+            If l_Gdpay > 0 Then
+              Update Htthsellpaygoods
+                 Set Spggdmoney = Spggdmoney + r_Thpg.Spggdmoney
+               Where Spgbillno = r_Thpg.Spgbillno
+                 And Spgrowno = r_Thpg.Spgrowno
+                 And Spggdrow = r_Thpg.Spggdrow;
+              If Sql%Rowcount = 0 Or Sql%Rowcount Is Null Then
+                Insert Into Htthsellpaygoods
+                  (Spgbillno,
+                   Spgrowno,
+                   Spgpmcode,
+                   Spgpayerid,
+                   Spgpmtype,
+                   Spgmoney,
+                   Spgerate,
+                   Spggdrow,
+                   Spggdid,
+                   Spggdcjje,
+                   Spggdmoney,
+                   Spgno,
+                   Spgispop,
+                   Spgsysy,
+                   Spgpmisjf,
+                   Spgsqyy)
+                Values
+                  (r_Thpg.Spgbillno,
+                   r_Thpg.Spgrowno,
+                   r_Thpg.Spgpmcode,
+                   r_Thpg.Spgpayerid,
+                   r_Thpg.Spgpmtype,
+                   r_Thpg.Spgmoney,
+                   r_Thpg.Spgerate,
+                   r_Thpg.Spggdrow,
+                   r_Thpg.Spggdid,
+                   r_Thpg.Spggdcjje,
+                   r_Thpg.Spggdmoney,
+                   r_Thpg.Spgno,
+                   r_Thpg.Spgispop,
+                   r_Thpg.Spgsysy,
+                   r_Thpg.Spgpmisjf,
+                   r_Thpg.Spgsqyy);
+              End If;
+            End If;
+          End Loop;
+        End Loop;
+      End If;
+    End If;
+    --更新到CRM sellpaygoods
+    -- If l_y = 'Y' Then
+    Begin
+      Insert Into Sellpaygoods_Crm
+        (Spgbillno,
+         Spgrowno,
+         Spgpmcode,
+         Spgpayerid,
+         Spgpmtype,
+         Spgmoney,
+         Spgerate,
+         Spggdrow,
+         Spggdid,
+         Spggdcjje,
+         Spggdmoney,
+         Spgno,
+         Spgispop,
+         Spgsysy,
+         Spgpmisjf)
+        Select Rcrmbillno,
+               Spgrowno,
+               Spgpmcode,
+               Spgpayerid,
+               Spgpmtype,
+               Spgmoney,
+               Spgerate,
+               Spggdrow,
+               Spggdid,
+               Spggdcjje,
+               Spggdmoney,
+               Spgno,
+               Spgispop,
+               Spgsysy,
+               Spgpmisjf
+          From Htthsellpaygoods
+         Where Spgbillno = l_Billno;
+    Exception
+      When No_Data_Found Then
+        Null;
+      When Others Then
+        Raise;
+    End;
+    Begin
+      Insert Into Sellpaygoods
+        (Spgbillno,
+         Spgrowno,
+         Spgpmcode,
+         Spgpayerid,
+         Spgpmtype,
+         Spgmoney,
+         Spgerate,
+         Spggdrow,
+         Spggdid,
+         Spggdcjje,
+         Spggdmoney,
+         Spgno,
+         Spgispop,
+         Spgsysy,
+         Spgsrc,
+         Spgxykcharge)
+        Select Shposbillno,
+               Spgrowno,
+               Spgpmcode,
+               Spgpayerid,
+               Spgpmtype,
+               Spgmoney,
+               Spgerate,
+               Spggdrow,
+               Spggdid,
+               Spggdcjje,
+               Spggdmoney,
+               Spgno,
+               Spgispop,
+               Spgsysy,
+               'H',
+               0
+          From Htthsellpaygoods, Htthsellhead
+         Where Spgbillno = l_Billno
+           And Spgbillno = Shbillno;
+    Exception
+      When No_Data_Found Then
+        Null;
+      When Others Then
+        Raise;
+    End;
+    --扣回手工券信息
+    If Nvl(Row_h.Shcustno, '#') = '#' Then
+      --Select * Into row_h_crm From SELLHEAD_CRM Where shbillno = rcrmbillno;
+      l_Crmmkt := Fgetcrmmkt(Currentmu, Currentmkt);
+      For Vr In (Select Substr(Sppayerid, 1, 1) Qtype, t.*
+                   From Htthsellpayment t
+                  Where Spbillno = l_Billno
+                    And Sppmcode Like 'KQ%'
+                    And f_Isdzq(Sppayerid) = 'Y'
+                    And Sprowno < 0
+                    And Spqje > 0
+                    And Spstr1 = 'N') Loop
+        Select *
+          Into Row_Tcft
+          From Tktcardfqtotal
+         Where Tcftvipno = Vr.Spno
+           And Tcftqtype = Vr.Qtype
+           And Tcfttype = '2';
+        --
+        Update Tktcardfqtotal
+           Set Tcftfqje = 0, Tcftstatus = 'N'
+         Where Tcftvipno = Vr.Spno
+           And Tcfttype = '2'; --手工券
+        Select Seq_Tktcardfqlog.Nextval Into l_Tcflseq From Dual;
+        --
+        Insert Into Tktcardfqlog
+          (Tcflseqno,
+           Tcflvipseq,
+           Tcflvipno,
+           Tcflstartdate,
+           Tcflenddate,
+           Tcflzy,
+           Tcflpopid,
+           Tcflpoprule,
+           Tcfldate,
+           Tcflmoney,
+           Tcflye,
+           Tcfloper,
+           Tcflmemo,
+           Tcflsyjid,
+           Tcflinvno,
+           Tcflsyjtrace,
+           Tcfljetype,
+           Tcflmkt,
+           Tcfljygs,
+           Tcflsource,
+           Tcfltype)
+        Values
+          (l_Tcflseq,
+           Row_Tcft.Tcftseqno,
+           Row_Tcft.Tcftvipno,
+           Row_Tcft.Tcftstartdate,
+           Row_Tcft.Tcftenddate,
+           'K',
+           Row_Tcft.Tcftfstpid,
+           Row_Tcft.Tcftfqrule,
+           Sysdate,
+           -row_Tcft.Tcftfqje,
+           0,
+           p_Person,
+           '手工券扣回',
+           --row_h_crm.shsyjid,
+           --row_h_crm.shinvno,
+           Row_h.Shsyjid,
+           Row_h.Shinvno + 0.1,
+           Rcrmbillno,
+           Row_Tcft.Tcftqtype,
+           l_Crmmkt,
+           Currentmu,
+           Row_Tcft.Tcftsource,
+           Row_Tcft.Tcfttype);
+        Insert Into Dbusrpop.Tktcardfqlog@Gpp
+          (Tcflseqno,
+           Tcflvipseq,
+           Tcflvipno,
+           Tcflstartdate,
+           Tcflenddate,
+           Tcflzy,
+           Tcflpopid,
+           Tcflpoprule,
+           Tcfldate,
+           Tcflmoney,
+           Tcflye,
+           Tcfloper,
+           Tcflmemo,
+           Tcflsyjid,
+           Tcflinvno,
+           Tcflsyjtrace,
+           Tcfljetype,
+           Tcflmkt,
+           Tcfljygs,
+           Tcflsource,
+           Tcfltype)
+        Values
+          (l_Tcflseq,
+           Row_Tcft.Tcftseqno,
+           Row_Tcft.Tcftvipno,
+           Row_Tcft.Tcftstartdate,
+           Row_Tcft.Tcftenddate,
+           'K',
+           Row_Tcft.Tcftfstpid,
+           Row_Tcft.Tcftfqrule,
+           Sysdate,
+           -row_Tcft.Tcftfqje,
+           0,
+           p_Person,
+           '手工券扣回',
+           --row_h_crm.shsyjid,
+           --row_h_crm.shinvno,
+           Row_h.Shsyjid,
+           Row_h.Shinvno + 0.1,
+           Rcrmbillno,
+           Row_Tcft.Tcftqtype,
+           l_Crmmkt,
+           Currentmu,
+           Row_Tcft.Tcftsource,
+           Row_Tcft.Tcfttype);
+      End Loop;
+    End If;
+    /*增加满赠多门店后，原满赠礼品数据没有记录门店号，退货时记录,by zhouwd 2011-4-18*/
+    Update Mzgiftselldetailhtth
+       Set Msdmu = Currentmu, Msdmarket = Currentmkt
+     Where Msdhtthno = l_Billno;
+    /*更新赠礼数据到CRM*/
+    Insert Into Crm_Mzgiftselldetailhtth
+      (Msdtransno,
+       Msdflrule,
+       Msdpid,
+       Msdcjje,
+       Msdskje,
+       Msdyxje,
+       Msdflflag1,
+       Msdflflag2,
+       Msdrrow,
+       Msdrcode,
+       Msdtext,
+       Msdnum1,
+       Msdnum2,
+       Msdnum3,
+       Msdcbillno,
+       Msdnum5,
+       Msdnum6,
+       Msdstr1,
+       Msdsyjid,
+       Msdinvno,
+       Msdmarket,
+       Msdmu,
+       Msdoper,
+       Msddate,
+       Msdhtthno,
+       Msdcrmno,
+       Msdybxje,
+       Msdysyjid,
+       Msdyinvno,
+       Msdstatus)
+      Select Msdtransno,
+             Msdflrule,
+             Msdpid,
+             Msdcjje,
+             Msdskje,
+             Msdyxje,
+             Msdflflag1,
+             Msdflflag2,
+             Msdrrow,
+             Msdrcode,
+             Msdtext,
+             Msdnum1,
+             Msdnum2,
+             Msdnum3,
+             Msdcbillno,
+             Msdhtthno,
+             Msdnum6,
+             Msdstr1,
+             Msdsyjid,
+             Msdinvno,
+             Msdmarket,
+             Msdmu,
+             p_Person,
+             Sysdate,
+             Msdhtthno,
+             Rcrmbillno,
+             Msdybxje,
+             Msdysyjid,
+             Msdyinvno,
+             Msdstatus
+        From Mzgiftselldetailhtth
+       Where Msdhtthno = l_Billno;
+    --IF NVL(row_h.shcustno, '#') = '#' THEN
+    --
+    --实扣同步crm sellheadth
+    /*Begin
+      Select * Into r_Ch From Htthcheck Where Htthno = Row_h.Shbillno;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, '没有检查扣回,请检查!');
+    End;*/
+    Select Max(Shbillno)
+      Into l_Billno
+      From Sellheadth_Crm
+     Where Shnum2 = r_Ch.Htthno;
+    Select Sum(Spmoney * Sperate * Nvl(Spnum1, 1))
+      Into l_Totje
+      From Htthsellpayment
+     Where Spbillno = Row_h.Shbillno
+       And Sprowno < 0
+       And (Exists (Select * From Pospaymode Where Sppmcode = Ppmcode) Or
+            Sppmcode Like 'KQ%');
+    Update Sellheadth_Crm
+       Set Act_Kh     = r_Ch.Act_Kh,
+           Act_Qkh    = r_Ch.Act_Qkh,
+           Giftkh     = r_Ch.Giftkh,
+           Act_Jifthk = r_Ch.Act_Jifthk,
+           Shcdmno    = r_Ch.Cdmno,
+           Shdate     = Sysdate,
+           Act_Totje  = l_Totje
+     Where Shbillno = l_Billno;
+    --End If;
+    --UPATE 后台退货小票状态
+    Update Htthsellhead
+       Set Shstatus    = 'Y',
+           Auditor     = p_Person,
+           Auditdate   = Sysdate,
+           Shcrmbillno = Rcrmbillno
+     Where Shbillno = To_Number(p_Billno);
+    /*--删除远程小票
+
+    Delete From sellhead_crm Where shbillno = rcrmbillno;*/
+
+    --2013-07-10 add by feiht  处理退货礼品库存
+    Begin
+      Select Dbusrpop.Seq_Popms.Nextval Into l_Transno From Dual;
+      For Vr In (Select *
+                   From Mzgiftselldetailhtth
+                  Where Msdhtthno = p_Billno
+                    And Msdstr1 = '2') Loop
+        Dbusrpop.sp_saleposmz.Uptzmkc(l_Transno,
+                                   Vr.Msdrcode,
+                                   Vr.Msdnum6,
+                                   vr.msdmarket,
+                                   'E',
+                                   'D',
+                                   l_Ret,
+                                   l_Retmsg);
+      End Loop;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, l_Ret || '-->' || l_Retmsg);
+    End;
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  --后台退货小票审核
+  Procedure Approve(p_Billno In Varchar2,
+                    p_Person In Varchar2,
+                    p_Billid In Varchar2,
+                    p_Djlb   In Varchar2) Is
+  Begin
+    Bapprove(p_Billno, p_Person, p_Billid, p_Djlb);
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+
+  -- 返券取消
+  Procedure Cancel(p_Billno In Number, p_Person In Varchar2) Is
+    Row_h     Htthsellhead%Rowtype;
+    l_Retcode Number;
+    l_Retmsg  Varchar2(255);
+    l_Transno Varchar2(50);
+  Begin
+    Select * Into Row_h From Htthsellhead Where Shbillno = p_Billno;
+    If Row_h.Shstatus = 'N' Then
+      Raise_Application_Error(Errcode, p_Billno || '->CHK01 该小票未审核!');
+    End If;
+    If Row_h.Shstatus = 'Q' Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->CHK01 该小票已经取消!');
+    End If;
+    If Row_h.Shisth = 'Y' Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->CHK01 该小票POS已处理!');
+    End If;
+    --不指定小票退货，不用调用会员和券的处理
+
+    /*
+    Custinterface.Htthcancel(Row_h.Shcrmbillno,
+                             l_Retcode,
+                             l_Retmsg);
+    If l_Retcode = 0 Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->1.积分锁定取消失败,' ||
+                              l_Retmsg);
+    End If;
+    */
+    /*Dbusrpop.Gpphtth.Htthcancel(p_Billno, p_Person, l_Retcode, l_Retmsg);
+    If l_Retcode = 0 Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->2.取消失败,' || l_Retmsg);
+    End If;*/
+    /* Dbusrpop.Htthcancel.Cancel(Row_h.shposbillno , p_Person, l_Retcode, l_Retmsg);
+    If l_Retcode = 1 Then
+      Raise_Application_Error(Errcode,
+                              To_Char(p_Billno) || '->取消失败,' || l_Retmsg);
+    End If;*/
+    --
+    Update Htthsellhead
+       Set Shstatus = 'Q', Qxr = p_Person, Qxdate = Sysdate
+     Where Shbillno = p_Billno;
+    Delete From Sellhead_Crm Where Shbillno = Row_h.Shcrmbillno;
+    delete from sellheadth_crm Where Shnum2 = p_Billno;
+/*    Update Sellheadth_Crm Set Shstatus = 'Q' Where Shnum2 = p_Billno;*/
+
+    --2013-07-10 add by feiht  处理退货礼品库存
+    Begin
+      Select Dbusrpop.Seq_Popms.Nextval Into l_Transno From Dual;
+      For Vr In (Select *
+                   From Mzgiftselldetailhtth
+                  Where Msdhtthno = p_Billno
+                    And Msdstr1 = '2') Loop
+        Dbusrpop.sp_Saleposmz.Uptzmkc(l_Transno,
+                                   Vr.Msdrcode,
+                                   Vr.Msdnum6,
+                                   vr.msdmarket,
+                                   'E',
+                                   'A',
+                                   l_Retcode,
+                                   l_Retmsg);
+      End Loop;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, l_Retcode || '-->' || l_Retmsg);
+    End;
+    Commit;
+  End;
+
+  -- 取消当日 已审核/未处理 的单据
+  Procedure Daycancel(p_Date In Date) Is
+  Begin
+    For Vr In (Select Shbillno
+                 From Htthsellhead
+                Where Shstatus = 'Y'
+                  And Shisth = 'N'
+                  And Shdate >= p_Date
+                  And Shdate < p_Date + 1) Loop
+      Begin
+        Cancel(Vr.Shbillno, 'system');
+      Exception
+        When Others Then
+          Sp_Opererrors('后台退货取消', Sqlcode, Sqlerrm);
+      End;
+    End Loop;
+    Commit;
+  Exception
+    When Others Then
+      Null;
+  End;
+
+End Htth;
+

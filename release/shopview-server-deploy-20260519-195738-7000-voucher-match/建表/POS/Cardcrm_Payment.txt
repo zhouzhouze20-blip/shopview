@@ -1,0 +1,630 @@
+CREATE OR REPLACE Package Body Cardcrm_Payment Is
+
+  Currentdate Date;
+  Currentmkt  Varchar2(20);
+  Currentmu   Varchar2(20);
+
+  --付款明细中如果有多个付款方式可以找零，判断应该记录到哪个付款方式上
+  Function f_CanZL(p_BillNo In Number, p_RowNo In Number) Return Char Is
+    l_MaxRow Number;
+  Begin
+    Select Max(SpRowNo)
+      Into l_MaxRow
+      From SellPayment, PayMode
+     Where SpBillNo = p_BillNo
+       ANd Sppmcode = Pmcode
+       ANd PmIsZl = 'Y';
+    If l_MaxRow = p_RowNo Then
+      Return 'Y';
+    ELse
+      Return 'N';
+    ENd If;
+  Exception
+    WHen Others Then
+      Return 'N';
+  End;
+
+  Procedure Split(p_Billno In Number, p_Isdebug In Char Default 'N') Is
+
+    Row_Head Sellhead%Rowtype;
+    Vybillno Number;
+    Cursor Cur_Pay Is
+      Select Sellpay.*, Paymode.*, f_CanZL(SpBillNo, SpRowNo) CanZL
+      --,
+      --Max(Sprowno) Over(Partition By p_Billno order by Sprowno) Maxrowno,
+      --Sum((Spmoney - Nvl(Sppayyy, 0)) * Sperate) Over(Partition By p_Billno/* Order by SpRowno*/) Allvalidpay
+        From (Select Spbillno,
+                     Sprowno,
+                     Spdate,
+                     Spmarket,
+                     Sppmcode,
+                     Spmoney,
+                     Sperate,
+                     Sprmbje,
+                     Spno,
+                     Sppayerid,
+                     Sppayyy,
+                     Spispop
+                From Sellpayment
+               Where Spbillno = p_Billno
+                 And (Sppmcode Not In ('0601', '0602') or
+                     Row_Head.Shdjlb NOT in ('M', 'N'))
+              Union
+              Select p_Billno,
+                     Sprowno + 90,
+                     Spdate,
+                     Spmarket,
+                     Sppmcode,
+                     Spmoney,
+                     Sperate,
+                     Sprmbje,
+                     Spno,
+                     Sppayerid,
+                     Sppayyy,
+                     Spispop
+                From Sellpayment
+               Where Spbillno = Vybillno
+                 And (Sppmcode Not In ('0601', '0602') or
+                     Row_Head.Shdjlb NOT in ('M', 'N'))) Sellpay,
+             Paymode
+       Where Spbillno = p_Billno
+         And Sppmcode = Pmcode
+         And Sprowno > 0
+      --Order By Sprowno;
+       Order By SpMoney Asc;
+    Cursor Cur_Det Is
+      Select Sdrowno,
+             Sdgdid,
+             Sdmfid,
+             Sdcjje,
+             Sdmoney - Nvl(Money, 0) Je,
+             Max(Sdrowno) Over(Partition By p_Billno) Maxrow,
+             Sum(Sdmoney - Nvl(Money, 0)) Over(Partition By p_Billno) Totcjje
+        From (Select Sdrowno,
+                     decode(sdgdtype, '8', -1, 1) * Sdcjje Sdcjje,
+                     Sdgdid,
+                     Sdmfid,
+                     decode(sdgdtype, '8', -1, 1) * Sdcjje Sdmoney
+                From Selldetail
+               Where Sdbillno = p_Billno) a,
+             (Select Spggdrow, Spggdcjje, Spggdid, Sum(Spggdmoney) Money
+                From Sellpaygoods
+               Where Spgbillno = p_Billno
+               Group By Spggdrow, Spggdcjje, Spggdid) b
+       Where a.Sdrowno = b.Spggdrow(+)
+         And Sdmoney - Nvl(Money, 0) <> 0
+       Order By Sdrowno;
+    Cursor Cur_Paygoods(Ai_Payrow In Number) Is
+      Select Sellpaygoods.*,
+             Spgrowno * Spggdrow Currentrow,
+             Max(Spgrowno * Spggdrow) Over(Partition By p_Billno) Maxrow,
+             Sum(Spggdmoney) Over(Partition By p_Billno) Totmoney
+        From Sellpaygoods
+       Where Spgbillno = p_Billno
+         And (Spgrowno = Ai_Payrow Or Ai_Payrow = 0)
+       Order By Currentrow;
+    Cursor Cur_Detail Is
+      Select Sdrowno,
+             Sdgdid,
+             Sdmfid,
+             decode(sdgdtype, '8', -1, 1) * Sdcjje Sdcjje,
+             decode(sdgdtype, '8', -1, 1) * Sdcjje Je,
+             Max(Sdrowno) Over(Partition By p_Billno) Maxrow,
+             Sum(decode(sdgdtype, '8', -1, 1) * Sdcjje) Over(Partition By p_Billno) Totcjje
+        From Selldetail
+       Where Sdbillno = p_Billno
+       Order By Sdrowno;
+    Row_Pay      Cur_Pay%Rowtype;
+    Row_Det      Cur_Det%Rowtype;
+    Row_Paygoods Cur_Paygoods%Rowtype;
+    Row_Detail   Cur_Detail%Rowtype;
+    b_Ybillno    Number;
+    l_Rate       Number;
+    l_Curpay     Number;
+    l_Curyy      Number;
+    l_Detpay     Number;
+    l_Detyy      Number;
+    l_Totpay     Number;
+    l_Totyy      Number;
+    l_Leavepay   Number;
+    l_Leaveyy    Number;
+    l_Count      Number;
+
+    l_Pgtotyy Number;
+    l_Pgsqyy  Number;
+
+    l_Cjje     Number;
+    l_Sysy     Number;
+    Vysyjid    Varchar2(20);
+    Vyinvno    Number;
+    l_totcuryy Number;
+    l_revrate  Number;
+    l_qrevrate number;
+    l_ftjesupzkfd number;
+    l_qftjesupzkfd number;
+  Begin
+    Begin
+      Select * Into Row_Head From Sellhead Where Shbillno = p_Billno;
+    Exception
+      When Others Then
+        Errhandle.Errlog();
+        Raise_Application_Error(-20000, '没有查到小票[' || p_Billno || ']');
+    End;
+    If Row_Head.Shdjlb Like 'C%' Then
+      Return;
+    End If;
+    -- 生成MKT 的本地表
+    If Row_Head.Shdjlb In ('M', 'N') Then
+      Select Sdysyjid, Sdyinvno
+        Into Vysyjid, Vyinvno
+        From Selldetail
+       Where Sdbillno = p_Billno
+         And Rownum = 1;
+      Select Shbillno
+        Into Vybillno
+        From Sellhead
+       Where Shsyjid = Vysyjid
+         And Shinvno = Vyinvno
+         And Shmarket = Row_Head.Shmarket;
+      If Row_Head.Shdjlb = 'N' Then
+        Select Sdysyjid, Sdyinvno
+          Into Vysyjid, Vyinvno
+          From Selldetail
+         Where Sdbillno = Vybillno;
+        Select Shbillno
+          Into Vybillno
+          From Sellhead
+         Where Shsyjid = Vysyjid
+           And Shinvno = Vyinvno
+           And Shmarket = Row_Head.Shmarket;
+      End If;
+    End If;
+    Select Sum(Nvl(Spggdmoney, 0)),
+           Sum(Nvl(Spgsqyy, 0) + Nvl(Spgsysy, 0)),
+           Sum(Nvl(Spgsysy, 0))
+      Into l_Totpay, l_Totyy, l_Sysy
+      From Sellpaygoods
+     Where Spgbillno = p_Billno;
+    If l_Totpay - l_Sysy = Row_Head.Shoughtpay And
+       l_Totyy = Row_Head.Shsysy Then
+      --记录不计收入付款方式分摊金额到 spbjslmoney列
+      for cur in (select rowid, spgpmcode, spgpayerid
+                    from sellpaygoods
+                   where spgbillno = p_billno) loop
+      begin
+        select tqrevrate,TQSUPZKFD into l_qrevrate,l_qftjesupzkfd from dbusrpop.tktqtype@gpp where tqcode=substr(cur.spgpayerid,1,1);
+        update sellpaygoods set spbjslmoney=spggdmoney*l_qrevrate,spbjslftjesupzkfd=l_qftjesupzkfd where rowid=cur.rowid;
+      Exception
+			  When Others Then
+          select pmrevrate,PMSUPZKFD into l_revrate,l_ftjesupzkfd from paymode where pmcode=cur.spgpmcode;
+          update sellpaygoods set spbjslmoney=spggdmoney*l_revrate,spbjslftjesupzkfd=l_ftjesupzkfd where rowid=cur.rowid;
+      end;
+      end loop;
+      Return;
+    End If;
+    --20101107 zhangsy
+    SELECT nvl(SUM(sppayyy), 0)
+      INTO l_totcuryy
+      FROM sellpayment
+     WHERE spbillno = p_billno
+       AND EXISTS (SELECT 1
+              FROM sellpaygoods
+             WHERE spgbillno = spbillno
+               AND spgrowno = sprowno);
+    --
+    l_Totpay := 0;
+    l_Totyy  := 0;
+
+    Open Cur_Pay;
+    Loop
+      Fetch Cur_Pay
+        Into Row_Pay;
+      Exit When Cur_Pay%Notfound Or Cur_Pay%Notfound Is Null;
+
+      Row_Pay.Sppayyy := Nvl(Row_Pay.Sppayyy, 0);
+      Row_Pay.Spmoney := Round(Row_Pay.Spmoney, 2);
+
+      Select Count(*)
+        Into l_Count
+        From Sellpaygoods
+       Where Spgbillno = p_Billno
+         And Spgrowno = Row_Pay.Sprowno;
+      If l_Count > 0 Then
+        --If Row_Pay.Sppayyy > 0 Then
+        l_Pgtotyy := Row_Pay.Sppayyy;
+        Open Cur_Paygoods(Row_Pay.Sprowno);
+        Loop
+          Fetch Cur_Paygoods
+            Into Row_Paygoods;
+          Exit When Cur_Paygoods%Notfound Or Cur_Paygoods%Notfound Is Null;
+
+          If Row_Pay.Sppayyy <> 0 Then
+            If Row_Paygoods.Currentrow <> Row_Paygoods.Maxrow Then
+              l_Pgsqyy := Round(Row_Paygoods.Spggdmoney * Row_Pay.Sppayyy /
+                                Row_Paygoods.Totmoney,
+                                2);
+            Else
+              l_Pgsqyy := l_Pgtotyy;
+            End If;
+
+            If l_Pgsqyy <> 0 Then
+              Update Sellpaygoods
+                 Set Spgsqyy = l_Pgsqyy
+               Where Spgbillno = p_Billno
+                 And Spgrowno = Row_Paygoods.Spgrowno
+                 And Spggdrow = Row_Paygoods.Spggdrow;
+              l_Pgtotyy := l_Pgtotyy - l_Pgsqyy;
+              l_Totyy   := l_Totyy + l_Pgsqyy;
+            End If;
+
+          End If;
+          -- 如果付款有收银损益
+          If Row_Paygoods.Totmoney <>
+             Row_Pay.Spmoney * Row_Pay.Sperate - Row_Pay.Sppayyy Then
+            If Row_Paygoods.Currentrow = 1 Then
+              l_Leaveyy := Row_Pay.Spmoney * Row_Pay.Sperate -
+                           Row_Pay.Sppayyy - Row_Paygoods.Totmoney;
+            End If;
+
+            If Row_Paygoods.Currentrow <> Row_Paygoods.Maxrow Then
+              l_Sysy := Round(Row_Paygoods.Spggdmoney *
+                              (Row_Pay.Spmoney * Row_Pay.Sperate -
+                              Row_Pay.Sppayyy - Row_Paygoods.Totmoney) /
+                              Row_Paygoods.Totmoney,
+                              2);
+            Else
+              l_Sysy := l_Leaveyy;
+            End If;
+
+            If l_Sysy <> 0 Then
+              Update Sellpaygoods
+                 Set Spggdmoney = Spggdmoney + l_Sysy,
+                     Spgsysy    = Spgsysy + l_Sysy
+               Where Spgbillno = p_Billno
+                 And Spgrowno = Row_Paygoods.Spgrowno
+                 And Spggdrow = Row_Paygoods.Spggdrow;
+              l_Leaveyy := l_Leaveyy - l_Sysy;
+              l_Totyy   := l_Totyy + l_Sysy;
+            End If;
+          End If;
+          --End If;
+        End Loop;
+        Close Cur_Paygoods;
+
+        --Else
+        --   Null;
+        --End If;
+      Else
+        /*l_CurPay := (Row_Pay.Spmoney - Row_Pay.Sppayyy) * Row_Pay.Sperate;
+        l_CurYy  := Row_Pay.Sppayyy * Row_Pay.Sperate;*/
+        -- 根据李文进的说法，PayYY 是折算后的RMB金额
+        l_Curpay := Round(Row_Pay.Spmoney * Row_Pay.Sperate, 2) -
+                    Row_Pay.Sppayyy;
+        l_Curyy  := Row_Pay.Sppayyy;
+
+        /*l_Rate := Round(l_CurPay / (Row_Pay.AllValidPay - Row_Head.ShgChange - l_TotPay), 4);
+        If 1 - l_Rate <= 0.001 Then
+           l_Rate := 1;
+        End If;*/
+
+        --If Row_Pay.Pmiszl = 'Y' Then
+        If Row_Pay.CanZL = 'Y' Then
+          l_Curpay           := l_Curpay - Row_Head.Shgchange;
+          Row_Head.Shgchange := 0;
+        End If;
+        --20101107 zhangsy
+        /*    If row_pay.pmisyy = 'Y' AND fgetinvsign(row_head.shdjlb) = 1 Then
+          l_curpay := l_curpay - (row_head.shsysy -  l_totcuryy);
+          l_curyy := row_head.shsysy - l_totcuryy;
+        End If;*/
+        --20101107
+        l_Leavepay := l_Curpay;
+        l_Leaveyy  := l_Curyy;
+
+        If l_Curpay <> 0 Or l_Curyy <> 0 Then
+          Open Cur_Det;
+          Loop
+            Fetch Cur_Det
+              Into Row_Det;
+            Exit When Cur_Det%Notfound Or Cur_Det%Notfound Is Null;
+
+            l_Rate := Row_Det.Je / Row_Det.Totcjje;
+
+            If Row_Det.Sdrowno <> Row_Det.Maxrow Then
+              l_Detpay := Round(l_Curpay * l_Rate, 2);
+              l_Detyy  := Round(l_Curyy * l_Rate, 2);
+            Else
+              --l_Detpay := Least(l_Leavepay, Row_Det.Je);
+              If Row_Det.Je < 0 Then
+                l_Detpay := Greatest(l_Leavepay, Row_Det.Je);
+              Else
+                l_Detpay := Least(l_Leavepay, Row_Det.Je);
+              End If;
+              l_Detyy := l_Leaveyy + (l_Leavepay - l_Detpay);
+              l_Curyy := l_Curyy + (l_Leavepay - l_Detpay);
+            End If;
+            If Row_Pay.Pmisyy = 'Y' And Row_Pay.Pmtype = '5' Then
+              Insert Into Sellpaygoods
+              Values
+                (p_Billno,
+                 Row_Pay.Sprowno,
+                 Row_Pay.Sppmcode,
+                 Row_Pay.Sppayerid,
+                 Row_Pay.Pmtype,
+                 Row_Pay.Spmoney,
+                 Row_Pay.Sperate,
+                 Row_Det.Sdrowno,
+                 Row_Det.Sdgdid,
+                 Row_Det.Sdmfid,
+                 Row_Det.Sdcjje,
+                 l_Detpay,
+                 Row_Pay.Spno,
+                 0,
+                 l_Detyy,
+                 Null,
+                 'A',
+                 0,
+                 0,0,
+                 decode( Row_Pay.Pmtype,4, dbusrposnew.fgetcardtype(Row_Pay.Spno) ,null) );
+            Else
+              Insert Into Sellpaygoods
+              Values
+                (p_Billno,
+                 Row_Pay.Sprowno,
+                 Row_Pay.Sppmcode,
+                 Row_Pay.Sppayerid,
+                 Row_Pay.Pmtype,
+                 Row_Pay.Spmoney,
+                 Row_Pay.Sperate,
+                 Row_Det.Sdrowno,
+                 Row_Det.Sdgdid,
+                 Row_Det.Sdmfid,
+                 Row_Det.Sdcjje,
+                 l_Detpay + l_Detyy,
+                 Row_Pay.Spno,
+                 l_Detyy,
+                 0,
+                 Null,
+                 'A',
+                 0,
+                 0,0,
+                 decode( Row_Pay.Pmtype,4, dbusrposnew.fgetcardtype(Row_Pay.Spno) ,null) );
+            End If;
+            l_Leavepay := l_Leavepay - l_Detpay;
+            l_Leaveyy  := l_Leaveyy - l_Detyy;
+          End Loop;
+          Close Cur_Det;
+
+          -- 如果未分摊完
+          If l_Leavepay = l_Curpay And l_Leaveyy = l_Curyy Then
+            Open Cur_Detail;
+            Loop
+              Fetch Cur_Detail
+                Into Row_Detail;
+              Exit When Cur_Detail%Notfound Or Cur_Detail%Notfound Is Null;
+
+              l_Rate := Row_Detail.Je / Row_Detail.Totcjje;
+
+              If Row_Detail.Sdrowno <> Row_Detail.Maxrow Then
+                l_Detpay := Round(l_Curpay * l_Rate, 2);
+                l_Detyy  := Round(l_Curyy * l_Rate, 2);
+              Else
+                l_Detpay := l_Leavepay;
+                l_Detyy  := l_Leaveyy;
+              End If;
+              Insert Into Sellpaygoods
+              Values
+                (p_Billno,
+                 Row_Pay.Sprowno,
+                 Row_Pay.Sppmcode,
+                 Row_Pay.Sppayerid,
+                 Row_Pay.Pmtype,
+                 Row_Pay.Spmoney,
+                 Row_Pay.Sperate,
+                 Row_Detail.Sdrowno,
+                 Row_Detail.Sdgdid,
+                 Row_Detail.Sdmfid,
+                 Row_Detail.Sdcjje,
+                 l_Detpay,
+                 Row_Pay.Spno,
+                 0,
+                 l_Detyy,
+                 Null,
+                 'A',
+                 0,
+                 0,0,
+                decode( Row_Pay.Pmtype,4, dbusrposnew.fgetcardtype(Row_Pay.Spno) ,null) );
+              l_Leavepay := l_Leavepay - l_Detpay;
+              l_Leaveyy  := l_Leaveyy - l_Detyy;
+            End Loop;
+            Close Cur_Detail;
+          End If;
+
+          l_Totpay := l_Totpay + l_Curpay;
+          l_Totyy  := l_Totyy + l_Curyy;
+        End If;
+      End If;
+    End Loop;
+    Close Cur_Pay;
+
+    If l_Totyy <> Row_Head.Shsysy Then
+      l_Leaveyy := Row_Head.Shsysy - l_Totyy;
+      Open Cur_Paygoods(0);
+      Loop
+        Fetch Cur_Paygoods
+          Into Row_Paygoods;
+        Exit When Cur_Paygoods%Notfound Or Cur_Paygoods%Notfound Is Null;
+
+        If Row_Paygoods.Currentrow <> Row_Paygoods.Maxrow Then
+          l_Sysy := Round(Row_Paygoods.Spggdmoney *
+                          (Row_Head.Shsysy - l_Totyy) /
+                          Row_Paygoods.Totmoney,
+                          2);
+        Else
+          l_Sysy := l_Leaveyy;
+        End If;
+
+        If l_Sysy <> 0 Then
+          Update Sellpaygoods
+             Set Spgsysy = nvl(spgsysy, 0) + l_Sysy
+           Where Spgbillno = p_Billno
+             And Spgrowno = Row_Paygoods.Spgrowno
+             And Spggdrow = Row_Paygoods.Spggdrow;
+          l_Leaveyy := l_Leaveyy - l_Sysy;
+        End If;
+      End Loop;
+      Close Cur_Paygoods;
+    End If;
+
+    If p_Isdebug = 'Y' Then
+      Commit;
+    End If;
+
+    --记录付款方式折算收入后的分摊金额到 spbjslmoney列
+    for cur in (select rowid, spgpmcode, spgpayerid
+                  from sellpaygoods
+                 where spgbillno = p_billno) loop
+      begin
+        select tqrevrate,TQSUPZKFD into l_qrevrate,l_qftjesupzkfd from dbusrpop.tktqtype@gpp where tqcode=substr(cur.spgpayerid,1,1);
+        update sellpaygoods set spbjslmoney=spggdmoney*l_qrevrate,spbjslftjesupzkfd=l_qftjesupzkfd where rowid=cur.rowid;
+      Exception
+			  When Others Then
+          select pmrevrate,PMSUPZKFD into l_revrate,l_ftjesupzkfd from paymode where pmcode=cur.spgpmcode;
+          update sellpaygoods set spbjslmoney=spggdmoney*l_revrate,spbjslftjesupzkfd=l_ftjesupzkfd where rowid=cur.rowid;
+      end;
+    end loop;
+
+    Select Sum(Nvl(Spggdmoney, 0)),
+           Sum(Nvl(Spgsqyy, 0) + Nvl(Spgsysy, 0)),
+           Sum(Nvl(Spgsysy, 0))
+      Into l_Totpay, l_Totyy, l_Sysy
+      From Sellpaygoods
+     Where Spgbillno = p_Billno;
+    If l_Totpay - l_Sysy <> Row_Head.Shoughtpay Or
+       l_Totyy <> Row_Head.Shsysy Then
+      Raise_Application_Error(-20202,
+                              p_Billno || '销售付款分摊不正确,请检查!');
+    End If;
+  Exception
+    When Others Then
+      Errhandle.Errlog();
+      --Rollback;
+      Raise;
+  End Split;
+
+  Function f_Isdzqpay(p_Paytype In Char, p_Payerid In Varchar2) Return Char Is
+  Begin
+    If p_Paytype = '5' Then
+      If Substr(p_Payerid, 1, 1) Between 'A' And 'Z' Then
+        Return 'Y';
+      Else
+        Return 'N';
+      End If;
+    Else
+      Return 'N';
+    End If;
+  End f_Isdzqpay;
+
+  Procedure Getpayfd(p_Billno  In Number,
+                     p_Rowno   In Number,
+                     o_Payment Out Saleproc.Tpayment) Is
+  Begin
+    -- 付款和收券
+    Select Nvl(Round(Sum(Decode(Pmtype, '1', Spggdmoney)), 2), 0), /*现金*/
+           Nvl(Round(Sum(Decode(Pmtype, '2', Spggdmoney)), 2), 0), /*支票*/
+           Nvl(Round(Sum(Decode(Pmtype, '3', Spggdmoney)), 2), 0), /*信用卡*/
+           Nvl(Round(Sum(Decode(Pmtype, '4', Spggdmoney)), 2), 0), /*储值卡*/
+           Nvl(Round(Sum(Decode(Pmtype, '5', Spggdmoney + Spgsqyy)), 2), 0), /*礼券  */
+           Nvl(Round(Sum(Decode(Pmtype, '6', Spggdmoney)), 2), 0), /*赊帐  */
+           Nvl(Round(Sum(Decode(Pmtype, '7', Spggdmoney)), 2), 0), /*其他*/
+           Nvl(Round(Sum(Decode(Pmtype, '4', Spggdmoney * (1 - Spgerate))),
+                     2),
+               0), /*面植卡销售折扣*/
+           Nvl(Round(Sum(Decode(Pmtype,
+                                '3',
+                                Decode(Pmiswb, 'Y', 0, Spggdmoney))),
+                     2),
+               0), /*信用卡内卡*/
+           Nvl(Round(Sum(Decode(Pmtype,
+                                '3',
+                                Decode(Pmiswb, 'Y', Spggdmoney, 0))),
+                     2),
+               0), /*信用卡外卡*/
+           Nvl(Round(Sum(Decode(f_Isdzqpay(Pmtype, Spgpayerid),
+                                'Y',
+                                Spggdmoney,
+                                0)),
+                     2),
+               0), /* 促销电子券  */
+           Nvl(Round(Sum(Spgsysy), 2), 0), /*收银损益*/
+           Nvl(Round(Sum(Spgsqyy), 2), 0), /*收券溢余*/
+           --2010/3/10所有付款方式都可以定义费率
+           Nvl(Round(Sum(Decode(Pmxyktype, '01', Spggdmoney, 0)), 2), 0), /*信用卡1 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '02', Spggdmoney, 0)), 2), 0), /*信用卡2 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '03', Spggdmoney, 0)), 2), 0), /*信用卡3 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '04', Spggdmoney, 0)), 2), 0), /*信用卡4 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '05', Spggdmoney, 0)), 2), 0), /*信用卡5 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '06', Spggdmoney, 0)), 2), 0), /*信用卡6 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '07', Spggdmoney, 0)), 2), 0), /*信用卡7 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '08', Spggdmoney, 0)), 2), 0), /*信用卡8 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '09', Spggdmoney, 0)), 2), 0), /*信用卡9 */
+           Nvl(Round(Sum(Decode(Pmxyktype, '10', Spggdmoney, 0)), 2), 0) /*信用卡10 */
+
+      Into o_Payment.Tcash,
+           o_Payment.Tcheck,
+           o_Payment.Tccard,
+           o_Payment.Tfcard,
+           o_Payment.Tgcert,
+           o_Payment.Tgzje,
+           o_Payment.Topay,
+           o_Payment.Tfcdzke,
+           o_Payment.Tccardi,
+           o_Payment.Tccardo,
+           o_Payment.Tzslq,
+           o_Payment.Tsysy,
+           o_Payment.Tsqyy,
+           o_Payment.Txyk1,
+           o_Payment.Txyk2,
+           o_Payment.Txyk3,
+           o_Payment.Txyk4,
+           o_Payment.Txyk5,
+           o_Payment.Txyk6,
+           o_Payment.Txyk7,
+           o_Payment.Txyk8,
+           o_Payment.Txyk9,
+           o_Payment.Txyk10
+      From Sellpaygoods, Paymode
+     Where Spgbillno = p_Billno
+       And Spggdrow = p_Rowno
+       And Spgpmcode = Pmcode;
+    /*积分分摊统一用SALEBATHTASK*/
+    /*    --积分 分摊单店不需要
+    Select NVL(ROUND(Sum(CJLJFA + CJLJFE), 2), 0),
+          --NVL(ROUND(Sum(CJLJFB + CJLJFC + CJLJFD + CJLJFF + CJLJFHK) + Sum(CJLJFE), 2), 0)
+          --??
+          NVL(ROUND(Sum(CJLJFB + CJLJFC + CJLJFD + CJLJFF), 2), 0)
+       Into o_PayMent.tajf,
+          o_PayMent.tbjf
+       From Crmjflog
+      Where CJLBILLNO = p_BillNo And
+          CJLRowNo = p_RowNo;*/
+
+    --返券
+    Select Nvl(Sum(Tsfaqje), 0)
+      Into o_Payment.Tfqje
+      From Tktsellfqamt
+     Where Tsfabillno = p_Billno
+       And Tsfarowno = p_Rowno;
+  Exception
+    When No_Data_Found Then
+      Raise;
+    When Others Then
+      Raise;
+  End Getpayfd;
+
+Begin
+  Currentdate := Fgeterpdate;
+  Currentmkt  := Fgetsysplace();
+  Currentmu   := Fgetprivatepara('1M');
+End Cardcrm_Payment;
+

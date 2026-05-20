@@ -1,0 +1,393 @@
+CREATE OR REPLACE Package Body Improtsaleinterface Is
+
+  Errcode Numeric(8) := -20099;
+
+  b_Shbillno Number := 0; --小票单号
+  b_Mkt      Varchar2(20) := ''; --门店号
+  b_Jygs     Varchar2(20) := ''; --经营公司
+  b_Detrowno Number := 0; --明细行号
+  b_Payrowno Number := 0; --付款行号
+  Procedure Raiseerr(Msg In Varchar2) As
+  Begin
+    Rollback;
+    Raise_Application_Error(Errcode, Msg);
+  End;
+
+  Function Getsalebillno Return Number As
+    l_Billno Number;
+  Begin
+    Select Dbusrposnew.Seq_Salehead.Nextval Into l_Billno From Dual;
+    Return l_Billno;
+  Exception
+    When Others Then
+      Return - 1;
+  End;
+
+  Procedure Checkglobparm As
+  Begin
+    If Nvl(b_Mkt, '#') = '#' Or b_Mkt = '' Then
+      Raiseerr('门店编号不能为空!');
+    End If;
+    If Nvl(b_Jygs, '#') = '#' Or b_Jygs = '' Then
+      Raiseerr('经营公司不能为空!');
+    End If;
+    If b_Shbillno = 0 Or b_Shbillno Is Null Then
+      Raiseerr('小票单号不能为空!');
+    End If;
+  End;
+
+  Procedure Initsalehead(r_h In Out Dbusrposnew.Salehead%Rowtype) As
+  Begin
+    r_h.Billno    := b_Shbillno;
+    r_h.Mkt       := b_Mkt;
+    r_h.Syjh      := '';
+    r_h.Fphm      := b_Shbillno;
+    r_h.Djlb      := '';
+    r_h.Bc        := '2';
+    r_h.Rqsj      := Null;
+    r_h.Syyh      := '';
+    r_h.Hykh      := '';
+    r_h.Jfkh      := '';
+    r_h.Thsq      := '';
+    r_h.Ghsq      := '';
+    r_h.Hysq      := '';
+    r_h.Sqkh      := '';
+    r_h.Sqktype   := '1';
+    r_h.Sqkzkfd   := 0;
+    r_h.Ysje      := 0;
+    r_h.Sjfk      := 0;
+    r_h.Zl        := 0;
+    r_h.Sswr_Sysy := 0;
+    r_h.Fk_Sysy   := 0;
+    r_h.Hjzje     := 0;
+    r_h.Hjzsl     := 0;
+    r_h.Hjzke     := 0;
+    r_h.Hyzke     := 0;
+    r_h.Yhzke     := 0;
+    r_h.Lszke     := 0;
+    r_h.Buyerinfo := '';
+    r_h.Jdfhdd    := '';
+    r_h.Salefphm  := '';
+    r_h.Ljjf      := 0;
+    r_h.Bcjf      := 0;
+    r_h.Memo      := '';
+    r_h.Str1      := '';
+    r_h.Str2      := '';
+    r_h.Str3      := '';
+    r_h.Str4      := '';
+    r_h.Str5      := '';
+    r_h.Num1      := 0;
+    r_h.Num2      := 0;
+    r_h.Num3      := 0;
+    r_h.Num4      := 0;
+    r_h.Num5      := 0;
+    r_h.Sendrqsj  := Null;
+    r_h.Status    := 'N';
+    r_h.Custtype  := '';
+    r_h.Hhflag    := 'N';
+    r_h.Manaunit  := b_Jygs;
+    r_h.Fqflag    := 'Y';
+    r_h.Jfflag    := '';
+    r_h.Saflag    := '2';
+    r_h.Fqje      := 0;
+    r_h.Yhzszk    := '';
+    r_h.Ybillno   := '';
+    r_h.Ysyjh     := '';
+    r_h.Yfphm     := '';
+    r_h.Crmbillno := '';
+  End;
+
+  Procedure Insertsalehead
+  (
+    v_Billno   In Varchar2, --小票单号
+    v_Mkt      In Varchar2, --门店号
+    v_Djlb     In Varchar2, --单据类型
+    v_Ysamount In Number, --应收金额
+    v_Ssamount In Number, --实收金额
+    v_Custno   In Varchar2, --会员卡号
+    v_Syy      In Varchar2, --收银员
+    v_Date     In Date, --交易日期
+    v_Syjid    In Varchar2 --收银机号
+  ) As
+    r_h Dbusrposnew.Salehead%Rowtype;
+  Begin
+    b_Mkt      := v_Mkt;
+    b_Shbillno := v_Billno;
+    If v_Ysamount < 0 Or v_Ssamount < 0 Then
+      Raiseerr('1.0->金额不能为负数,请检查!');
+    End If;
+    If v_Djlb Not In (Trans_Xs, Trans_Xshc, Trans_Th, Trans_Thhc) Then
+      Raiseerr('1.1->小票类型不正确,请检查!');
+    End If;
+    If v_Date Is Null Then
+      Raiseerr('1.2->交易日期不能为空,请检查!');
+    End If;
+    If Nvl(v_Syjid, '#') = '#' Or v_Syjid = '' Then
+      Raiseerr('1.3->收银机号不能为空,请检查!');
+    End If;
+    Checkglobparm;
+    Initsalehead(r_h);
+    r_h.Djlb    := v_Djlb;
+    r_h.Ysje    := v_Ysamount;
+    r_h.Sjfk    := v_Ssamount;
+    r_h.Fk_Sysy := v_Ssamount - v_Ysamount;
+    r_h.Rqsj    := v_Date;
+    r_h.Hykh    := v_Custno;
+    r_h.Syyh    := Nvl(v_Syy, '0000');
+    r_h.Syjh    := v_Syjid;
+    Insert Into Dbusrposnew.Salehead Values r_h;
+  End;
+
+  Procedure Initsalegoods(r_Goods In Out Dbusrposnew.Salegoods%Rowtype) As
+  Begin
+    r_Goods.Billno     := b_Shbillno;
+    r_Goods.Rowno      := b_Detrowno;
+    r_Goods.Mkt        := b_Mkt;
+    r_Goods.Yyyh       := '销售补录';
+    r_Goods.Barcode    := '';
+    r_Goods.Code       := '';
+    r_Goods.Sptype     := '';
+    r_Goods.Gz         := '';
+    r_Goods.Catid      := '';
+    r_Goods.Ppcode     := '';
+    r_Goods.Unitid     := '00';
+    r_Goods.Batch      := '';
+    r_Goods.Yhdjbh     := '';
+    r_Goods.Name       := '';
+    r_Goods.Unit       := '';
+    r_Goods.Bzhl       := 1;
+    r_Goods.Sl         := 0;
+    r_Goods.Lsj        := 0;
+    r_Goods.Jg         := 0;
+    r_Goods.Hjje       := 0;
+    r_Goods.Hjzk       := 0;
+    r_Goods.Hyzke      := 0;
+    r_Goods.Hyzkfd     := 1;
+    r_Goods.Yhzke      := 0;
+    r_Goods.Yhzkfd     := 0;
+    r_Goods.Lszke      := 0;
+    r_Goods.Lszre      := 0;
+    r_Goods.Lszzk      := 0;
+    r_Goods.Lszzr      := 0;
+    r_Goods.Lszkfd     := 1;
+    r_Goods.Plzke      := 0;
+    r_Goods.Plzkfd     := 0;
+    r_Goods.Zsdjbh     := '';
+    r_Goods.Zszke      := 0;
+    r_Goods.Zszkfd     := 0;
+    r_Goods.Sqkh       := '';
+    r_Goods.Sqktype    := '1';
+    r_Goods.Sqkzkfd    := 1;
+    r_Goods.Hyzklje    := 0;
+    r_Goods.Cjzke      := 0;
+    r_Goods.Ltzke      := 0;
+    r_Goods.Qtzke      := 0;
+    r_Goods.Qtzre      := 0;
+    r_Goods.Sswr_Sysy  := '';
+    r_Goods.Fk_Sysy    := '';
+    r_Goods.Isvipzk    := 'Y';
+    r_Goods.Xxtax      := 0;
+    r_Goods.Flag       := '4';
+    r_Goods.Yjhxcode   := '';
+    r_Goods.Ysyjh      := '';
+    r_Goods.Yfphm      := '';
+    r_Goods.Fhdd       := '';
+    r_Goods.Hydjbh     := '';
+    r_Goods.Memo       := '';
+    r_Goods.Str1       := '';
+    r_Goods.Str2       := '';
+    r_Goods.Str3       := '';
+    r_Goods.Str4       := '';
+    r_Goods.Str5       := '';
+    r_Goods.Num1       := '';
+    r_Goods.Num2       := '';
+    r_Goods.Num3       := '';
+    r_Goods.Num4       := '';
+    r_Goods.Num5       := '';
+    r_Goods.Rqsj       := Sysdate;
+    r_Goods.Str6       := '';
+    r_Goods.Str7       := '';
+    r_Goods.Str8       := '';
+    r_Goods.Str9       := '';
+    r_Goods.Str10      := '';
+    r_Goods.Num6       := '';
+    r_Goods.Num7       := '';
+    r_Goods.Num8       := '';
+    r_Goods.Num9       := '';
+    r_Goods.Num10      := '';
+    r_Goods.Sdjfbs     := 0;
+    r_Goods.Sdpopisjf  := 0;
+    r_Goods.Sdpopjfbs  := 0;
+    r_Goods.Sdmjrule   := 0;
+    r_Goods.Sdfqrule   := '';
+    r_Goods.Sdflrule   := '';
+    r_Goods.Sdsarule   := '';
+    r_Goods.Sdsazk     := '';
+    r_Goods.Sdpoprule  := '';
+    r_Goods.Sdspsx     := '';
+    r_Goods.Sdpoppayje := '';
+    r_Goods.Sgfph      := '';
+  End;
+
+  Procedure Insertsalegoods
+  (
+    v_Billno In Varchar2, --小票单号
+    v_Rowno  In Number, --小票行号
+    v_Mkt    In Varchar2, --门店号
+    v_Mfid   In Varchar2, --柜组
+    v_Gbid   In Varchar2, --商品
+    v_Num    In Number, --数量
+    v_Price  In Number, --价格
+    v_Amount In Number --金额
+  ) As
+    r_Goods       Dbusrposnew.Salegoods%Rowtype;
+    l_Mkt         Varchar2(20);
+    l_Goodsstatus Varchar2(1);
+  Begin
+    b_Mkt      := v_Mkt;
+    b_Shbillno := v_Billno;
+    b_Detrowno := v_Rowno;
+    If v_Rowno = 0 Or v_Rowno Is Null Then
+      Raiseerr('2.0->明细行号不能为空或未0,请检查');
+    End If;
+    If Nvl(v_Num, -1) < 0 Or Nvl(v_Price, -1) < 0 Or Nvl(v_Amount, -1) < 0 Then
+      Raiseerr('2.1->明细中数量,单价和金额必须为非负数,请检查');
+    End If;
+    If Abs(v_Amount - v_Num * v_Price) > 0.1 Then
+      Raiseerr('2.2->金额与单价和数量的积不匹配,请检查!');
+    End If;
+    If Nvl(v_Mfid, '#') = '#' Or v_Mfid = '' Then
+      Raiseerr('2.3->铺位编号不能为空,请检查!');
+    End If;
+    If Nvl(v_Gbid, '#') = '#' Or v_Gbid = '' Then
+      Raiseerr('2.4->商品编码不能为空,请检查!');
+    End If;
+    Checkglobparm;
+    Initsalegoods(r_Goods);
+    r_Goods.Code := v_Gbid;
+    r_Goods.Gz   := v_Mfid;
+    Begin
+      Select Mffcode Into l_Mkt From Manaframe Where Mfcode = v_Mfid;
+    Exception
+      When Others Then
+        Raiseerr('2.1->铺位[' || v_Mfid || ']在系统中未定义,请检查!');
+    End;
+    If l_Mkt <> b_Mkt Then
+      Raiseerr('2.2->铺位[' || v_Mfid || ']和门店[' || v_Mkt || ']不匹配,请检查!');
+    End If;
+    Begin
+      Select Gbtypeid, Gbcatcode, Gbppcode, Gbbarcode, Gmfstatus
+      Into   r_Goods.Sptype, r_Goods.Catid, r_Goods.Ppcode, r_Goods.Barcode,
+             l_Goodsstatus
+      From   Goodsbase, Goodsmframe
+      Where  Gbid = v_Gbid And Gbid = Gmfgdid And Gmfmfid = v_Mfid And
+             Rownum = 1;
+    Exception
+      When Others Then
+        Raiseerr('2.3->商品[' || v_Gbid || ']不存在或没有在铺位[' || v_Mfid ||
+                 ']的经营配置,请检查!');
+    End;
+    /*If l_Goodsstatus <> 'Y' Then
+      Raiseerr('商品[' || v_Gbid || ']在铺位[' || v_Mfid || ']的经营配置状态[' ||
+               l_Goodsstatus || ']不正确,请检查!');
+    End If;*/
+    r_Goods.Lsj  := v_Price;
+    r_Goods.Sl   := v_Num;
+    r_Goods.Jg   := v_Price;
+    r_Goods.Hjje := v_Amount;
+    Insert Into Dbusrposnew.Salegoods Values r_Goods;
+  End;
+
+  Procedure Initsalepay(r_Pay In Out Dbusrposnew.Salepay%Rowtype) As
+  Begin
+    r_Pay.Billno  := b_Shbillno;
+    r_Pay.Rowno   := b_Payrowno;
+    r_Pay.Paycode := '';
+    r_Pay.Payname := '';
+    r_Pay.Flag    := '1';
+    r_Pay.Ybje    := 0;
+    r_Pay.Hl      := 1;
+    r_Pay.Je      := 0;
+    r_Pay.Payno   := '';
+    r_Pay.Batch   := '';
+    r_Pay.Kye     := 0;
+    r_Pay.Idno    := '';
+    r_Pay.Memo    := '';
+    r_Pay.Str1    := '';
+    r_Pay.Str2    := '';
+    r_Pay.Str3    := '';
+    r_Pay.Str4    := '';
+    r_Pay.Str5    := '';
+    r_Pay.Num1    := 0;
+    r_Pay.Num2    := 0;
+    r_Pay.Num3    := 0;
+    r_Pay.Num4    := 0;
+    r_Pay.Num5    := 0;
+    r_Pay.Mkt     := b_Mkt;
+    r_Pay.Rqsj    := Sysdate;
+    r_Pay.Ispop   := 'N';
+  End;
+
+  Procedure Insertsalepay
+  (
+    v_Billno  In Number,
+    v_Rowno   In Number,
+    v_Mkt     In Varchar2,
+    v_Paycode In Varchar2,
+    v_Amount  In Number
+  ) As
+    r_Pay Dbusrposnew.Salepay%Rowtype;
+  Begin
+    b_Mkt      := v_Mkt;
+    b_Shbillno := v_Billno;
+    b_Payrowno := v_Rowno;
+    If v_Amount < 0 Then
+      Raiseerr('3.1->小票中付款金额不能小于0');
+    End If;
+    Checkglobparm;
+    Initsalepay(r_Pay);
+    r_Pay.Paycode := v_Paycode;
+    Begin
+      Select Ppmname
+      Into   r_Pay.Payname
+      From   Pospaymode
+      Where  Ppmcode = v_Paycode;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode,
+                                '3.2->付款方式[' || v_Paycode || ']不存在,请检查！');
+    End;
+    r_Pay.Ybje := v_Amount;
+    r_Pay.Je   := v_Amount;
+    Insert Into Dbusrposnew.Salepay Values r_Pay;
+  End;
+
+  Procedure Insertsellmail As
+  Begin
+    Begin
+      Insert Into Sellmail
+        Select Shdate, To_Char(Shbillno), Shsyjid, Shinvno, 'N'
+        From   Sellhead
+        Where  Shbillno = b_Shbillno;
+    Exception
+      When Others Then
+        Raise;
+        Rollback;
+    End;
+  End;
+
+  Procedure Checkbill(v_Billno In Varchar2) As
+  Begin
+    Null;
+  End;
+
+  Procedure Insertsaleok(v_Billno In Varchar2) As
+  Begin
+    b_Shbillno := v_Billno;
+    Checkbill(v_Billno);
+    Insertsellmail;
+  End;
+
+Begin
+  b_Jygs := Fgetprivatepara('1M');
+End Improtsaleinterface;
