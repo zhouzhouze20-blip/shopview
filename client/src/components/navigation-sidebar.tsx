@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Users, FileText, CreditCard, BarChart3, Settings, ChevronLeft, Truck, HardHat, FileSpreadsheet, Activity, TicketPercent } from "lucide-react";
+import { Building2, Users, FileText, CreditCard, BarChart3, Settings, ChevronLeft, Truck, HardHat, FileSpreadsheet, Activity, TicketPercent, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { filterAccessibleModuleTree } from "@/lib/module-permissions";
@@ -94,6 +94,7 @@ export const navigationItems: NavigationItem[] = [
         ],
       },
       { id: "user-role-scope", name: "用户角色及范围定义", icon: Users },
+      { id: "wecom-rules", name: "企微授权规则", icon: Shield },
       { id: "audit-logs", name: "日志查询", icon: Activity }
     ]
   }

@@ -66,6 +66,20 @@ def _table_exists(db: Session, table_name: str) -> bool:
     return bool(row.ok) if row is not None else False
 
 
+def _get_table_columns(db: Session, table_name: str) -> set[str]:
+    rows = db.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = :table_name
+            """
+        ),
+        {"table_name": table_name},
+    ).fetchall()
+    return {r.column_name for r in rows}
+
+
 def _require_contract_tables(db: Session) -> None:
     missing = [
         table_name
@@ -683,15 +697,22 @@ async def get_contracts_by_unit(
         has_counter_groups = _table_exists(db, "manaframe")
         has_contmaintype = _table_exists(db, "contmaintype")
         has_business_unit_binding = _table_exists(db, "business_unit_binding")
+        has_business_unit_contract_mode = "contract_mode" in _get_table_columns(db, "business_units")
+        unit_contract_mode_select = (
+            "bu.contract_mode"
+            if has_business_unit_contract_mode
+            else "'EXCLUSIVE'::text AS contract_mode"
+        )
 
         unit = db.execute(
             text(
-                """
+                f"""
                 SELECT
                   bu.id,
                   bu.floor_id,
                   bu.unit_code,
                   bu.status,
+                  {unit_contract_mode_select},
                   bu.manual_area,
                   COALESCE(f.store_code, st_by_floor_code.store_code, st_by_sf.store_code) AS store_code,
                   COALESCE(sf.store_id::varchar, st_by_floor_code.store_id::varchar) AS store_id,
@@ -1042,6 +1063,7 @@ async def get_contracts_by_unit(
                 "floor_id": unit.floor_id,
                 "unit_code": unit.unit_code,
                 "status": unit.status,
+                "contract_mode": unit.contract_mode or "EXCLUSIVE",
                 "manual_area": _json_value(unit.manual_area),
                 "store_code": unit.store_code,
                 "store_id": unit.store_id,

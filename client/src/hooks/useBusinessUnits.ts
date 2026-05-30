@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 
 export type BusinessUnitStatus = "ACTIVE" | "VACANT" | "FITOUT" | "INACTIVE";
+export type BusinessUnitContractMode = "EXCLUSIVE" | "SHARED";
 
 export interface BusinessUnitItem {
   id: number;
   floor_id: number;
   unit_code: string;
   status: BusinessUnitStatus;
+  contract_mode: BusinessUnitContractMode;
   manual_area?: number | null;
   parent_unit_id?: number | null;
   created_at?: string | null;
@@ -18,6 +20,7 @@ export interface CreateBusinessUnitInput {
   floor_id: number;
   unit_code: string;
   status?: BusinessUnitStatus;
+  contract_mode?: BusinessUnitContractMode;
   manual_area?: number | null;
   parent_unit_id?: number | null;
 }
@@ -25,6 +28,7 @@ export interface CreateBusinessUnitInput {
 export interface UpdateBusinessUnitInput {
   unit_code?: string;
   status?: BusinessUnitStatus;
+  contract_mode?: BusinessUnitContractMode;
   manual_area?: number | null;
   parent_unit_id?: number | null;
 }

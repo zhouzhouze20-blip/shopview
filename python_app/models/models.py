@@ -396,6 +396,28 @@ class DataPolicyItem(Base):
     created_at = Column(DateTime, default=func.now(), comment="创建时间")
 
 
+class WeComRoleScopeRule(Base):
+    """企业微信部门/岗位到系统角色与数据范围的规则"""
+    __tablename__ = "wecom_role_scope_rules"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    rule_name = Column(String(100), nullable=False, comment="规则名称")
+    corp_id = Column(String(100), comment="企业微信企业ID")
+    priority = Column(Integer, default=100, nullable=False, comment="优先级，数字越小越先匹配")
+    match_mode = Column(String(10), default="ALL", nullable=False, comment="匹配模式：ALL, ANY")
+    wecom_userids = Column(JSON, default=list, nullable=False, comment="企业微信用户ID列表")
+    name_keywords = Column(JSON, default=list, nullable=False, comment="姓名关键词")
+    department_keywords = Column(JSON, default=list, nullable=False, comment="部门关键词")
+    position_keywords = Column(JSON, default=list, nullable=False, comment="岗位关键词")
+    role_codes = Column(JSON, default=list, nullable=False, comment="授予角色编码")
+    scope_mode = Column(String(20), default="CUSTOM", nullable=False, comment="范围模式：ALL, CUSTOM, NONE")
+    scope_dimensions = Column(JSON, default=dict, nullable=False, comment="数据范围维度")
+    is_active = Column(Boolean, default=True, nullable=False, comment="是否启用")
+    remark = Column(Text, comment="备注")
+    created_at = Column(DateTime, default=func.now(), comment="创建时间")
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
+
+
 class LoginLog(Base):
     """登录日志表"""
     __tablename__ = "login_logs"

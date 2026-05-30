@@ -98,12 +98,22 @@ class BusinessUnit(Base):
             "status IN ('ACTIVE','VACANT','FITOUT','INACTIVE')",
             name="ck_unit_status",
         ),
+        CheckConstraint(
+            "contract_mode IN ('EXCLUSIVE','SHARED')",
+            name="ck_business_units_contract_mode",
+        ),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="经营单元ID，系统主键")
     floor_id = Column(BigInteger, ForeignKey("floors.id", ondelete="RESTRICT"), nullable=False, comment="所属楼层ID")
     unit_code = Column(Text, nullable=False, comment="柜位业务编号，如 A118 / B101")
     status = Column(Text, nullable=False, server_default="ACTIVE", comment="经营状态：ACTIVE经营中 / VACANT空置 / FITOUT装修中 / INACTIVE失效")
+    contract_mode = Column(
+        Text,
+        nullable=False,
+        server_default="EXCLUSIVE",
+        comment="合同签约模式：EXCLUSIVE独占 / SHARED共享",
+    )
     manual_area = Column(Numeric(12, 2), comment="人工确认的计租面积（合同面积）")
     parent_unit_id = Column(BigInteger, ForeignKey("business_units.id"), comment="父柜位ID（用于拆分/合并溯源）")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), comment="创建时间")

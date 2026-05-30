@@ -37,6 +37,7 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   roles: ["system.role.manage"],
   departments: ["system.data_policy.manage"],
   "contract-permissions": ["system.data_policy.manage"],
+  "wecom-rules": ["system.data_policy.manage"],
   "audit-logs": ["system.audit_log.view"],
 };
 

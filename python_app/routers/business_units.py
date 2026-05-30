@@ -25,6 +25,7 @@ router = APIRouter(
 
 
 VALID_STATUS = {"ACTIVE", "VACANT", "FITOUT", "INACTIVE"}
+VALID_CONTRACT_MODE = {"EXCLUSIVE", "SHARED"}
 
 
 def _table_exists(db: Session, table_name: str) -> bool:
@@ -122,6 +123,24 @@ def _resolve_target_floor_id(db: Session, floor_id: int) -> int:
     return int(floor_id)
 
 
+def _has_contract_mode_column(db: Session) -> bool:
+    return "contract_mode" in _get_table_columns(db, "business_units")
+
+
+def _serialize_business_unit(row) -> dict:
+    return {
+        "id": row.id,
+        "floor_id": row.floor_id,
+        "unit_code": row.unit_code,
+        "status": row.status,
+        "contract_mode": getattr(row, "contract_mode", None) or "EXCLUSIVE",
+        "manual_area": float(row.manual_area) if row.manual_area is not None else None,
+        "parent_unit_id": row.parent_unit_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
 @router.get("/")
 async def list_business_units(
     store_id: Optional[int] = Query(None, description="按门店筛选"),
@@ -134,9 +153,14 @@ async def list_business_units(
 ):
     """查询经营单元列表。"""
     try:
-        sql = """
+        contract_mode_select = (
+            "contract_mode"
+            if _has_contract_mode_column(db)
+            else "'EXCLUSIVE'::text AS contract_mode"
+        )
+        sql = f"""
             SELECT
-              id, floor_id, unit_code, status, manual_area, parent_unit_id, created_at, updated_at
+              id, floor_id, unit_code, status, {contract_mode_select}, manual_area, parent_unit_id, created_at, updated_at
             FROM business_units
             WHERE 1=1
         """
@@ -154,19 +178,7 @@ async def list_business_units(
         sql += " ORDER BY created_at DESC NULLS LAST, id DESC LIMIT :limit OFFSET :skip"
 
         rows = db.execute(text(sql), params).fetchall()
-        return [
-            {
-                "id": r.id,
-                "floor_id": r.floor_id,
-                "unit_code": r.unit_code,
-                "status": r.status,
-                "manual_area": float(r.manual_area) if r.manual_area is not None else None,
-                "parent_unit_id": r.parent_unit_id,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-            }
-            for r in rows
-        ]
+        return [_serialize_business_unit(r) for r in rows]
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -185,6 +197,7 @@ async def create_business_unit(
         floor_id_raw = int(body.get("floor_id"))
         unit_code = (body.get("unit_code") or "").strip()
         status_value = (body.get("status") or "ACTIVE").strip().upper()
+        contract_mode = (body.get("contract_mode") or "EXCLUSIVE").strip().upper()
         manual_area = body.get("manual_area")
         parent_unit_id = body.get("parent_unit_id")
 
@@ -192,6 +205,8 @@ async def create_business_unit(
             raise HTTPException(status_code=400, detail="unit_code 不能为空")
         if status_value not in VALID_STATUS:
             raise HTTPException(status_code=400, detail=f"status 非法，允许值: {', '.join(sorted(VALID_STATUS))}")
+        if contract_mode not in VALID_CONTRACT_MODE:
+            raise HTTPException(status_code=400, detail=f"contract_mode 非法，允许值: {', '.join(sorted(VALID_CONTRACT_MODE))}")
 
         floor_id = _resolve_target_floor_id(db, floor_id_raw)
         floor_exists = db.execute(
@@ -227,33 +242,32 @@ async def create_business_unit(
             if int(p.floor_id) != floor_id:
                 raise HTTPException(status_code=400, detail="parent_unit_id 必须与当前 floor_id 同楼层")
 
-        row = db.execute(
-            text(
+        has_contract_mode = _has_contract_mode_column(db)
+        if has_contract_mode:
+            insert_sql = """
+                INSERT INTO business_units (floor_id, unit_code, status, contract_mode, manual_area, parent_unit_id)
+                VALUES (:floor_id, :unit_code, :status, :contract_mode, :manual_area, :parent_unit_id)
+                RETURNING id, floor_id, unit_code, status, contract_mode, manual_area, parent_unit_id, created_at, updated_at
                 """
+        else:
+            insert_sql = """
                 INSERT INTO business_units (floor_id, unit_code, status, manual_area, parent_unit_id)
                 VALUES (:floor_id, :unit_code, :status, :manual_area, :parent_unit_id)
-                RETURNING id, floor_id, unit_code, status, manual_area, parent_unit_id, created_at, updated_at
+                RETURNING id, floor_id, unit_code, status, 'EXCLUSIVE'::text AS contract_mode, manual_area, parent_unit_id, created_at, updated_at
                 """
-            ),
+        row = db.execute(
+            text(insert_sql),
             {
                 "floor_id": floor_id,
                 "unit_code": unit_code,
                 "status": status_value,
+                "contract_mode": contract_mode,
                 "manual_area": manual_area,
                 "parent_unit_id": parent_id,
             },
         ).fetchone()
         db.commit()
-        return {
-            "id": row.id,
-            "floor_id": row.floor_id,
-            "unit_code": row.unit_code,
-            "status": row.status,
-            "manual_area": float(row.manual_area) if row.manual_area is not None else None,
-            "parent_unit_id": row.parent_unit_id,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        }
+        return _serialize_business_unit(row)
     except HTTPException:
         raise
     except Exception as e:
@@ -280,6 +294,11 @@ async def update_business_unit(
         floor_id = int(current.floor_id)
         unit_code = (body.get("unit_code") or current.unit_code).strip()
         status_value = (body.get("status") or "").strip().upper() if body.get("status") is not None else None
+        contract_mode = (
+            (body.get("contract_mode") or "").strip().upper()
+            if body.get("contract_mode") is not None
+            else None
+        )
         manual_area = body.get("manual_area", "__KEEP__")
         parent_unit_id = body.get("parent_unit_id", "__KEEP__")
 
@@ -287,6 +306,8 @@ async def update_business_unit(
             raise HTTPException(status_code=400, detail="unit_code 不能为空")
         if status_value is not None and status_value not in VALID_STATUS:
             raise HTTPException(status_code=400, detail=f"status 非法，允许值: {', '.join(sorted(VALID_STATUS))}")
+        if contract_mode is not None and contract_mode not in VALID_CONTRACT_MODE:
+            raise HTTPException(status_code=400, detail=f"contract_mode 非法，允许值: {', '.join(sorted(VALID_CONTRACT_MODE))}")
 
         dup = db.execute(
             text(
@@ -307,6 +328,9 @@ async def update_business_unit(
         if status_value is not None:
             sets.append("status = :status")
             params["status"] = status_value
+        if contract_mode is not None and _has_contract_mode_column(db):
+            sets.append("contract_mode = :contract_mode")
+            params["contract_mode"] = contract_mode
         if manual_area != "__KEEP__":
             sets.append("manual_area = :manual_area")
             params["manual_area"] = manual_area if manual_area not in ("", None) else None
@@ -333,24 +357,24 @@ async def update_business_unit(
         row = db.execute(
             text(
                 """
-                SELECT id, floor_id, unit_code, status, manual_area, parent_unit_id, created_at, updated_at
+                SELECT
+                  id, floor_id, unit_code, status,
+                  {contract_mode_select},
+                  manual_area, parent_unit_id, created_at, updated_at
                 FROM business_units
                 WHERE id = :id
-                """
+                """.format(
+                    contract_mode_select=(
+                        "contract_mode"
+                        if _has_contract_mode_column(db)
+                        else "'EXCLUSIVE'::text AS contract_mode"
+                    )
+                )
             ),
             {"id": unit_id},
         ).fetchone()
         db.commit()
-        return {
-            "id": row.id,
-            "floor_id": row.floor_id,
-            "unit_code": row.unit_code,
-            "status": row.status,
-            "manual_area": float(row.manual_area) if row.manual_area is not None else None,
-            "parent_unit_id": row.parent_unit_id,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        }
+        return _serialize_business_unit(row)
     except HTTPException:
         raise
     except Exception as e:

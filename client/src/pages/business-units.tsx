@@ -13,6 +13,7 @@ import { useBaseMapsList, useFloorDictList } from "@/hooks/useBaseMaps";
 import { resolveApiAssetUrl } from "@/lib/api";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
 import {
+  BusinessUnitContractMode,
   BusinessUnitStatus,
   useBusinessUnits,
   useCreateBusinessUnit,
@@ -32,6 +33,29 @@ const STATUS_OPTIONS: { value: BusinessUnitStatus; label: string }[] = [
 
 const statusLabel = (value: BusinessUnitStatus | string) =>
   STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value;
+
+const CONTRACT_MODE_OPTIONS: {
+  value: BusinessUnitContractMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "EXCLUSIVE",
+    label: "独占经营",
+    description: "同一期间只允许一份正在生效合同",
+  },
+  {
+    value: "SHARED",
+    label: "共享经营",
+    description: "同一期间允许多个合同同时经营",
+  },
+];
+
+const contractModeLabel = (value?: BusinessUnitContractMode | string | null) =>
+  CONTRACT_MODE_OPTIONS.find((option) => option.value === value)?.label ?? value ?? "独占经营";
+
+const contractModeDescription = (value?: BusinessUnitContractMode | string | null) =>
+  CONTRACT_MODE_OPTIONS.find((option) => option.value === value)?.description ?? "同一期间只允许一份正在生效合同";
 
 type BusinessUnitsPageProps = {
   mode?: "business-units" | "counters";
@@ -71,6 +95,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
   const [editingId, setEditingId] = useState<number | null>(null);
   const [unitCode, setUnitCode] = useState("");
   const [statusValue, setStatusValue] = useState<BusinessUnitStatus>("ACTIVE");
+  const [contractMode, setContractMode] = useState<BusinessUnitContractMode>("EXCLUSIVE");
   const [manualArea, setManualArea] = useState("");
   const [parentUnitId, setParentUnitId] = useState("");
   const [selectedBaseMapId, setSelectedBaseMapId] = useState<number | undefined>(undefined);
@@ -188,6 +213,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
     setEditingId(null);
     setUnitCode("");
     setStatusValue("ACTIVE");
+    setContractMode("EXCLUSIVE");
     setManualArea("");
     setParentUnitId("");
   };
@@ -232,6 +258,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
         setEditingId(geo.unit_id);
         setUnitCode(geo.unit_code);
         setStatusValue(geo.unit_status ?? "ACTIVE");
+        setContractMode("EXCLUSIVE");
         setManualArea(geo.unit_manual_area != null ? String(geo.unit_manual_area) : "");
         setParentUnitId(geo.unit_parent_unit_id != null ? String(geo.unit_parent_unit_id) : "");
         setMapEditOpen(true);
@@ -248,6 +275,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
     setEditingId(unit.id);
     setUnitCode(unit.unit_code);
     setStatusValue(unit.status);
+    setContractMode(unit.contract_mode ?? "EXCLUSIVE");
     setManualArea(unit.manual_area != null ? String(unit.manual_area) : "");
     setParentUnitId(unit.parent_unit_id != null ? String(unit.parent_unit_id) : "");
     setMapEditOpen(true);
@@ -267,6 +295,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
         floor_id: floorId,
         unit_code: unitCode.trim(),
         status: statusValue,
+        contract_mode: contractMode,
         manual_area: manualArea.trim() ? Number(manualArea) : null,
         parent_unit_id: parentUnitId.trim() ? Number(parentUnitId) : null,
       };
@@ -276,6 +305,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
           input: {
             unit_code: payload.unit_code,
             status: payload.status,
+            contract_mode: payload.contract_mode,
             manual_area: payload.manual_area,
             parent_unit_id: payload.parent_unit_id,
           },
@@ -328,6 +358,22 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <Label>合同经营限制</Label>
+          <Select value={contractMode} onValueChange={(v) => setContractMode(v as BusinessUnitContractMode)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="z-50 bg-white border shadow-xl">
+              {CONTRACT_MODE_OPTIONS.map((mode) => (
+                <SelectItem key={mode.value} value={mode.value}>
+                  {mode.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{contractModeDescription(contractMode)}</p>
         </div>
         <div className="space-y-2">
           <Label>人工面积（可选）</Label>
@@ -451,6 +497,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                 <TableHead>楼层ID</TableHead>
                 <TableHead>{codeLabel}</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead>合同经营限制</TableHead>
                 <TableHead>人工面积</TableHead>
                 <TableHead>{parentLabel.replace("（可选）", "")}</TableHead>
                 <TableHead>更新时间</TableHead>
@@ -460,13 +507,13 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
             <TableBody>
               {listQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                     {emptyText}
                   </TableCell>
                 </TableRow>
@@ -478,6 +525,12 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                       <TableCell>{r.floor_id}</TableCell>
                       <TableCell>{r.unit_code}</TableCell>
                       <TableCell>{statusLabel(r.status)}</TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div>{contractModeLabel(r.contract_mode)}</div>
+                          <div className="text-xs text-muted-foreground">{contractModeDescription(r.contract_mode)}</div>
+                        </div>
+                      </TableCell>
                       <TableCell>{r.manual_area ?? "—"}</TableCell>
                       <TableCell>{r.parent_unit_id ?? "—"}</TableCell>
                       <TableCell>{r.updated_at ?? "—"}</TableCell>
@@ -489,6 +542,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                             setEditingId(r.id);
                             setUnitCode(r.unit_code);
                             setStatusValue(r.status);
+                            setContractMode(r.contract_mode ?? "EXCLUSIVE");
                             setManualArea(r.manual_area != null ? String(r.manual_area) : "");
                             setParentUnitId(r.parent_unit_id != null ? String(r.parent_unit_id) : "");
                             setShowForm(false);
@@ -528,7 +582,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                     </TableRow>
                     {editingId === r.id && (
                       <TableRow>
-                        <TableCell colSpan={8} className="bg-slate-50 p-4">
+                        <TableCell colSpan={9} className="bg-slate-50 p-4">
                           <div className="rounded-md border bg-white p-4">
                             <div className="mb-4 text-base font-semibold">{editTitle}</div>
                             {renderUnitForm({
@@ -756,6 +810,22 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>合同经营限制</Label>
+                <Select value={contractMode} onValueChange={(v) => setContractMode(v as BusinessUnitContractMode)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="z-50 bg-white border shadow-xl">
+                    {CONTRACT_MODE_OPTIONS.map((mode) => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{contractModeDescription(contractMode)}</p>
               </div>
               <div className="space-y-2">
                 <Label>人工面积（可选）</Label>

@@ -28,6 +28,7 @@ from models.models import (
     UserDepartmentPost,
     UserIdentity,
     UserRole,
+    WeComRoleScopeRule,
 )
 from routers.auth import get_client_ip, get_current_user
 from routers.authz import require_permission
@@ -47,6 +48,9 @@ from schemas.schemas import (
     SystemUserCreate,
     SystemUserSchema,
     SystemUserUpdate,
+    WeComRoleScopeRuleCreate,
+    WeComRoleScopeRuleSchema,
+    WeComRoleScopeRuleUpdate,
 )
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -56,6 +60,9 @@ BUSINESS_SCOPE_RESOURCE = "business_scope"
 BUSINESS_SCOPE_ACTION = "view"
 MANUAL_SOURCE_TYPE = "MANUAL"
 MANUAL_SOURCE_SYSTEM = "shopview"
+WECOM_RULE_MATCH_MODES = {"ALL", "ANY"}
+WECOM_RULE_SCOPE_MODES = {"ALL", "CUSTOM", "NONE"}
+WECOM_RULE_SCOPE_DIMENSIONS = {"store", "department", "group", "floor", "unit", "supplier", "brand", "category"}
 
 
 def _require_system_permission(db: Session, user: User, permission_code: str) -> None:
@@ -502,6 +509,89 @@ def _serialize_data_policies(db: Session, policies: List[DataPolicy]) -> List[di
             "updated_at": policy.updated_at,
         })
     return result
+
+
+def _clean_text_list(values: List[str] | None) -> List[str]:
+    result = []
+    seen = set()
+    for value in values or []:
+        text_value = str(value or "").strip()
+        if not text_value or text_value in seen:
+            continue
+        seen.add(text_value)
+        result.append(text_value)
+    return result
+
+
+def _clean_scope_dimensions(value: dict | None) -> dict:
+    if not value:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scope_dimensions 必须是对象")
+    result = {}
+    for dimension_type, raw_values in value.items():
+        dimension = str(dimension_type or "").strip()
+        if dimension not in WECOM_RULE_SCOPE_DIMENSIONS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的数据范围维度: {dimension}")
+        if not isinstance(raw_values, list):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{dimension} 的范围值必须是数组")
+        cleaned_values = _clean_text_list(raw_values)
+        if cleaned_values:
+            result[dimension] = cleaned_values
+    return result
+
+
+def _normalize_wecom_rule_payload(payload: dict, *, partial: bool = False) -> dict:
+    normalized = dict(payload)
+    for field in ("wecom_userids", "name_keywords", "department_keywords", "position_keywords", "role_codes"):
+        if field in normalized:
+            normalized[field] = _clean_text_list(normalized.get(field))
+
+    if "match_mode" in normalized and normalized["match_mode"] is not None:
+        normalized["match_mode"] = str(normalized["match_mode"]).strip().upper()
+        if normalized["match_mode"] not in WECOM_RULE_MATCH_MODES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="match_mode 只支持 ALL 或 ANY")
+
+    if "scope_mode" in normalized and normalized["scope_mode"] is not None:
+        normalized["scope_mode"] = str(normalized["scope_mode"]).strip().upper()
+        if normalized["scope_mode"] not in WECOM_RULE_SCOPE_MODES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scope_mode 只支持 ALL、CUSTOM 或 NONE")
+
+    if "scope_dimensions" in normalized:
+        normalized["scope_dimensions"] = _clean_scope_dimensions(normalized.get("scope_dimensions"))
+
+    if not partial:
+        normalized["match_mode"] = normalized.get("match_mode") or "ALL"
+        normalized["scope_mode"] = normalized.get("scope_mode") or "CUSTOM"
+        normalized["scope_dimensions"] = _clean_scope_dimensions(normalized.get("scope_dimensions"))
+
+    if normalized.get("scope_mode") == "ALL":
+        normalized["scope_dimensions"] = {}
+    if normalized.get("scope_mode") == "NONE":
+        normalized["scope_dimensions"] = {}
+
+    return normalized
+
+
+def _serialize_wecom_role_scope_rules(rules: List[WeComRoleScopeRule]) -> List[dict]:
+    return [{
+        "id": rule.id,
+        "rule_name": rule.rule_name,
+        "corp_id": rule.corp_id,
+        "priority": rule.priority,
+        "match_mode": rule.match_mode,
+        "wecom_userids": rule.wecom_userids or [],
+        "name_keywords": rule.name_keywords or [],
+        "department_keywords": rule.department_keywords or [],
+        "position_keywords": rule.position_keywords or [],
+        "role_codes": rule.role_codes or [],
+        "scope_mode": rule.scope_mode,
+        "scope_dimensions": rule.scope_dimensions or {},
+        "is_active": rule.is_active,
+        "remark": rule.remark,
+        "created_at": rule.created_at,
+        "updated_at": rule.updated_at,
+    } for rule in rules]
 
 
 def _date_start(value: date | None) -> datetime | None:
@@ -977,6 +1067,60 @@ async def update_system_user(user_id: int, payload: SystemUserUpdate, db: Sessio
     db.commit()
     db.refresh(user)
     return _serialize_users(db, [user])[0]
+
+
+@router.get("/wecom-role-scope-rules", response_model=List[WeComRoleScopeRuleSchema])
+async def get_wecom_role_scope_rules(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _require_system_permission(db, current_user, "system.data_policy.manage")
+    rules = db.query(WeComRoleScopeRule).order_by(WeComRoleScopeRule.priority.asc(), WeComRoleScopeRule.id.asc()).all()
+    return _serialize_wecom_role_scope_rules(rules)
+
+
+@router.post("/wecom-role-scope-rules", response_model=WeComRoleScopeRuleSchema)
+async def create_wecom_role_scope_rule(payload: WeComRoleScopeRuleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _require_system_permission(db, current_user, "system.data_policy.manage")
+    rule_data = _normalize_wecom_rule_payload(payload.model_dump())
+    if not rule_data["rule_name"].strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="规则名称不能为空")
+    rule_data["rule_name"] = rule_data["rule_name"].strip()
+    rule_data["corp_id"] = rule_data["corp_id"].strip() if rule_data.get("corp_id") else None
+    rule = WeComRoleScopeRule(**rule_data)
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _serialize_wecom_role_scope_rules([rule])[0]
+
+
+@router.put("/wecom-role-scope-rules/{rule_id}", response_model=WeComRoleScopeRuleSchema)
+async def update_wecom_role_scope_rule(rule_id: int, payload: WeComRoleScopeRuleUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _require_system_permission(db, current_user, "system.data_policy.manage")
+    rule = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="企微授权规则不存在")
+
+    update_data = _normalize_wecom_rule_payload(payload.model_dump(exclude_unset=True), partial=True)
+    if "rule_name" in update_data:
+        if not str(update_data["rule_name"] or "").strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="规则名称不能为空")
+        update_data["rule_name"] = update_data["rule_name"].strip()
+    if "corp_id" in update_data:
+        update_data["corp_id"] = update_data["corp_id"].strip() if update_data.get("corp_id") else None
+    for field, value in update_data.items():
+        setattr(rule, field, value)
+    db.commit()
+    db.refresh(rule)
+    return _serialize_wecom_role_scope_rules([rule])[0]
+
+
+@router.delete("/wecom-role-scope-rules/{rule_id}", response_model=BaseResponse)
+async def delete_wecom_role_scope_rule(rule_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _require_system_permission(db, current_user, "system.data_policy.manage")
+    rule = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="企微授权规则不存在")
+    db.delete(rule)
+    db.commit()
+    return BaseResponse(message="企微授权规则已删除")
 
 
 @router.get("/data-policies", response_model=List[DataPolicySchema])

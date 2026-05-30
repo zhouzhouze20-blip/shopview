@@ -186,6 +186,10 @@ const STATUS_META: Record<
 const STATUS_LEGEND_ORDER: BusinessUnitStatus[] = ["ACTIVE", "FITOUT", "VACANT", "INACTIVE"];
 const MAP_MIN_ZOOM = 1;
 const MAP_MAX_ZOOM = 8;
+const CONTRACT_MODE_LABELS: Record<string, string> = {
+  EXCLUSIVE: "独占经营",
+  SHARED: "共享经营",
+};
 const CONTRACT_STATUS_OPTIONS = [
   { value: "ALL", label: "全部状态" },
   { value: "Y", label: "已生效" },
@@ -1208,10 +1212,16 @@ export default function ContractsPage({
             <div className="py-10 text-center text-muted-foreground">暂无数据</div>
           ) : (
             <div className="space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">柜位号</div>
                   <div className="text-lg font-semibold">{detail.unit.unit_code}</div>
+                </div>
+                <div className="rounded border p-3">
+                  <div className="text-xs text-muted-foreground">合同经营限制</div>
+                  <div className="text-lg font-semibold">
+                    {CONTRACT_MODE_LABELS[String(detail.unit.contract_mode || "EXCLUSIVE")] || detail.unit.contract_mode || "独占经营"}
+                  </div>
                 </div>
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">经营状态</div>

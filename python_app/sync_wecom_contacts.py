@@ -36,6 +36,7 @@ from models.models import (
     UserDepartmentPost,
     UserIdentity,
     UserRole,
+    WeComRoleScopeRule,
 )
 from routers.auth import DEFAULT_ADMIN_PASSWORD, _hash_password
 from routers.system_management import _ensure_contract_viewer_role
@@ -366,7 +367,32 @@ def _norm_text(value: object) -> str:
     return str(value or "").strip().lower()
 
 
-def _load_role_scope_rules(path: str = "") -> list[dict[str, Any]]:
+def _rule_record_to_dict(rule: WeComRoleScopeRule) -> dict[str, Any]:
+    payload = {
+        "userids": rule.wecom_userids or [],
+        "names": rule.name_keywords or [],
+        "department_keywords": rule.department_keywords or [],
+        "position_keywords": rule.position_keywords or [],
+        "role_codes": rule.role_codes or [],
+        "scope_mode": rule.scope_mode,
+        "scope_dimensions": rule.scope_dimensions or {},
+    }
+    if rule.match_mode == "ANY":
+        payload["match_any"] = True
+    return payload
+
+
+def _load_role_scope_rules(path: str = "", db=None) -> list[dict[str, Any]]:
+    if db is not None:
+        rules = (
+            db.query(WeComRoleScopeRule)
+            .filter(WeComRoleScopeRule.is_active == True)
+            .order_by(WeComRoleScopeRule.priority.asc(), WeComRoleScopeRule.id.asc())
+            .all()
+        )
+        if rules:
+            return [_rule_record_to_dict(rule) for rule in rules]
+
     raw = Path(path).read_text(encoding="utf-8") if path else _get_env("WECOM_ROLE_SCOPE_RULES")
     if not raw:
         return []
@@ -745,11 +771,11 @@ def sync_wecom_contacts(
         department_ids, department_names = list_departments(access_token)
         members = list_members(access_token, department_ids, department_names)
     active_userids = {member.userid for member in members if _is_active_status(member.status)}
-    rules = _load_role_scope_rules(role_scope_rules)
-
     db = SessionLocal()
     stats = Counter()
     try:
+        rules = _load_role_scope_rules(role_scope_rules, db=db)
+        db_rule_count = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.is_active == True).count()
         stats["departments_seen"] = len(department_ids)
         stats["members_seen"] = len(members)
         stats["members_active"] = len(active_userids)
@@ -825,7 +851,7 @@ def sync_wecom_contacts(
         print(f"disable_missing_wecom_users: {disable_missing_wecom_users}")
         print(f"grant_viewer_role: {grant_viewer_role}")
         print(f"auto_role_scope: {auto_role_scope}")
-        print(f"role_scope_rules: {role_scope_rules or ('ENV:WECOM_ROLE_SCOPE_RULES' if rules else '-')}")
+        print(f"role_scope_rules: {'DB:wecom_role_scope_rules' if db_rule_count else role_scope_rules or ('ENV:WECOM_ROLE_SCOPE_RULES' if rules else '-')}")
         print("stats: " + (", ".join(f"{key}={value}" for key, value in sorted(stats.items())) or "none"))
         if not apply:
             print("dry-run only; add --apply to write changes")

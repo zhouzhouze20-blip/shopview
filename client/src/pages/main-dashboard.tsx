@@ -147,6 +147,7 @@ const MODULE_LABELS: Record<string, string> = {
   roles: "角色",
   departments: "部门定义",
   "contract-permissions": "业务范围",
+  "wecom-rules": "企微授权规则",
   "audit-logs": "日志查询",
 };
 
@@ -643,6 +644,8 @@ export default function MainDashboard() {
         return <SystemConfigPage initialTab="departments" />;
       case "contract-permissions":
         return <SystemConfigPage initialTab="contract-permissions" />;
+      case "wecom-rules":
+        return <SystemConfigPage initialTab="wecom-rules" />;
       case "audit-logs":
         return <SystemConfigPage initialTab="audit-logs" />;
       default:

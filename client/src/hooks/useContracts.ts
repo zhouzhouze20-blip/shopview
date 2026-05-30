@@ -6,6 +6,7 @@ export interface ContractUnitInfo {
   floor_id: number;
   unit_code: string;
   status: string;
+  contract_mode?: "EXCLUSIVE" | "SHARED" | string | null;
   manual_area?: number | null;
   store_code?: string | null;
   building_code?: string | null;

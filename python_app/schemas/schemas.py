@@ -527,6 +527,48 @@ class DataPolicySchema(DataPolicyBase):
     updated_at: Optional[datetime] = None
 
 
+class WeComRoleScopeRuleBase(BaseModel):
+    rule_name: str
+    corp_id: Optional[str] = None
+    priority: int = 100
+    match_mode: str = "ALL"
+    wecom_userids: List[str] = []
+    name_keywords: List[str] = []
+    department_keywords: List[str] = []
+    position_keywords: List[str] = []
+    role_codes: List[str] = []
+    scope_mode: str = "CUSTOM"
+    scope_dimensions: dict = {}
+    is_active: bool = True
+    remark: Optional[str] = None
+
+
+class WeComRoleScopeRuleCreate(WeComRoleScopeRuleBase):
+    pass
+
+
+class WeComRoleScopeRuleUpdate(BaseModel):
+    rule_name: Optional[str] = None
+    corp_id: Optional[str] = None
+    priority: Optional[int] = None
+    match_mode: Optional[str] = None
+    wecom_userids: Optional[List[str]] = None
+    name_keywords: Optional[List[str]] = None
+    department_keywords: Optional[List[str]] = None
+    position_keywords: Optional[List[str]] = None
+    role_codes: Optional[List[str]] = None
+    scope_mode: Optional[str] = None
+    scope_dimensions: Optional[dict] = None
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None
+
+
+class WeComRoleScopeRuleSchema(WeComRoleScopeRuleBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str

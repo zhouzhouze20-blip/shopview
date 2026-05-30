@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiPut } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -131,6 +131,25 @@ interface DataPolicy {
   items: DataPolicyItem[];
 }
 
+interface WeComRoleScopeRule {
+  id: number;
+  rule_name: string;
+  corp_id?: string | null;
+  priority: number;
+  match_mode: "ALL" | "ANY";
+  wecom_userids: string[];
+  name_keywords: string[];
+  department_keywords: string[];
+  position_keywords: string[];
+  role_codes: string[];
+  scope_mode: "ALL" | "CUSTOM" | "NONE";
+  scope_dimensions: Record<string, string[]>;
+  is_active: boolean;
+  remark?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
 interface SystemMeta {
   subject_types: string[];
   resource_codes: string[];
@@ -195,7 +214,7 @@ interface ContractPermissionUser {
   erp_scope_count: number;
 }
 
-type SystemConfigTab = "users" | "roles" | "departments" | "contract-permissions" | "policies" | "audit-logs";
+type SystemConfigTab = "users" | "roles" | "departments" | "contract-permissions" | "wecom-rules" | "policies" | "audit-logs";
 
 interface SystemConfigPageProps {
   initialTab?: SystemConfigTab;
@@ -309,11 +328,46 @@ const emptyContractPermissionForm = {
   group_values: [] as string[],
 };
 
+const emptyWeComRuleForm = {
+  rule_name: "",
+  corp_id: "",
+  priority: "100",
+  match_mode: "ALL" as "ALL" | "ANY",
+  wecom_userids: "",
+  name_keywords: "",
+  department_keywords: "",
+  position_keywords: "",
+  role_codes: [] as string[],
+  scope_mode: "CUSTOM" as "ALL" | "CUSTOM" | "NONE",
+  scope_dimensions: '{\n  "department": ["$department"]\n}',
+  is_active: true,
+  remark: "",
+};
+
 const splitValues = (value: string) =>
   value
     .split(/[\n,]/)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const joinValues = (values?: string[]) => (values ?? []).join("\n");
+
+const parseScopeDimensions = (value: string): Record<string, string[]> => {
+  const text = value.trim();
+  if (!text) return {};
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("数据范围 JSON 必须是对象");
+  }
+  const out: Record<string, string[]> = {};
+  Object.entries(parsed).forEach(([key, raw]) => {
+    if (!Array.isArray(raw)) {
+      throw new Error(`${key} 的值必须是数组`);
+    }
+    out[key] = raw.map((item) => String(item).trim()).filter(Boolean);
+  });
+  return out;
+};
 
 const buildQueryString = (params: Record<string, string | number | undefined | null>) => {
   const searchParams = new URLSearchParams();
@@ -383,16 +437,19 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const [departmentDialogOpen, setDepartmentDialogOpen] = useState(false);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
   const [contractPermissionDialogOpen, setContractPermissionDialogOpen] = useState(false);
+  const [wecomRuleDialogOpen, setWecomRuleDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [editingRole, setEditingRole] = useState<RoleItem | null>(null);
   const [editingDepartment, setEditingDepartment] = useState<DepartmentItem | null>(null);
   const [editingPolicy, setEditingPolicy] = useState<DataPolicy | null>(null);
   const [editingContractPermission, setEditingContractPermission] = useState<ContractPermissionUser | null>(null);
+  const [editingWeComRule, setEditingWeComRule] = useState<WeComRoleScopeRule | null>(null);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [roleForm, setRoleForm] = useState(emptyRoleForm);
   const [departmentForm, setDepartmentForm] = useState(emptyDepartmentForm);
   const [policyForm, setPolicyForm] = useState(emptyPolicyForm);
   const [contractPermissionForm, setContractPermissionForm] = useState(emptyContractPermissionForm);
+  const [wecomRuleForm, setWecomRuleForm] = useState(emptyWeComRuleForm);
   const [userSearchText, setUserSearchText] = useState("");
   const [auditLogType, setAuditLogType] = useState<"login" | "operation">("login");
   const [auditKeyword, setAuditKeyword] = useState("");
@@ -449,6 +506,11 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const { data: policies = [] } = useQuery<DataPolicy[]>({
     queryKey: ["/api/system/data-policies"],
     queryFn: () => apiGet<DataPolicy[]>("/api/system/data-policies"),
+  });
+
+  const { data: wecomRules = [] } = useQuery<WeComRoleScopeRule[]>({
+    queryKey: ["/api/system/wecom-role-scope-rules"],
+    queryFn: () => apiGet<WeComRoleScopeRule[]>("/api/system/wecom-role-scope-rules"),
   });
 
   const { data: meta } = useQuery<SystemMeta>({
@@ -605,6 +667,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
       queryClient.invalidateQueries({ queryKey: ["/api/system/roles"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/system/departments"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/system/data-policies"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/system/wecom-role-scope-rules"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/system/meta"] }),
       queryClient.invalidateQueries({ queryKey: ["/api/system/contract-permissions"] }),
     ]);
@@ -781,6 +844,54 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
     },
   });
 
+  const wecomRuleMutation = useMutation({
+    mutationFn: async () => {
+      if (!wecomRuleForm.rule_name.trim()) throw new Error("请输入规则名称");
+      const payload = {
+        rule_name: wecomRuleForm.rule_name.trim(),
+        corp_id: wecomRuleForm.corp_id.trim() || null,
+        priority: Number(wecomRuleForm.priority || 100),
+        match_mode: wecomRuleForm.match_mode,
+        wecom_userids: splitValues(wecomRuleForm.wecom_userids),
+        name_keywords: splitValues(wecomRuleForm.name_keywords),
+        department_keywords: splitValues(wecomRuleForm.department_keywords),
+        position_keywords: splitValues(wecomRuleForm.position_keywords),
+        role_codes: wecomRuleForm.role_codes,
+        scope_mode: wecomRuleForm.scope_mode,
+        scope_dimensions: wecomRuleForm.scope_mode === "CUSTOM" ? parseScopeDimensions(wecomRuleForm.scope_dimensions) : {},
+        is_active: wecomRuleForm.is_active,
+        remark: wecomRuleForm.remark.trim() || null,
+      };
+      if (editingWeComRule) {
+        return apiPut(`/api/system/wecom-role-scope-rules/${editingWeComRule.id}`, payload);
+      }
+      return apiPost("/api/system/wecom-role-scope-rules", payload);
+    },
+    onSuccess: async () => {
+      await invalidateSystemQueries();
+      setWecomRuleDialogOpen(false);
+      setEditingWeComRule(null);
+      setWecomRuleForm(emptyWeComRuleForm);
+      toast({ title: "企微授权规则已保存" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "保存企微授权规则失败", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteWecomRuleMutation = useMutation({
+    mutationFn: async (rule: WeComRoleScopeRule) => {
+      return apiDelete(`/api/system/wecom-role-scope-rules/${rule.id}`);
+    },
+    onSuccess: async () => {
+      await invalidateSystemQueries();
+      toast({ title: "企微授权规则已删除" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "删除企微授权规则失败", description: error.message, variant: "destructive" });
+    },
+  });
+
   const openCreateUser = () => {
     setEditingUser(null);
     setUserForm({
@@ -912,6 +1023,32 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
       group_values: groupValues,
     });
     setContractPermissionDialogOpen(true);
+  };
+
+  const openCreateWecomRule = () => {
+    setEditingWeComRule(null);
+    setWecomRuleForm(emptyWeComRuleForm);
+    setWecomRuleDialogOpen(true);
+  };
+
+  const openEditWecomRule = (rule: WeComRoleScopeRule) => {
+    setEditingWeComRule(rule);
+    setWecomRuleForm({
+      rule_name: rule.rule_name,
+      corp_id: rule.corp_id ?? "",
+      priority: String(rule.priority),
+      match_mode: rule.match_mode,
+      wecom_userids: joinValues(rule.wecom_userids),
+      name_keywords: joinValues(rule.name_keywords),
+      department_keywords: joinValues(rule.department_keywords),
+      position_keywords: joinValues(rule.position_keywords),
+      role_codes: rule.role_codes ?? [],
+      scope_mode: rule.scope_mode,
+      scope_dimensions: JSON.stringify(rule.scope_dimensions ?? {}, null, 2),
+      is_active: rule.is_active,
+      remark: rule.remark ?? "",
+    });
+    setWecomRuleDialogOpen(true);
   };
 
   const rowsForStore = (storeId: string) =>
@@ -1092,7 +1229,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">用户数</CardTitle>
@@ -1138,14 +1275,24 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <FileText className="h-5 w-5 text-sky-600" />
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">企微规则</CardTitle>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between">
+            <span className="text-2xl font-bold">{wecomRules.length}</span>
+            <Shield className="h-5 w-5 text-teal-600" />
+          </CardContent>
+        </Card>
       </div>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as SystemConfigTab)}>
-        <TabsList className="grid w-full grid-cols-2 gap-1 h-auto rounded-md border border-slate-200 bg-slate-100 p-1 md:grid-cols-6">
+        <TabsList className="grid w-full grid-cols-2 gap-1 h-auto rounded-md border border-slate-200 bg-slate-100 p-1 md:grid-cols-7">
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="users">用户</TabsTrigger>
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="roles">角色</TabsTrigger>
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="departments">部门定义</TabsTrigger>
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="contract-permissions">业务范围</TabsTrigger>
+          <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="wecom-rules">企微规则</TabsTrigger>
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="policies">高级策略</TabsTrigger>
           <TabsTrigger className="h-11 rounded border border-transparent text-base data-[state=active]:border-slate-300 data-[state=active]:bg-white data-[state=active]:font-semibold data-[state=active]:shadow-sm" value="audit-logs">日志审计</TabsTrigger>
         </TabsList>
@@ -1329,6 +1476,78 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       </TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="wecom-rules" className="space-y-4">
+          <div className="flex justify-end">
+            <Button onClick={openCreateWecomRule}><Plus className="mr-2 h-4 w-4" />新增企微规则</Button>
+          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>规则</TableHead>
+                    <TableHead>匹配条件</TableHead>
+                    <TableHead>角色</TableHead>
+                    <TableHead>数据范围</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {wecomRules.map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell>
+                        <div className="font-medium">{rule.rule_name}</div>
+                        <div className="text-xs text-muted-foreground">优先级 {rule.priority} · {rule.match_mode === "ANY" ? "任一匹配" : "全部匹配"}</div>
+                      </TableCell>
+                      <TableCell className="max-w-md">
+                        {[
+                          rule.wecom_userids.length ? `用户 ${rule.wecom_userids.join(", ")}` : "",
+                          rule.name_keywords.length ? `姓名 ${rule.name_keywords.join(", ")}` : "",
+                          rule.department_keywords.length ? `部门 ${rule.department_keywords.join(", ")}` : "",
+                          rule.position_keywords.length ? `岗位 ${rule.position_keywords.join(", ")}` : "",
+                        ].filter(Boolean).join("；") || "-"}
+                      </TableCell>
+                      <TableCell>{rule.role_codes.join(" / ") || "-"}</TableCell>
+                      <TableCell className="max-w-md">
+                        {rule.scope_mode === "ALL"
+                          ? "全部业务数据"
+                          : rule.scope_mode === "NONE"
+                            ? "不生成数据范围"
+                            : Object.entries(rule.scope_dimensions || {}).map(([key, values]) => `${key}:${values.join(",")}`).join("；") || "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={rule.is_active ? "default" : "secondary"}>{rule.is_active ? "启用" : "停用"}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right space-x-2">
+                        <Button size="sm" variant="outline" onClick={() => openEditWecomRule(rule)}>编辑</Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (window.confirm(`确认删除企微规则「${rule.rule_name}」？`)) {
+                              deleteWecomRuleMutation.mutate(rule);
+                            }
+                          }}
+                        >
+                          删除
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!wecomRules.length ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                        暂无企微规则。新增规则后，企业微信同步会优先使用这里的配置。
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             </CardContent>
@@ -1704,6 +1923,116 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <Button variant="outline" onClick={() => setContractPermissionDialogOpen(false)}>取消</Button>
             <Button onClick={() => contractPermissionMutation.mutate()} disabled={contractPermissionMutation.isPending}>
               {contractPermissionMutation.isPending ? "保存中..." : "保存"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={wecomRuleDialogOpen} onOpenChange={setWecomRuleDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingWeComRule ? "编辑企微授权规则" : "新增企微授权规则"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="md:col-span-2">
+                <Label>规则名称</Label>
+                <Input value={wecomRuleForm.rule_name} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, rule_name: e.target.value }))} />
+              </div>
+              <div>
+                <Label>优先级</Label>
+                <Input type="number" value={wecomRuleForm.priority} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, priority: e.target.value }))} />
+              </div>
+              <div>
+                <Label>匹配模式</Label>
+                <Select value={wecomRuleForm.match_mode} onValueChange={(value) => setWecomRuleForm((prev) => ({ ...prev, match_mode: value as "ALL" | "ANY" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">全部条件</SelectItem>
+                    <SelectItem value="ANY">任一条件</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <Label>企业微信用户ID</Label>
+                <Textarea rows={5} value={wecomRuleForm.wecom_userids} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, wecom_userids: e.target.value }))} />
+              </div>
+              <div>
+                <Label>姓名关键词</Label>
+                <Textarea rows={5} value={wecomRuleForm.name_keywords} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, name_keywords: e.target.value }))} />
+              </div>
+              <div>
+                <Label>部门关键词</Label>
+                <Textarea rows={5} value={wecomRuleForm.department_keywords} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, department_keywords: e.target.value }))} />
+              </div>
+              <div>
+                <Label>岗位关键词</Label>
+                <Textarea rows={5} value={wecomRuleForm.position_keywords} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, position_keywords: e.target.value }))} />
+              </div>
+            </div>
+
+            <div>
+              <Label>系统角色</Label>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 border rounded-md p-3 max-h-56 overflow-y-auto">
+                {roles.map((role) => (
+                  <label key={role.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={wecomRuleForm.role_codes.includes(role.role_code)}
+                      onCheckedChange={(checked) => setWecomRuleForm((prev) => ({
+                        ...prev,
+                        role_codes: checked
+                          ? Array.from(new Set([...prev.role_codes, role.role_code]))
+                          : prev.role_codes.filter((code) => code !== role.role_code),
+                      }))}
+                    />
+                    <span>{role.role_name}</span>
+                    <span className="text-xs text-muted-foreground">{role.role_code}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4">
+              <div>
+                <Label>数据范围</Label>
+                <Select value={wecomRuleForm.scope_mode} onValueChange={(value) => setWecomRuleForm((prev) => ({ ...prev, scope_mode: value as "ALL" | "CUSTOM" | "NONE" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CUSTOM">自定义范围</SelectItem>
+                    <SelectItem value="ALL">全部业务数据</SelectItem>
+                    <SelectItem value="NONE">不生成范围</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>范围 JSON</Label>
+                <Textarea
+                  rows={7}
+                  disabled={wecomRuleForm.scope_mode !== "CUSTOM"}
+                  value={wecomRuleForm.scope_dimensions}
+                  onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, scope_dimensions: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4">
+              <div>
+                <Label>备注</Label>
+                <Input value={wecomRuleForm.remark} onChange={(e) => setWecomRuleForm((prev) => ({ ...prev, remark: e.target.value }))} />
+              </div>
+              <label className="flex items-center gap-2 pt-7 text-sm">
+                <Checkbox checked={wecomRuleForm.is_active} onCheckedChange={(checked) => setWecomRuleForm((prev) => ({ ...prev, is_active: !!checked }))} />
+                <span>启用</span>
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setWecomRuleDialogOpen(false)}>取消</Button>
+            <Button onClick={() => wecomRuleMutation.mutate()} disabled={wecomRuleMutation.isPending}>
+              {wecomRuleMutation.isPending ? "保存中..." : "保存"}
             </Button>
           </div>
         </DialogContent>
