@@ -1,0 +1,53 @@
+-- Create table
+create table DBUSRPUB.GOODSBARCODE
+(
+  gcgdid    VARCHAR2(20) not null,
+  gcbarcode VARCHAR2(20) not null
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 384K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.GOODSBARCODE
+  is '[GC]商品多码';
+-- Add comments to the columns 
+comment on column DBUSRPUB.GOODSBARCODE.gcgdid
+  is '商品代码';
+comment on column DBUSRPUB.GOODSBARCODE.gcbarcode
+  is '条码';
+-- Create/Recreate indexes 
+create index DBUSRPUB.IDX_GC_GDID on DBUSRPUB.GOODSBARCODE (GCGDID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.GOODSBARCODE
+  add constraint PK_GOODSBARCODE primary key (GCBARCODE)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

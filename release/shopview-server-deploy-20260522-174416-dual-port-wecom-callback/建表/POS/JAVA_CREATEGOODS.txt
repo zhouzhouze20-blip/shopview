@@ -1,0 +1,16 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_CREATEGOODS
+AS
+  -- 返回结果集为
+  -- 商品条码,商品柜组,商品编码,多单位码,编码类型,商品名称,商品品类,商品品牌,商品单位,商品规格,包装含量,零售价,会员价,会员价折扣分担,批发价,批发价折扣分担,销项税,削价价格,价格精度,最底批量数量,多单位标志,是否输入批号标志,是否允许授权折扣,是否允许VIP折扣,是否有赠送,是否电子秤商品,是否有配件,是否自提商品,最底折扣率,最底折扣额,分析码,编码管理方法,备注,备用字段,备用字段,备用字段,备用字段
+  PROCEDURE CREATEGOODS
+    (
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pgbarcode,pgmfid,pggdid,pguid,pgtype,pgcname,pgcatid,pgppcode,pgunit,pgstr2,pgbzhl,pgsj,pghyj,pgzkfd,pgpfj,pgzkfd,pgxxtax,pgxjj,pgxjj,pgminpl,pgismsu,pgisbatch,pgiszk,pgisvip,pgiszs,pgisdzcm,pgispj,Fchkgoodsiszt(pgmfid,pggdid),pgminzk,pgminzke,pganalcode,pgmanamode,'','','',0,0 from posgoods;
+  END CREATEGOODS;
+
+END JAVA_CREATEGOODS;
+

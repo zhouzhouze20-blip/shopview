@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  shopview-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.linux
+    container_name: shopview-app
+    restart: unless-stopped
+    user: ${APP_RUN_USER:-0:0}
+    env_file:
+      - env.app-only.linux
+    environment:
+      NODE_ENV: production
+      PORT: 8020
+      DEBUG: "false"
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
+      SHOPVIEW_REPAIR_BASE_MAP_UPLOADS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://sales_user:sales_password_2024@192.168.98.80:5432/sales_db}
+      PGHOST: ${PGHOST:-192.168.98.80}
+      PGPORT: ${PGPORT:-5432}
+      PGUSER: ${PGUSER:-sales_user}
+      PGPASSWORD: ${PGPASSWORD:-sales_password_2024}
+      PGDATABASE: ${PGDATABASE:-sales_db}
+      TZ: ${TZ:-Asia/Shanghai}
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-too}
+      WECOM_ENABLED: "true"
+      WECOM_CORP_ID: "wx2096f4ca2d706e3a"
+      WECOM_AGENT_ID: "1000145"
+      WECOM_APP_SECRET: "4bp8mf9h1qru629hrubIUtcJWZMx6xBYk4q8gSxliKM"
+      WECOM_REDIRECT_BASE_URL: "http://gw.princesky.com:8020"
+      WECOM_FRONTEND_BASE_URL: "http://gw.princesky.com:8020"
+      UPLOAD_PATH: ${UPLOAD_PATH:-/app/uploads}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_PATH: ${LOG_PATH:-/app/logs}
+    ports:
+      - "${APP_PORT:-8020}:8020"
+    volumes:
+      - ${UPLOAD_HOST_PATH:-./uploads}:${UPLOAD_PATH:-/app/uploads}:Z
+      - ${LOG_HOST_PATH:-./logs}:${LOG_PATH:-/app/logs}:Z
+      - ./config:/app/config:ro
+    networks:
+      - shopview-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8020/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+networks:
+  shopview-network:
+    driver: bridge

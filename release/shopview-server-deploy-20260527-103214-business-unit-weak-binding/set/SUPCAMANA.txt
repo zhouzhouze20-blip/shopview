@@ -1,0 +1,793 @@
+CREATE OR REPLACE PACKAGE BODY "SUPCAMANA" IS
+  --每日初始化
+  PROCEDURE init
+  (
+    p_srcdate IN DATE,
+    p_desdate IN DATE,
+    p_market  IN VARCHAR2
+  ) IS
+    currentmkt VARCHAR2(20);
+  BEGIN
+    currentmkt := p_market;
+    IF p_srcdate >= p_desdate THEN
+      RETURN;
+    END IF;
+    INSERT INTO supcurraccday
+      (sadmarket, saddate, sadsupid, sadwmid, sadcontno, sadqcaphs,
+       sadqcapbhs, sadqcppdhs, sadqcppdbhs, sadqcarhs, sadqcarbhs,
+       sadbqap1hs, sadbqap1bhs, sadbqap2hs, sadbqap2bhs, sadbqap3hs,
+       sadbqap3bhs, sadbqap6hs, sadbqap6bhs, sadbqppd4hs, sadbqppd4bhs,
+       sadbqar7hs, sadbqar7bhs, sadbqar8hs, sadbqar8bhs, sadbqppdhs,
+       sadbqppdbhs, sadqmaphs, sadqmapbhs, sadqmppdhs, sadqmppdbhs,
+       sadqmarhs, sadqmarbhs,sadclass2,sadspbm,sadmfid)
+      SELECT sadmarket, p_desdate, sadsupid, sadwmid, sadcontno, sadqmaphs,
+             sadqmapbhs, sadqmppdhs, sadqmppdbhs, sadqmarhs, sadqmarbhs, 0,
+             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, sadqmaphs,
+             sadqmapbhs, sadqmppdhs, sadqmppdbhs, sadqmarhs, sadqmarbhs,sadclass2,sadspbm,sadmfid
+        FROM supcurraccday
+       WHERE sadmarket = currentmkt
+         AND saddate = p_srcdate
+         AND (sadqmaphs <> 0 OR sadqmapbhs <> 0 OR sadqmppdhs <> 0 OR
+             sadqmppdbhs <> 0 OR sadqmarhs <> 0 OR sadqmarbhs <> 0);
+  END;
+  --更新supcurracclist,supcurraccday
+  PROCEDURE runlist
+  (
+    p_sal IN supcurracclist%ROWTYPE,
+    p_di  IN VARCHAR2 DEFAULT 'I'
+  ) AS
+    row_sad supcurraccday%ROWTYPE;
+    row_sal supcurracclist%ROWTYPE;
+    l_sign  NUMBER;
+    l_ppd   NUMBER := 0;
+    l_ap    NUMBER := 1;
+  BEGIN
+    row_sal := p_sal;
+    BEGIN
+      SELECT sctsign
+        INTO l_sign
+        FROM scatrans
+       WHERE sctid = row_sal.saltrans;
+    EXCEPTION
+      WHEN OTHERS THEN
+        l_sign := 0;
+    END;
+    --更新supcurraccday
+    row_sad.sadmarket := row_sal.salmarket;
+    row_sad.saddate   := row_sal.saldate;
+    row_sad.sadsupid  := row_sal.salsupid;
+    row_sad.sadwmid   := row_sal.salwmid;
+    row_sad.sadcontno := row_sal.salcontno;
+    row_sad.sadmfid   := row_sal.salmfid;
+    row_sad.sadclass2   := row_sal.salclass2;
+    row_sad.sadspbm   := row_sal.salspbm;
+    --期初初始化
+    row_sad.sadqcaphs   := 0;
+    row_sad.sadqcapbhs  := 0;
+    row_sad.sadqcppdhs  := 0;
+    row_sad.sadqcppdbhs := 0;
+    row_sad.sadqcarhs   := 0;
+    row_sad.sadqcarbhs  := 0;
+    --发生额初始化
+    row_sad.sadbqap1hs   := 0;
+    row_sad.sadbqap1bhs  := 0;
+    row_sad.sadbqap2hs   := 0;
+    row_sad.sadbqap2bhs  := 0;
+    row_sad.sadbqap3hs   := 0;
+    row_sad.sadbqap3bhs  := 0;
+    row_sad.sadbqap6hs   := 0;
+    row_sad.sadbqap6bhs  := 0;
+    row_sad.sadbqppd4hs  := 0;
+    row_sad.sadbqppd4bhs := 0;
+    row_sad.sadbqar7hs   := 0;
+    row_sad.sadbqar7bhs  := 0;
+    row_sad.sadbqar8hs   := 0;
+    row_sad.sadbqar8bhs  := 0;
+    --预付台帐
+    row_sad.sadbqppdhs  := 0;
+    row_sad.sadbqppdbhs := 0;
+    --①发生额
+    IF row_sal.saltrans IN (transid_fsjh, transid_fstc, transid_fsjhtz,
+        transid_fsxs, transid_fsth, transid_fspf,
+        transid_fshcpf, transid_fsxstz, transid_fspftz) THEN
+      row_sad.sadbqap1hs  := row_sal.salbqaphs;
+      row_sad.sadbqap1bhs := row_sal.salbqapbhs;
+      --③结算调整额
+    ELSIF row_sal.saltrans = transid_jstz THEN
+      row_sad.sadbqap3hs  := row_sal.salbqaphs;
+      row_sad.sadbqap3bhs := row_sal.salbqapbhs;
+      --②票扣费用
+    ELSIF row_sal.saltrans = transid_fy1 THEN
+      row_sad.sadbqap2hs  := row_sal.salbqaphs;
+      row_sad.sadbqap2bhs := row_sal.salbqapbhs;
+      --⑦应扣费用
+    ELSIF row_sal.saltrans = transid_fy2 THEN
+      row_sad.sadbqar7hs  := row_sal.salbqaphs;
+      row_sad.sadbqar7bhs := row_sal.salbqapbhs;
+      --⑧已扣费用
+    ELSIF row_sal.saltrans = transid_fy0 THEN
+      row_sad.sadbqar8hs  := row_sal.salbqaphs;
+      row_sad.sadbqar8bhs := row_sal.salbqapbhs;
+      --④预付款
+    ELSIF row_sal.saltrans = transid_ppd THEN
+      row_sad.sadbqppd4hs  := row_sal.salbqaphs;
+      row_sad.sadbqppd4bhs := row_sal.salbqapbhs;
+      --⑥已付货款
+    ELSIF row_sal.saltrans = transid_pp0 THEN
+      row_sad.sadbqap6hs  := row_sal.salbqaphs;
+      row_sad.sadbqap6bhs := row_sal.salbqapbhs;
+      --预付款台帐
+    ELSIF row_sal.saltrans IN (transid_ppda, transid_ppdr) THEN
+      row_sad.sadbqppdhs  := row_sal.salbqaphs;
+      row_sad.sadbqppdbhs := row_sal.salbqapbhs;
+      l_ppd               := 1;
+      l_ap                := 0;
+    --[[[[添加transid_ppdc预付款反审 EORV-545 =  =P~ 2017.07.10
+    Elsif row_sal.saltrans IN (transid_ppdc) Then
+      row_sad.sadbqppdhs  := row_sal.salbqaphs*l_sign;
+      row_sad.sadbqppdbhs := row_sal.salbqapbhs*l_sign;
+      l_ppd               := 1;
+      l_ap                := 0;
+    --]]]]------------------------------------------------------
+    END IF;
+    --应付期末 = 应付期初 + (① + ③ - ② - ④) - ⑦ - (⑥ - ⑧)
+    row_sad.sadqmaphs  := l_sign * l_ap * row_sal.salbqaphs;
+    row_sad.sadqmapbhs := l_sign * l_ap * row_sal.salbqapbhs;
+    -- 预付期末
+    row_sad.sadqmppdhs  := l_sign * l_ppd * row_sal.salbqppdhs;
+    row_sad.sadqmppdbhs := l_sign * l_ppd * row_sal.salbqppdbhs;
+    row_sad.sadclass2   := row_sal.salclass2;
+    row_sad.sadspbm    := row_sal.salspbm;
+    row_sad.sadmfid   := row_sal.salmfid;
+    -- 应收期末
+    row_sad.sadqmarhs  := 0;
+    row_sad.sadqmarbhs := 0;
+    -- UPDATE supcurraccday
+    UPDATE supcurraccday
+       SET sadbqap1hs = sadbqap1hs + row_sad.sadbqap1hs,
+           sadbqap1bhs = sadbqap1bhs + row_sad.sadbqap1bhs,
+           sadbqap2hs = sadbqap2hs + row_sad.sadbqap2hs,
+           sadbqap2bhs = sadbqap2bhs + row_sad.sadbqap2bhs,
+           sadbqap3hs = sadbqap3hs + row_sad.sadbqap3hs,
+           sadbqap3bhs = sadbqap3bhs + row_sad.sadbqap3bhs,
+           sadbqap6hs = sadbqap6hs + row_sad.sadbqap6hs,
+           sadbqap6bhs = sadbqap6bhs + row_sad.sadbqap6bhs,
+           sadbqppd4hs = sadbqppd4hs + row_sad.sadbqppd4hs,
+           sadbqppd4bhs = sadbqppd4bhs + row_sad.sadbqppd4bhs,
+           sadbqar7hs = sadbqar7hs + row_sad.sadbqar7hs,
+           sadbqar7bhs = sadbqar7bhs + row_sad.sadbqar7bhs,
+           sadbqar8hs = sadbqar8hs + row_sad.sadbqar8hs,
+           sadbqar8bhs = sadbqar8bhs + row_sad.sadbqar8bhs,
+           sadbqppdhs = sadbqppdhs + row_sad.sadbqppdhs,
+           sadbqppdbhs = sadbqppdbhs + row_sad.sadbqppdbhs,
+           --期末
+           sadqmaphs = sadqmaphs + row_sad.sadqmaphs,
+           sadqmapbhs = sadqmapbhs + row_sad.sadqmapbhs,
+           sadqmppdhs = sadqmppdhs + row_sad.sadqmppdhs,
+           sadqmppdbhs = sadqmppdbhs + row_sad.sadqmppdbhs,
+           sadqmarhs = sadqmarhs + row_sad.sadqmarhs,
+           sadqmarbhs = sadqmarbhs + row_sad.sadqmarbhs
+     WHERE sadmarket = row_sad.sadmarket
+       AND saddate = row_sad.saddate
+       AND sadsupid = row_sad.sadsupid
+       AND sadwmid = row_sad.sadwmid
+       AND sadcontno = row_sad.sadcontno
+       AND sadmfid   = row_sad.sadmfid
+       and sadspbm  = row_sad.sadspbm
+       and sadclass2 = row_sad.sadclass2
+    RETURNING sadqcaphs, sadqcapbhs, sadqcppdhs, sadqcppdbhs,
+              sadqcarhs, sadqcarbhs, sadqmaphs, sadqmapbhs,
+              sadqmppdhs, sadqmppdbhs, sadqmarhs, sadqmarbhs
+         INTO row_sad.sadqcaphs, row_sad.sadqcapbhs, row_sad.sadqcppdhs, row_sad.sadqcppdbhs,
+              row_sad.sadqcarhs, row_sad.sadqcarbhs, row_sad.sadqmaphs, row_sad.sadqmapbhs,
+              row_sad.sadqmppdhs, row_sad.sadqmppdbhs, row_sad.sadqmarhs, row_sad.sadqmarbhs;
+    IF SQL%ROWCOUNT = 0 OR SQL%ROWCOUNT IS NULL THEN
+      BEGIN
+        SELECT sadqmaphs, sadqmapbhs, sadqmppdhs, sadqmppdbhs, sadqmarhs,
+               sadqmarbhs
+          INTO row_sad.sadqcaphs, row_sad.sadqcapbhs, row_sad.sadqcppdhs,
+               row_sad.sadqcppdbhs, row_sad.sadqcarhs, row_sad.sadqcarbhs
+          FROM (SELECT sadqmaphs, sadqmapbhs, sadqmppdhs, sadqmppdbhs,
+                        sadqmarhs, sadqmarbhs
+                   FROM supcurraccday
+                  WHERE saddate > row_sad.saddate - 60
+                    AND saddate < row_sad.saddate
+                    AND sadmarket = row_sad.sadmarket
+                    AND sadsupid = row_sad.sadsupid
+                    AND sadwmid = row_sad.sadwmid
+                    AND sadcontno = row_sad.sadcontno
+                    AND sadclass2  = row_sad.sadclass2
+                    and sadspbm   = row_sad.sadspbm
+                    and sadmfid   = row_sad.sadmfid
+                  ORDER BY saddate DESC)
+         WHERE rownum = 1;
+        row_sad.sadqmaphs   := row_sad.sadqmaphs + row_sad.sadqcaphs;
+        row_sad.sadqmapbhs  := row_sad.sadqmapbhs + row_sad.sadqcapbhs;
+        row_sad.sadqmppdhs  := row_sad.sadqmppdhs + row_sad.sadqcppdhs;
+        row_sad.sadqmppdbhs := row_sad.sadqmppdbhs + row_sad.sadqcppdbhs;
+        row_sad.sadqmarhs   := row_sad.sadqmarhs + row_sad.sadqcarhs;
+        row_sad.sadqmarbhs  := row_sad.sadqmarbhs + row_sad.sadqcarbhs;
+      EXCEPTION
+        WHEN OTHERS THEN
+          row_sad.sadqcaphs   := 0;
+          row_sad.sadqcapbhs  := 0;
+          row_sad.sadqcppdhs  := 0;
+          row_sad.sadqcppdbhs := 0;
+          row_sad.sadqcarhs   := 0;
+          row_sad.sadqcarbhs  := 0;
+      END;
+      INSERT INTO supcurraccday VALUES row_sad;
+    END IF;
+    --reset期初期末
+    IF p_di = 'I' THEN
+      --期初
+      row_sal.salqcaphs   := row_sad.sadqcaphs;
+      row_sal.salqcapbhs  := row_sad.sadqcapbhs;
+      row_sal.salqcppdhs  := row_sad.sadqcppdhs;
+      row_sal.salqcppdbhs := row_sad.sadqcppdbhs;
+      row_sal.salqcarhs   := row_sad.sadqcarhs;
+      row_sal.salqcarbhs  := row_sad.sadqcarbhs;
+      --期末
+      row_sal.salqmaphs   := row_sad.sadqmaphs;
+      row_sal.salqmapbhs  := row_sad.sadqmapbhs;
+      row_sal.salqmppdhs  := row_sad.sadqmppdhs;
+      row_sal.salqmppdbhs := row_sad.sadqmppdbhs;
+      row_sal.salqmarhs   := row_sad.sadqmarhs;
+      row_sal.salqmarbhs  := row_sad.sadqmarbhs;
+      -- INSERT INTO supcurracclist
+      INSERT INTO supcurracclist VALUES row_sal;
+    ELSIF p_di = 'D' THEN
+      DELETE FROM supcurracclist WHERE salseq = row_sal.salseq;
+    END IF;
+  END;
+  PROCEDURE initsal(p_sal IN OUT supcurracclist%ROWTYPE) AS
+    l_seq NUMBER;
+  BEGIN
+    p_sal := NULL;
+    --
+    SELECT seq_sal.NEXTVAL INTO l_seq FROM dual;
+    p_sal.salseq      := l_seq;
+    p_sal.salmarket   := NULL;
+    p_sal.saldate     := NULL;
+    p_sal.salsysdate  := NULL;
+    p_sal.salsupid    := NULL;
+    p_sal.salwmid     := NULL;
+    p_sal.salcontno   := NULL;
+    p_sal.saltrans    := NULL;
+    p_sal.salqcaphs   := 0;
+    p_sal.salqcapbhs  := 0;
+    p_sal.salqcppdhs  := 0;
+    p_sal.salqcppdbhs := 0;
+    p_sal.salqcarhs   := 0;
+    p_sal.salqcarbhs  := 0;
+    p_sal.salbillno   := '0';
+    p_sal.saldjlb     := '0';
+    p_sal.salbqaphs   := 0;
+    p_sal.salbqapbhs  := 0;
+    p_sal.salbqppdhs  := 0;
+    p_sal.salbqppdbhs := 0;
+    p_sal.salbqarhs   := 0;
+    p_sal.salbqarbhs  := 0;
+    p_sal.salqmaphs   := 0;
+    p_sal.salqmapbhs  := 0;
+    p_sal.salqmppdhs  := 0;
+    p_sal.salqmppdbhs := 0;
+    p_sal.salqmarhs   := 0;
+    p_sal.salqmarbhs  := 0;
+  END;
+  --按日生成①发生额④预付款⑧已扣费用
+   PROCEDURE dayrun
+  (
+    p_date_min IN DATE,
+    P_date_max in date,
+    p_mkt  IN VARCHAR2
+  ) AS
+  i  number;
+  j  number;
+  BEGIN
+    i := p_date_max  - p_date_min + 1;
+    for j in 1.. i
+    loop
+
+        init(p_date_min +j -2, p_date_min+ j-1,p_mkt);
+        dayrun(p_date_min + j -1,p_mkt);
+    end loop;
+  END;
+  PROCEDURE dayrun
+  (
+    p_date IN DATE,
+    p_mkt  IN VARCHAR2
+  ) AS
+    row_sal  supcurracclist%ROWTYPE;
+    row_sal2 supcurracclist%ROWTYPE;
+  BEGIN
+    -- 避免重复生成  先删除
+    FOR row_sal IN (SELECT *
+                      FROM supcurracclist
+                     WHERE saldate = p_date
+                       AND salmarket = p_mkt
+                       AND saltrans IN
+                           (transid_fsjh, transid_fstc, transid_fsjhtz,
+                            transid_fsxs, transid_fsth, transid_fspf,
+                            transid_fshcpf, transid_fsxstz, transid_fspftz,
+                            transid_ppd, transid_fy0)
+                       And saldjlb <> 'PPD')
+    LOOP
+      row_sal2            := row_sal;
+      row_sal2.salbqaphs  := -1 * row_sal2.salbqaphs;
+      row_sal2.salbqapbhs := -1 * row_sal2.salbqapbhs;
+      --
+      runlist(row_sal2, 'D'); --删除
+    END LOOP;
+    --①.发生
+    FOR r_jgl IN ( --经销/成本代销
+                  SELECT jglsupid, jglwmid, jgldate, jglhsjjje, jglbhsjjje,
+                          jgltran, jglbillno, jgln13, jgln15,jglmfid,
+                          nvl(fgetcontno(jglsupid, jglwmid, jgldate, jglmfid,
+                                          jglppcode), '0') contno
+                    FROM jxcgoodslist
+                   WHERE jgldate = p_date
+                     AND jglmarket = p_mkt
+                     AND jglwmid IN ('1', '2')
+                     AND jgltran IN ('1', '2', 'U')
+                  UNION ALL
+                  --扣率代销/联营/租赁
+                  SELECT jglsupid, jglwmid, jgldate, jglhsjjje, jglbhsjjje,
+                         jgltran, jglbillno, jgln13, jgln15,jglmfid,
+                         nvl(fgetcontno(jglsupid, jglwmid, jgldate, jglmfid,
+                                         jglppcode), '0') contno
+                    FROM jxcgoodslist
+                   WHERE jgldate = p_date
+                     AND jglmarket = p_mkt
+                     AND jglwmid IN ('3', '4', '5')
+                     AND jgltran IN ('E', 'F', 'G', 'H', 'W', 'X'))
+    LOOP
+      initsal(row_sal);
+      row_sal.salmarket  := p_mkt;
+      row_sal.saldate    := r_jgl.jgldate;
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salsupid   := r_jgl.jglsupid;
+      row_sal.salwmid    := r_jgl.jglwmid;
+      row_sal.salcontno  := r_jgl.contno;
+      row_sal.saltrans   := 'FS' || r_jgl.jgltran;
+      row_sal.salbillno  := r_jgl.jglbillno;
+      row_sal.saldjlb    := r_jgl.jgltran;
+      row_sal.salmfid  := r_jgl.jglmfid;
+      row_sal.salspbm  := fgetmframepcode( r_jgl.jglmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_jgl.jglmfid,2);
+      IF row_sal.salwmid IN ('1', '2') THEN
+        --进货退厂进货调整 符号为正 应付增加
+        row_sal.salbqaphs  := r_jgl.jglhsjjje;
+        row_sal.salbqapbhs := r_jgl.jglbhsjjje;
+      ELSIF row_sal.salwmid IN ('3', '4', '5') THEN
+        --销售符号为负 应付增加
+        row_sal.salbqaphs  := -1 * (r_jgl.jglhsjjje + r_jgl.jgln13);
+        row_sal.salbqapbhs := -1 * (r_jgl.jglbhsjjje + r_jgl.jgln15);
+      END IF;
+      --
+      runlist(row_sal);
+    END LOOP;
+    --④.预付款PPD
+    FOR r_ssb IN (SELECT ssbsupid, ssbwmid, ssbjhdate, ssbn4, ssbn5, ssbtran,
+                         ssbbillno, ssbcontno,ssbmmfid
+                    FROM settlesupbatch
+                   WHERE ssbjhdate = p_date
+                     AND ssbmmkt = p_mkt
+                     AND (ssbn4 <> 0 OR ssbn5 <> 0))
+    LOOP
+      initsal(row_sal);
+      row_sal.salmarket  := p_mkt;
+      row_sal.saldate    := r_ssb.ssbjhdate;
+      row_sal.salmfid    := r_ssb.ssbmmfid;
+      row_sal.salspbm    := fgetmframepcode( r_ssb.ssbmmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_ssb.ssbmmfid,2);
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salsupid   := r_ssb.ssbsupid;
+      row_sal.salwmid    := r_ssb.ssbwmid;
+      row_sal.salcontno  := r_ssb.ssbcontno;
+      row_sal.saltrans   := transid_ppd; --'PPD'
+      row_sal.salbillno  := r_ssb.ssbbillno;
+      row_sal.saldjlb    := r_ssb.ssbtran;
+      row_sal.salbqaphs  := r_ssb.ssbn4;
+      row_sal.salbqapbhs := r_ssb.ssbn5;
+      --
+      runlist(row_sal);
+    END LOOP;
+    --⑧已扣费用FY0
+    FOR r_ssc IN (SELECT sscsupid, sscwmid, auditdate, sscmoney, 0 bhs,
+                         '#' trans, sscbillno, ssccontno,sscmfid
+                    FROM supsetcharge
+                   WHERE auditdate = p_date
+                     AND sscmarket = p_mkt
+                     AND sscflag = 'G')
+    LOOP
+      initsal(row_sal);
+      row_sal.salmarket  := p_mkt;
+      row_sal.salmfid    := r_ssc.sscmfid;
+      row_sal.salspbm    := fgetmframepcode( r_ssc.sscmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_ssc.sscmfid,2);
+      row_sal.saldate    := r_ssc.auditdate;
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salsupid   := r_ssc.sscsupid;
+      row_sal.salwmid    := r_ssc.sscwmid;
+      row_sal.salcontno  := r_ssc.ssccontno;
+      row_sal.saltrans   := transid_fy0; --'FY0'
+      row_sal.salbillno  := r_ssc.sscbillno;
+      row_sal.saldjlb    := r_ssc.trans;
+      row_sal.salbqaphs  := r_ssc.sscmoney;
+      row_sal.salbqapbhs := r_ssc.bhs;
+      --
+      runlist(row_sal);
+    END LOOP;
+    COMMIT;
+  END;
+  --实时生成②票扣费用③结算调整额⑦应扣费用
+  PROCEDURE jsgen(p_jsno IN VARCHAR2) IS
+    row_ssh  supsettlehead%ROWTYPE;
+    row_sal  supcurracclist%ROWTYPE;
+    row_sal2 supcurracclist%ROWTYPE;
+    l_trans  supcurracclist.saltrans%TYPE;
+  BEGIN
+    -- 删除的时候也可以调用。
+    BEGIN
+      SELECT * INTO row_ssh FROM supsettlehead WHERE sshbillno = p_jsno;
+    EXCEPTION
+      WHEN no_data_found Then
+         Null;
+      When Others Then
+        raise_application_error(errcode, p_jsno || '->CHK01 结算单不存在:'||Sqlerrm);
+    END;
+
+    --先红冲该结算单生成的
+    FOR row_sal IN (SELECT *
+                      FROM supcurracclist
+                     WHERE salbillno = p_jsno
+                       --AND saldjlb = row_ssh.sshdjlb
+                       AND saltrans IN
+                           (transid_fy1, transid_fy2, transid_jstz)
+                       AND salnum1 IS NULL)
+    LOOP
+      row_sal2         := row_sal;
+      row_sal2.salnum1 := row_sal2.salseq; --原seq
+      SELECT seq_sal.NEXTVAL INTO row_sal2.salseq FROM dual;
+      row_sal2.salsysdate := SYSDATE;
+      row_sal2.saldate    := TRUNC(SYSDATE);
+      row_sal2.salbqaphs  := -1 * row_sal2.salbqaphs;
+      row_sal2.salbqapbhs := -1 * row_sal2.salbqapbhs;
+      --
+      runlist(row_sal2);
+      UPDATE supcurracclist
+         SET salnum1 = row_sal.salseq
+       WHERE salseq = row_sal.salseq;
+    END LOOP;
+    /*
+    ②票扣费用：当日计入结算成本的票扣费用，按结算结束日期统计，结算单生 || FY1
+                成时记录。
+    ⑦应扣费用：当日非票扣费用，按结算结束日期统计，结算单生成时记录。   || FY2
+    */
+    --②票扣费用⑦应扣费用
+    FOR r_ssc IN (SELECT person1, sscmoney, sscmarket,sscmfid
+                    FROM supsetcharge
+                   WHERE sscjsno = p_jsno
+                     And Person1 In ('Y','N')
+                     AND sscmoney <> 0)
+    LOOP
+      IF r_ssc.person1 = 'Y' THEN
+        --票扣费用
+        l_trans := transid_fy1; --FY1
+      --ELSIF r_ssc.person1 in ( 'N','0') THEN
+      ELSIF r_ssc.person1 = 'N' THEN
+        --非票扣费用
+        l_trans := transid_fy2; --FY2
+      END IF;
+      --
+      initsal(row_sal);
+      row_sal.salmarket  := r_ssc.sscmarket;
+      row_sal.saldate    := TRUNC(SYSDATE);--row_ssh.sshthisdate;
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salmfid  := r_ssc.sscmfid;
+      row_sal.salspbm  := fgetmframepcode( r_ssc.sscmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_ssc.sscmfid,2);
+      row_sal.salsupid   := row_ssh.sshsupid;
+      row_sal.salwmid    := row_ssh.sshwmid;
+      row_sal.salcontno  := row_ssh.sshcontno;
+      row_sal.saltrans   := l_trans;
+      row_sal.salbillno  := row_ssh.sshbillno;
+      row_sal.saldjlb    := row_ssh.sshdjlb;
+      row_sal.salbqaphs  := r_ssc.sscmoney;
+      row_sal.salbqapbhs := 0;
+      --
+      runlist(row_sal);
+    END LOOP;
+    /*
+    ③结算调整额:对于代销、联营，由保底和超额产生的结算的调整金额。按结算|| TZ1
+              结束日期统计，结算单生成时记录。
+    */
+    /*
+    FOR r_ssd IN (SELECT Decode(ssdn23, 0, 0, ssdn23 - ssdn10) tz1,
+                         Decode(ssdn26, 0, 0, ssdn26 - ssdn10) tz2,
+                         ssdmarket,
+                         ssdmfid
+                    FROM supsettledet
+                   WHERE ssdbillno = p_jsno
+                     And row_ssh.sshwmid in ('2','3','4')
+                     And (ssdn23 <> 0 Or ssdn26 <> 0))
+    LOOP
+      initsal(row_sal);
+      row_sal.salmarket  := r_ssd.ssdmarket;
+      row_sal.saldate    := TRUNC(SYSDATE);--row_ssh.sshthisdate;
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salmfid    := r_ssd.ssdmfid;
+      row_sal.salspbm    := fgetmframepcode( r_ssd.ssdmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_ssd.ssdmfid,2);
+      row_sal.salsupid   := row_ssh.sshsupid;
+      row_sal.salwmid    := row_ssh.sshwmid;
+      row_sal.salcontno  := row_ssh.sshcontno;
+      row_sal.saltrans   := transid_jstz; --'TZ1'
+      row_sal.salbillno  := row_ssh.sshbillno;
+      row_sal.saldjlb    := row_ssh.sshdjlb;
+      row_sal.salbqaphs  := r_ssd.tz1 + r_ssd.tz2;
+      row_sal.salbqapbhs := 0;
+      --
+      runlist(row_sal);
+    END LOOP;*/
+
+    /*
+     ③结算调整额:对于代销、联营，由保底和超额产生的结算的调整金额。按结算|| TZ1
+              结束日期统计，结算单生成时记录。
+           1->毛利保底
+           2->销售保底
+           3->全额超额
+           4->差额超额
+           5->特卖超额
+       其中6->租赁租金
+    */
+    FOR r_ssd IN (SELECT ssdn63,
+                         ssdmarket,
+                         ssdmfid
+                    FROM supsettledet
+                   WHERE ssdbillno = p_jsno
+                     And ssdvc6 in ('1','2','3','4','5','6')
+                     And ssdn63 <> 0)
+    LOOP
+      initsal(row_sal);
+      row_sal.salmarket  := r_ssd.ssdmarket;
+      row_sal.saldate    := TRUNC(SYSDATE);--row_ssh.sshthisdate;
+      row_sal.salsysdate := SYSDATE;
+      row_sal.salmfid    := r_ssd.ssdmfid;
+      row_sal.salspbm    := fgetmframepcode( r_ssd.ssdmfid,3);
+      row_sal.salclass2  := fgetmframepcode( r_ssd.ssdmfid,2);
+      row_sal.salsupid   := row_ssh.sshsupid;
+      row_sal.salwmid    := row_ssh.sshwmid;
+      row_sal.salcontno  := row_ssh.sshcontno;
+      row_sal.saltrans   := transid_jstz; --'TZ1'
+      row_sal.salbillno  := row_ssh.sshbillno;
+      row_sal.saldjlb    := row_ssh.sshdjlb;
+      row_sal.salbqaphs  := -1 * r_ssd.ssdn63;
+      row_sal.salbqapbhs := 0;
+      --
+      runlist(row_sal);
+    END LOOP;
+
+  END;
+  --⑥已付货款：结算单付款时根据结算成本记录 || PD0
+  PROCEDURE paygen
+  (
+    p_payno  IN VARCHAR2,
+    p_action IN VARCHAR2
+  ) IS
+    row_sal  supcurracclist%ROWTYPE;
+    row_sal2 supcurracclist%ROWTYPE;
+  BEGIN
+    IF p_action = 'PAY' THEN
+      FOR r_pay IN (SELECT pbsupid, pbwmid, pbcontno, PBSF, auditdate,
+                           pbmkt ,pbmfid
+                      FROM paybatch,SUPPAYHEAD
+                     WHERE PBPAYBILLNO = SPHBILLNO AND
+                           SPHBILLNO = P_PAYNO /*
+                       AND gpttype = '1'
+                       AND gptflag = 'Y'
+                       AND gptpaybillno = p_payno*/)
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_pay.pbmkt;
+        row_sal.salmfid    := r_pay.pbmfid;
+        row_sal.salspbm    := fgetmframepcode(r_pay.pbmfid,3);
+        row_sal.salclass2  := fgetmframepcode(r_pay.pbmfid,2);
+        row_sal.saldate    := r_pay.auditdate;
+        row_sal.salsysdate := SYSDATE;
+        row_sal.salsupid   := r_pay.pbsupid;
+        row_sal.salwmid    := r_pay.pbwmid;
+        row_sal.salcontno  := r_pay.pbcontno;
+        row_sal.saltrans   := transid_pp0; --'PD0'
+        row_sal.salbillno  := p_payno;
+        row_sal.saldjlb    := 'PAY';
+        row_sal.salbqaphs  := r_pay.PBSF;
+        row_sal.salbqapbhs := 0;
+        runlist(row_sal);
+      END LOOP;
+    ELSIF p_action = 'CANCEL' THEN
+      FOR row_sal IN (SELECT *
+                        FROM supcurracclist
+                       WHERE salbillno = p_payno
+                         AND saldjlb = 'PAY'
+                         AND salnum1 IS NULL)
+      LOOP
+        row_sal2         := row_sal;
+        row_sal2.salnum1 := row_sal2.salseq; --原seq
+        SELECT seq_sal.NEXTVAL INTO row_sal2.salseq FROM dual;
+        row_sal2.salsysdate := SYSDATE;
+        row_sal2.saldate    := TRUNC(SYSDATE);
+        row_sal2.salbqaphs  := -1 * row_sal2.salbqaphs;
+        row_sal2.salbqapbhs := -1 * row_sal2.salbqapbhs;
+        --
+        runlist(row_sal2);
+        UPDATE supcurracclist
+           SET salnum1 = row_sal.salseq
+         WHERE salseq = row_sal.salseq;
+      END LOOP;
+    END IF;
+  END;
+  -- 预付款台帐
+  --预付款单审核后，增加预付款金额，入库单审核后，减少预付款金额。
+  PROCEDURE yfkgen
+  (
+    p_billno IN VARCHAR2,
+    p_action IN VARCHAR2
+  ) IS
+    row_sal supcurracclist%ROWTYPE;
+    row_bih binstrhead%ROWTYPE;
+  BEGIN
+    IF p_action = 'PAY' THEN
+      --预付款审核 增加预付款金额
+      FOR r_ssy IN (SELECT ssybillno, ssysupid, ssywmid, ssymarket, ssycontno,
+                           ssysfje, auditdate,SSYMFID
+                      FROM supsetyfk
+                     WHERE ssybillno = p_billno
+                       AND ssyflag = bsupyfk.flagapproved)
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_ssy.ssymarket;
+         row_sal.salmfid    := r_ssy.SSYMFID;
+          row_sal.salspbm  := fgetmframepcode( r_ssy.SSYMFID,3);
+        row_sal.salclass2  := fgetmframepcode( r_ssy.SSYMFID,2);
+        row_sal.saldate    := r_ssy.auditdate;
+
+        row_sal.salsysdate := SYSDATE;
+        row_sal.salsupid   := r_ssy.ssysupid;
+        row_sal.salwmid    := r_ssy.ssywmid;
+        row_sal.salcontno  := r_ssy.ssycontno;
+        row_sal.saltrans   := transid_ppda; --'PDD+'
+        row_sal.salbillno  := r_ssy.ssybillno;
+        row_sal.saldjlb    := 'PPD';
+        row_sal.salbqppdhs   := r_ssy.ssysfje;
+        row_sal.salbqppdbhs  := 0;
+        --
+
+        runlist(row_sal);
+      END LOOP;
+    ELSIF p_action = 'PAY_CANCEL' THEN
+      --预付款审核 增加预付款金额
+      FOR r_ssy IN (SELECT ssybillno, ssysupid, ssywmid, ssymarket, ssycontno,
+                           ssysfje, auditdate,SSYMFID
+                      FROM supsetyfk
+                     WHERE ssybillno = p_billno
+                       AND ssyflag = bsupyfk.flagcanceled)
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_ssy.ssymarket;
+        row_sal.salmfid    := r_ssy.SSYMFID;
+        row_sal.salspbm    := fgetmframepcode( r_ssy.SSYMFID,3);
+        row_sal.salclass2  := fgetmframepcode( r_ssy.SSYMFID,2);
+        row_sal.saldate    := r_ssy.auditdate;
+
+        row_sal.salsysdate := SYSDATE;
+        row_sal.salsupid   := r_ssy.ssysupid;
+        row_sal.salwmid    := r_ssy.ssywmid;
+        row_sal.salcontno  := r_ssy.ssycontno;
+        row_sal.saltrans   := transid_ppda; --'PDD+'
+        row_sal.salbillno  := r_ssy.ssybillno;
+        row_sal.saldjlb    := 'PPD';
+        row_sal.salbqppdhs   := -r_ssy.ssysfje;
+        row_sal.salbqppdbhs  := 0;
+        --
+
+        runlist(row_sal);
+      END LOOP;
+
+    ELSIF p_action = 'PREPAY' THEN
+      FOR r_pp IN (SELECT *
+                     FROM supprepay
+                    WHERE sppbillno = p_billno
+                      AND sppstatus = BSupPrepay.FlagApproved)
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_pp.sppmkt;
+        row_sal.saldate    := r_pp.auditdate;
+
+        row_sal.salmfid    := r_pp.sppmfid;
+        row_sal.salspbm  := fgetmframepcode( r_pp.sppmfid,3);
+        row_sal.salclass2  := fgetmframepcode( r_pp.sppmfid,2);
+        row_sal.salsysdate := SYSDATE;
+        row_sal.salsupid   := r_pp.sppsupid;
+        row_sal.salwmid    := r_pp.sppwmid;
+        row_sal.salcontno  := r_pp.sppcontno;
+        row_sal.saltrans   := transid_ppd; --'PDD+'
+        row_sal.salbillno  := r_pp.sppbillno;
+        row_sal.saldjlb    := 'PPD';
+        row_sal.salbqaphs := r_pp.sppactpay;
+        row_sal.salbqapbhs:= 0;
+
+        runlist(row_sal);
+      END LOOP;
+    --[[[[预付款单反审 EORV-545 =  =P~ 2017.07.10
+    ELSIF p_action = 'PREPAY_CANCEL' Then
+      --预付款反审
+      FOR r_pp IN (SELECT *
+                     FROM supprepay
+                    WHERE sppbillno = p_billno
+                      AND sppstatus = BSupPrepay.FlagEditing)
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_pp.sppmkt;
+        row_sal.saldate    := /*r_pp.auditdate*/SYSDATE;
+
+        row_sal.salmfid    := r_pp.sppmfid;
+        row_sal.salspbm  := fgetmframepcode( r_pp.sppmfid,3);
+        row_sal.salclass2  := fgetmframepcode( r_pp.sppmfid,2);
+        row_sal.salsysdate := SYSDATE;
+        row_sal.salsupid   := r_pp.sppsupid;
+        row_sal.salwmid    := r_pp.sppwmid;
+        row_sal.salcontno  := r_pp.sppcontno;
+        row_sal.saltrans   := transid_ppdc; --'PDDC'
+        row_sal.salbillno  := r_pp.sppbillno;
+        row_sal.saldjlb    := 'PPD';
+        row_sal.salbqaphs := r_pp.sppactpay;
+        row_sal.salbqapbhs:= 0;
+
+        runlist(row_sal);
+      End Loop;
+    --]]]]-------------------------------------------
+    ELSIF p_action = 'BINSTR' THEN
+      --入库单审核 减少预付款金额。
+      BEGIN
+        SELECT *
+          INTO row_bih
+          FROM binstrhead
+         WHERE bihbillno = p_billno
+           AND bihflag = binstr.flagapproved;
+      EXCEPTION
+        WHEN no_data_found THEN
+          raise_application_error(errcode,
+                                  p_billno || '->CHK01 入库单据不存在或者未审核!');
+      END;
+      FOR r_ssy IN (SELECT ssybillno, ssysupid, ssywmid, ssymarket, ssycontno,ssymfid,
+                           ssysfje, ssysfbhsje, auditdate
+                      FROM supsetyfk
+                     WHERE ssyorderno = row_bih.bihorderno
+                       AND ssyflag = bsupyfk.flagapproved
+                       AND (ssysfje <> 0 OR ssysfbhsje <> 0))
+      LOOP
+        initsal(row_sal);
+        row_sal.salmarket  := r_ssy.ssymarket;
+        row_sal.salmfid :=  r_ssy.SSYMFID;
+        row_sal.salspbm  := fgetmframepcode( r_ssy.SSYMFID,3);
+        row_sal.salclass2  := fgetmframepcode( r_ssy.SSYMFID,2);
+        row_sal.saldate    := r_ssy.auditdate;
+        row_sal.salsysdate := SYSDATE;
+
+        row_sal.salsupid   := r_ssy.ssysupid;
+        row_sal.salwmid    := r_ssy.ssywmid;
+        row_sal.salcontno  := r_ssy.ssycontno;
+        row_sal.saltrans   := transid_ppdr; --'PDD-'
+        row_sal.salbillno  := r_ssy.ssybillno;
+        row_sal.saldjlb    := 'PPD';
+        row_sal.salbqppdhs  := r_ssy.ssysfje;
+        row_sal.salbqppdbhs := r_ssy.ssysfbhsje;
+        --
+        runlist(row_sal);
+      END LOOP;
+    END IF;
+  END;
+END;
+

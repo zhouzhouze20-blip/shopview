@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    container_name: shopview-app
+    restart: unless-stopped
+    user: ${APP_RUN_USER:-0:0}
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT}:${PORT}"
+    volumes:
+      - ./uploads:${UPLOAD_PATH}:Z
+      - ./logs:${LOG_PATH}:Z

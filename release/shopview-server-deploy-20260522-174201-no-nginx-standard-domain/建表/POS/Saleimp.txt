@@ -1,0 +1,296 @@
+CREATE OR REPLACE Package Body Saleimp Is
+
+	Procedure Raiseerr(Msg In Varchar2) As
+	Begin
+		Rollback;
+		Raise_Application_Error(Errcode, Msg);
+	End;
+
+	Function f_GetPaymode(p_Type In Varchar2) Return Varchar2 Is
+		Result Varchar2(20);
+	Begin
+		Select pPmCode
+		  Into Result
+		  From dbusrpos.PosPaymode
+		 Where ppmtype = p_Type And
+				 PpmFlag = 'Y' And
+             PpmStatus = 'Y' And
+				 Rownum = 1
+		 Order By 1;
+		Return Result;
+	Exception
+		When Others Then
+			Return '01';
+	End;
+
+	/*销售数据上传接口 多表上传模式*/
+	--上传主表
+	--上传商品明细
+	--上传付款方式明细
+	--确认上传完毕
+	/*销售数据上传接口 单表上传模式*/
+	Procedure Upload_Invno
+	(
+		v_Mktid    Varchar2,
+		v_Storeid  Varchar2, --店铺号
+		v_Posid    Varchar2, --收银机号
+		v_Billnum  Varchar2, --小票号
+		v_Billdate Varchar2, --交易时间
+		v_Billtype Number, --单据类别 1-销售 2-红冲销售 4-退货 5-红冲退货
+		v_Goodsid  Varchar2, --商品编码
+		v_Price    Number, --价格
+		v_Num      Number, --数量
+		v_Amount   Number, --金额
+		v_Paymode  Varchar2, --付款方式
+		v_Oposid   Varchar2, --原收银机号
+		v_Obillnum Varchar2 --原交易流水号
+	) As
+		l_Count Number;
+		l_Mkt   Varchar2(20);
+		l_Tmp   Varchar2(1);
+		l_Date  Date;
+	Begin
+		Select Count(*)
+		  Into l_Count
+		  From Saleinfo_Temp
+		 Where Mfcode = v_Storeid And
+				 Posid = v_Posid And
+				 Invno = v_Billnum;
+		If l_Count > 0 Then
+			Raise_Application_Error(Errcode, '1.0->交易流水号在铺位[' || v_Storeid || ']中已经使用!请检查!');
+		End If;
+		Begin
+			Select Mffcode Into l_Mkt From Manaframe Where Mfcode = v_Storeid;
+		Exception
+			When Others Then
+				Raise_Application_Error(Errcode, '2.0->铺位[' || v_Storeid || ']在系统中未定义,请检查!');
+		End;
+		If l_Mkt <> v_Mktid Then
+			Raise_Application_Error(Errcode, '2.0->铺位[' || v_Storeid || ']和门店[' || v_Mktid || ']不匹配,请检查!');
+		End If;
+		Begin
+			Select 'X'
+			  Into l_Tmp
+			  From Goodsbase,
+					 Goodsmframe
+			 Where Gmfmfid = v_Storeid And /*Gmfstatus = 'Y' And*/
+					 Gbid = Gmfgdid And
+					 Gbid = v_Goodsid And
+					 Rownum = 1;
+		Exception
+			When Others Then
+				Raise_Application_Error(Errcode, '3.0->商品[' || v_Goodsid || ']在系统中未定义或未定义在此铺位的经营,请检查!');
+		End;
+		If Abs(v_Amount - v_Num * v_Price) > 0.01 Then
+			Raise_Application_Error(Errcode, '4.0->金额[' || v_Amount || ']和数量*单价不相符,请检查!');
+		End If;
+		If v_Billtype Not In (Trans_Xs, Trans_Xshc, Trans_Th, Trans_Thhc) Then
+			Raise_Application_Error(Errcode, '5.0->小票类型[' || v_Billtype || ']不正确,请检查!');
+		End If;
+		Begin
+			l_Date := To_Date(v_Billdate, 'YYYY-MM-DD HH24:MI:SS');
+			If l_Date Is Null Then
+				Raise_Application_Error(Errcode, '6.0->交易日期[' || v_Billdate || ']不正确,请检查!');
+			End If;
+		Exception
+			When Others Then
+				Raise_Application_Error(Errcode, '7.0->交易日期[' || v_Billdate || ']不正确,请检查!');
+		End;
+		Insert Into Saleinfo_Temp
+			(Mfcode,
+			 Posid,
+			 Invno,
+			 Gdid,
+			 Gdname,
+			 Gdnum,
+			 Oughtpay,
+			 Zkje,
+			 Cash,
+			 Ccard,
+			 Scard,
+			 Ticket,
+			 Qtpay,
+			 Xsdate,
+			 Vc1,
+			 Vc2,
+			 Vc3,
+			 Vc4,
+			 Num1)
+		Values
+			(v_Storeid,
+			 v_Posid,
+			 v_Billnum,
+			 v_Goodsid,
+			 '',
+			 v_Num,
+			 v_Amount,
+			 0,
+			 v_Amount,
+			 0,
+			 0,
+			 0,
+			 0,
+			 l_Date,
+			 'N',
+			 v_Billtype,
+			 v_Oposid,
+			 v_Obillnum,
+			 v_Price);
+	End;
+
+	Procedure Sp_Gensale
+	(
+		r_Inv   In Saleinfo_Temp%Rowtype,
+		r_Rowid In Rowid
+	) As
+		l_Mkt    Varchar2(20);
+		l_Billno Number;
+	Begin
+		l_Billno := Improtsaleinterface.Getsalebillno;
+		If l_Billno <= 0 Then
+			Raiseerr('获取小票序号错误');
+		End If;
+		Begin
+			Select Mffcode Into l_Mkt From Manaframe Where Mfcode = r_Inv.Mfcode;
+		Exception
+			When Others Then
+				Raiseerr('获取门店号错误');
+		End;
+		Improtsaleinterface.Insertsalehead(l_Billno, l_Mkt, r_Inv.Vc2, Abs(r_Inv.Oughtpay), Abs(r_Inv.Oughtpay), '', Con_Syy, r_Inv.Xsdate, r_Inv.Posid);
+		Improtsaleinterface.Insertsalegoods(l_Billno, 1, l_Mkt, r_Inv.Mfcode, r_Inv.Gdid, Abs(r_Inv.Gdnum), Round(Abs(r_Inv.Oughtpay) / Abs(r_Inv.Gdnum), 4), Abs(r_Inv.Oughtpay));
+		--Improtsaleinterface.Insertsalepay(l_Billno, 1, l_Mkt, '01', Abs(r_Inv.Oughtpay));
+		--付款方式
+		If r_Inv.Cash <> 0 Then
+			Improtsaleinterface.Insertsalepay(l_Billno, 1, l_Mkt, f_GetPaymode('1'), Abs(r_Inv.Cash));
+		End If;
+		If r_Inv.CCard <> 0 Then
+			Improtsaleinterface.Insertsalepay(l_Billno, 2, l_Mkt, f_GetPaymode('3'), Abs(r_Inv.CCard));
+		End If;
+		If r_Inv.SCard <> 0 Then
+			Improtsaleinterface.Insertsalepay(l_Billno, 3, l_Mkt, f_GetPaymode('4'), Abs(r_Inv.SCard));
+		End If;
+		If r_Inv.Ticket <> 0 Then
+			Improtsaleinterface.Insertsalepay(l_Billno, 4, l_Mkt, f_GetPaymode('5'), Abs(r_Inv.Ticket));
+		End If;
+		If r_Inv.Qtpay <> 0 Then
+			Improtsaleinterface.Insertsalepay(l_Billno, 5, l_Mkt, f_GetPaymode('7'), Abs(r_Inv.Qtpay));
+		End If;
+		Improtsaleinterface.Insertsaleok(l_Billno);
+		Update Saleinfo_Temp
+			Set Vc1  = 'Y',
+				 Num2 = l_Billno
+		 Where Rowid = r_Rowid;
+	End;
+
+	/*生成小票*/
+	Procedure Sp_Gensale As
+		r_Saleinfo Saleinfo_Temp%Rowtype;
+		l_Msg      Varchar2(255);
+	Begin
+		For Vr In (Select Saleinfo_Temp.*,
+								Rowid
+						 From Saleinfo_Temp
+						Where Vc1 = 'N'
+						Order By Xsdate)
+		Loop
+			Begin
+				Select * Into r_Saleinfo From Saleinfo_Temp Where Rowid = Vr.Rowid;
+				Sp_Gensale(r_Saleinfo, Vr.Rowid);
+				Commit;
+			Exception
+				When Others Then
+					l_Msg := Sqlerrm;
+					Rollback;
+					Update Saleinfo_Temp Set Vc1 = 'X' Where Rowid = Vr.Rowid;
+					Insert Into Interfacelog
+						(Ilseq,
+						 Ildate,
+						 Iltypeid,
+						 Ilmode,
+						 Ilkey,
+						 Ilmfid,
+						 Ilfilename)
+						Select Seq_Interfacelog.Nextval,
+								 Sysdate,
+								 '2',
+								 '2',
+								 '铺位[' || Vr.Mfcode || ']' || '小票流水号[' || Vr.Invno || ']' || l_Msg,
+								 Vr.Mfcode,
+								 ''
+						  From Dual;
+					Commit;
+			End;
+		End Loop;
+	End;
+
+	Procedure Sp_Gethqimp As
+	Begin
+		Update Dbusrdif.Saleinfo_Temp@Sys Set Vc1 = '0' Where Vc1 = 'N';
+		Insert Into Saleinfo_Temp
+			(Mfcode,
+			 Posid,
+			 Invno,
+			 Gdid,
+			 Gdname,
+			 Gdnum,
+			 Oughtpay,
+			 Zkje,
+			 Cash,
+			 Ccard,
+			 Scard,
+			 Ticket,
+			 Qtpay,
+			 Xsdate,
+			 Vc1,
+			 Vc2,
+			 Vc3,
+			 Vc4,
+			 Num1,
+       Num3)
+			Select Mfcode,
+					 Posid,
+					 Invno,
+					 Gdid,
+					 Gdname,
+					 Gdnum,
+					 Oughtpay,
+					 Zkje,
+					 Cash,
+					 Ccard,
+					 Scard,
+					 Ticket,
+					 Qtpay,
+					 Xsdate,
+					 'N',
+					 Vc2,
+					 Vc3,
+					 Vc4,
+					 Num1,
+           Num3
+			  From Dbusrdif.Saleinfo_Temp@Sys
+			 Where Vc1 = '0';
+		Update Dbusrdif.Saleinfo_Temp@Sys Set Vc1 = 'E' Where Vc1 = '0';
+		Commit;
+	End;
+
+	Procedure Submit Is
+	Begin
+		Sp_Gethqimp;
+		Sp_GenSale;
+	End Submit;
+
+	Procedure Job_Submit(i_Time In Number) As
+		Jobid  Binary_Integer;
+		l_Time Number;
+	Begin
+		l_Time := Round(i_Time / 1440, 3);
+		Dbms_Job.Submit(Job => Jobid, What => 'Saleimp.Submit;', Next_Date => Sysdate + l_Time, Interval => 'SYSDATE + ' || To_Char(l_Time, '0.0000'), No_Parse => Null);
+		Commit;
+		Dbms_Output.Put_Line('JobID = ' || Jobid);
+	End Job_Submit;
+
+Begin
+	-- Initialization
+	Null;
+End Saleimp;
+

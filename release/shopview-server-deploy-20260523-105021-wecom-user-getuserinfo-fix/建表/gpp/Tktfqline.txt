@@ -1,0 +1,496 @@
+CREATE OR REPLACE Package Body Tktfqline Is
+
+  Function Fgetmidqno(Qtype In Varchar2, Ismzq In Varchar2) Return Varchar2 Is
+    L_Ymd Varchar2(10);
+    L_Max Number;
+    L_Qno Varchar2(20);
+  Begin
+    L_Ymd := To_Char(Sysdate, 'yyyymmdd');
+    Select Max(Substr(Fqlqno, Length(Qtype || L_Ymd || Ismzq) + 1, 6))
+      Into L_Max
+      From Fqlinelist
+     Where Substr(Fqlqno, 1, Length(Qtype || L_Ymd || Ismzq)) =
+           Qtype || L_Ymd || Ismzq;
+    If L_Max Is Null Or L_Max = 0 Then
+      L_Qno := Qtype || L_Ymd || Ismzq || Trim(To_Char(1, '000000'));
+    Else
+      L_Qno := Qtype || L_Ymd || Ismzq ||
+               Trim(To_Char(L_Max + 1, '000000'));
+    End If;
+    Return L_Qno;
+  End;
+
+  Function Fgetfqno(Qtype In Varchar2) Return Varchar2 Is
+    Ll_Qtype Number;
+    Ll_Seqno Number;
+    Ll_Rand  Number;
+    Ls_Qno   Varchar2(20);
+  Begin
+    Select Ascii(Qtype),
+           Seq_Fqtotal.Nextval,
+           Trunc(Dbms_Random.Value(0, 10000))
+      Into Ll_Qtype, Ll_Seqno, Ll_Rand
+      From Dual;
+    Ls_Qno := Trim(To_Char(Ll_Qtype)) ||
+              Trim(To_Char(Ll_Seqno, '00000000')) ||
+              Trim(To_Char(Ll_Rand, '0000'));
+    Return Ls_Qno;
+  End;
+
+  Procedure Insertlist(R_List Fqlinelist%Rowtype) Is
+  Begin
+    Insert Into Fqlinelist
+      (Fqlbillno,
+       Fqlrowno,
+       Fqlqtype,
+       Fqlismzq,
+       Fqlqmz,
+       Fqlqje,
+       Fqlxqmode,
+       Fqlksrq,
+       Fqljsrq,
+       Fqldays,
+       Fqlqno,
+       Fqlyqno)
+    Values
+      (R_List.Fqlbillno,
+       R_List.Fqlrowno,
+       R_List.Fqlqtype,
+       R_List.Fqlismzq,
+       R_List.Fqlqmz,
+       R_List.Fqlqje,
+       R_List.Fqlxqmode,
+       R_List.Fqlksrq,
+       R_List.Fqljsrq,
+       R_List.Fqldays,
+       R_List.Fqlqno,
+       R_List.Fqlyqno);
+  End;
+
+  Procedure Inserttotal(R_Total Tktcardfqtotal%Rowtype) Is
+  Begin
+    Insert Into Tktcardfqtotal
+      (Tcftseqno,
+       Tcftvipno,
+       Tcftstartdate,
+       Tcftenddate,
+       Tcftqtype,
+       Tcftfqje,
+       Tcftstatus,
+       Tcftvipexno,
+       Tcftmemo,
+       Tcftzpno,
+       Tcftfstpid,
+       Tcftcltpid,
+       Tcftflag,
+       Tcftransno,
+       Tcfttype,
+       Tcftqmz,
+       Tcftmkt,
+       Tcftjygs,
+       Tcftfqmkt,
+       Tcftfqrule,
+       Tcftrulepj,
+       Tcftsource,
+       Tcftismzq,
+       Tcftqno)
+    Values
+      (R_Total.Tcftseqno,
+       R_Total.Tcftvipno,
+       R_Total.Tcftstartdate,
+       R_Total.Tcftenddate,
+       R_Total.Tcftqtype,
+       R_Total.Tcftfqje,
+       R_Total.Tcftstatus,
+       R_Total.Tcftvipexno,
+       R_Total.Tcftmemo,
+       R_Total.Tcftzpno,
+       R_Total.Tcftfstpid,
+       R_Total.Tcftcltpid,
+       R_Total.Tcftflag,
+       R_Total.Tcftransno,
+       R_Total.Tcfttype,
+       R_Total.Tcftqmz,
+       R_Total.Tcftmkt,
+       R_Total.Tcftjygs,
+       R_Total.Tcftfqmkt,
+       R_Total.Tcftfqrule,
+       R_Total.Tcftrulepj,
+       R_Total.Tcftsource,
+       R_Total.Tcftismzq,
+       R_Total.Tcftqno);
+  End;
+
+  Procedure Inserttotlog(R_Log Tktcardfqlog%Rowtype) Is
+  Begin
+    Insert Into Tktcardfqlog
+      (Tcflseqno,
+       Tcflvipno,
+       Tcflstartdate,
+       Tcflenddate,
+       Tcfldate,
+       Tcflzy,
+       Tcflpopid,
+       Tcflpoprule,
+       Tcflmoney,
+       Tcflye,
+       Tcfloper,
+       Tcflsyjid,
+       Tcflinvno,
+       Tcflmemo,
+       Tcflsyjtrace,
+       Tcfljetype,
+       Tcflvipseq,
+       Tcflmkt,
+       Tcfljygs,
+       Tcflsource,
+       Tcfltransno,
+       Tcfltype,
+       Tcflqchg,
+       Tcflchr1,
+       Tcflchr2,
+       Tcflchr3,
+       Tcflnum1,
+       Tcflnum2,
+       Tcflnum3,
+       Tcflywdh,
+       Tcflismzq,
+       Tcflqmz,
+       Tcflqno)
+    Values
+      (R_Log.Tcflseqno,
+       R_Log.Tcflvipno,
+       R_Log.Tcflstartdate,
+       R_Log.Tcflenddate,
+       R_Log.Tcfldate,
+       R_Log.Tcflzy,
+       R_Log.Tcflpopid,
+       R_Log.Tcflpoprule,
+       R_Log.Tcflmoney,
+       R_Log.Tcflye,
+       R_Log.Tcfloper,
+       R_Log.Tcflsyjid,
+       R_Log.Tcflinvno,
+       R_Log.Tcflmemo,
+       R_Log.Tcflsyjtrace,
+       R_Log.Tcfljetype,
+       R_Log.Tcflvipseq,
+       R_Log.Tcflmkt,
+       R_Log.Tcfljygs,
+       R_Log.Tcflsource,
+       R_Log.Tcfltransno,
+       R_Log.Tcfltype,
+       R_Log.Tcflqchg,
+       R_Log.Tcflchr1,
+       R_Log.Tcflchr2,
+       R_Log.Tcflchr3,
+       R_Log.Tcflnum1,
+       R_Log.Tcflnum2,
+       R_Log.Tcflnum3,
+       R_Log.Tcflywdh,
+       R_Log.Tcflismzq,
+       R_Log.Tcflqmz,
+       R_Log.Tcflqno);
+  End;
+
+  --审核单据
+  Procedure Bapprove_Ff(P_Billno In Char,
+                        P_Person In Char,
+                        P_Billid In Char,
+                        P_Djlb   In Char) Is
+    Cursor Cur_d Is
+      Select * From Fqlinedetail Where Fqdbillno = P_Billno;
+    i         Number;
+    L_Exists  Number;
+    Row_h     Fqlinehead%Rowtype;
+    Row_d     Cur_d%Rowtype;
+    Row_List  Fqlinelist%Rowtype;
+    Row_Total Tktcardfqtotal%Rowtype;
+    Row_Log   Tktcardfqlog%Rowtype;
+  Begin
+    --查找单据头
+    Begin
+      Select *
+        Into Row_h
+        From Fqlinehead
+       Where Fqhbillno = P_Billno
+         For Update;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, P_Billno || '->1 未找到单据');
+    End;
+    --检查单据类型
+    If P_Djlb <> Billtypeff Or P_Billid <> Billidff Then
+      Raise_Application_Error(Errcode,
+                              P_Billno || '->2 单据类别错误,不能审核!');
+    End If;
+    --检查是否能审核
+    If Row_H.Fqhflag In (Flagcanceled, Flagapproved) Then
+      Raise_Application_Error(Errcode,
+                              P_Billno || '->3 单据已取消或已审核,不能修改!');
+    End If;
+  
+    Open Cur_d;
+    Loop
+      Fetch Cur_d
+        Into Row_d;
+      Exit When Cur_d%Notfound Or Cur_d%Notfound Is Null;
+      Row_List.Fqlbillno := P_Billno;
+      Row_List.Fqlrowno  := Row_D.Fqdrowno;
+      Row_List.Fqlqtype  := Row_D.Fqdtype;
+      Row_List.Fqlismzq  := Row_D.Fqdismzq;
+      Row_List.Fqlqmz    := Row_D.Fqdqmz;
+      Row_List.Fqlqje    := Row_D.Fqdqje;
+      Row_List.Fqlxqmode := Row_H.Fqhxqmode;
+      Row_List.Fqlksrq   := Row_H.Fqhksrq;
+      Row_List.Fqljsrq   := Row_H.Fqhjsrq;
+      Row_List.Fqldays   := Row_H.Fqhdays;
+      Row_List.Fqlmkt    := Row_H.FQHFQMKT; --添加发券门店 =  =P~ 2016.05.18
+      For i In 1 .. Row_D.Fqdqnum Loop
+        Row_List.Fqlqno := Fgetmidqno(Row_D.Fqdtype, Row_List.Fqlismzq);
+        Insertlist(Row_List);
+        If Row_H.Fqhchr1 = '1' Then
+          --判断该券号是否已经生成过系统中的券号
+          Select Count(*)
+            Into L_Exists
+            From Fqlinelist
+           Where Fqlbillno = P_Billno
+             And Fqlqno = Row_List.Fqlqno
+             And Fqlyqno Is Not Null;
+          If L_Exists < 1 Then
+            Select Seq_Tktcardfqtotal.Nextval, Seq_Tktcardfqlog.Nextval
+              Into Row_Total.Tcftseqno, Row_Log.Tcflseqno
+              From Dual;
+            Row_Total.Tcftvipno := '0';
+          
+            If Row_H.Fqhxqmode = '1' Then
+              Row_Total.Tcftstartdate := Row_H.Fqhksrq;
+              Row_Total.Tcftenddate   := Row_H.Fqhjsrq;
+            Else
+              Row_Total.Tcftstartdate := Trunc(Sysdate);
+              Select Decode(Row_H.Fqhxqmode,
+                            '2',
+                            Trunc(Sysdate) + (Row_H.Fqhdays - 1),
+                            To_Date('2099-12-31', 'yyyy-mm-dd'))
+                Into Row_Total.Tcftenddate
+                From Dual;
+            End If;
+            Row_Total.Tcftqtype   := Row_D.Fqdtype;
+            Row_Total.Tcftfqje    := Row_D.Fqdqje;
+            Row_Total.Tcftstatus  := 'Y';
+            Row_Total.Tcftvipexno := Row_Total.Tcftvipno;
+            Row_Total.Tcftmemo    := '线上券激活:' || P_Billno;
+            Row_Total.Tcftfstpid  := '0';
+            Row_Total.Tcftflag    := 'Y';
+            Row_Total.Tcftransno  := 0;
+            Row_Total.Tcfttype    := '2';
+            Row_Total.Tcftqmz     := Row_D.Fqdqmz;
+            Row_Total.Tcftjygs    := '002';
+            Row_Total.Tcftmkt     := '0';
+            Row_Total.Tcftsource  := /*'9'*/'6';--券来源:9是退货补现,已经被使用,换成6 =  =P~ 2016.05.18
+            Row_Total.Tcftfqmkt   := /*'0'*/Row_h.FQHFQMKT;--添加发券门店 =  =P~ 2016.05.18;
+            Row_Total.Tcftfqrule  := '0';
+            Row_Total.Tcftrulepj  := '0';
+            Row_Total.Tcftismzq   := Row_D.Fqdismzq;
+            Row_Total.Tcftqno     := Fgetfqno(Row_D.Fqdtype);
+            Inserttotal(Row_Total);
+          
+            --记录日志
+            Row_Log.Tcflvipno     := Row_Total.Tcftvipno;
+            Row_Log.Tcflstartdate := Row_Total.Tcftstartdate;
+            Row_Log.Tcflenddate   := Row_Total.Tcftenddate;
+            Row_Log.Tcfldate      := Sysdate;
+            Row_Log.Tcflzy        := 'X';
+            Row_Log.Tcflpopid     := '0';
+            Row_Log.Tcflpoprule   := '0';
+            Row_Log.Tcflmoney     := Row_Total.Tcftfqje;
+            Row_Log.Tcflye        := Row_Total.Tcftfqje;
+            Row_Log.Tcfloper      := P_Person;
+            Row_Log.Tcfljetype    := Row_Total.Tcftqtype;
+            Row_Log.Tcflvipseq    := Row_Total.Tcftseqno;
+            Row_Log.Tcflmkt       := /*Row_Total.Tcftmkt*/Row_Total.Tcftfqmkt;--发生门店调整 2016.05.18 =  =P~
+            Row_Log.Tcfljygs      := Row_Total.Tcftjygs;
+            Row_Log.Tcflsource    := Row_Total.Tcftsource;
+            Row_Log.Tcfltype      := '2';
+            Row_Log.Tcflywdh      := P_Billno;
+            Row_Log.Tcflismzq     := Row_Total.Tcftismzq;
+            Row_Log.Tcflqmz       := Row_Total.Tcftqmz;
+            Row_Log.Tcflqno       := Row_Total.Tcftqno;
+            Inserttotlog(Row_Log);
+          
+            Update Fqlinelist
+               Set Fqlyqno = Row_Total.Tcftqno
+             Where Fqlbillno = P_Billno
+               And Fqlqno = Row_List.Fqlqno
+               And Fqlyqno Is Null;
+          End If;
+        End If;
+      End Loop;
+    End Loop;
+    Close Cur_d;
+    --修改审核标志
+    Update Fqlinehead
+       Set Fqhflag      = Flagapproved,
+           Fqhauditor   = P_Person,
+           Fqhauditdate = Sysdate
+     Where Fqhbillno = P_Billno;
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+
+  Procedure Bapprove_Jh(P_Billno In Char,
+                        P_Person In Char,
+                        P_Billid In Char,
+                        P_Djlb   In Char) Is
+    Cursor Cur_d Is
+      Select * From Fqlinedetail Where Fqdbillno = P_Billno;
+    Row_h     Fqlinehead%Rowtype;--激活单
+    /*Row_fh    Fqlinehead%Rowtype;--发放单*/
+    Row_d     Cur_d%Rowtype;
+    Row_Total Tktcardfqtotal%Rowtype;
+    Row_Log   Tktcardfqlog%Rowtype;
+    Row_List  Fqlinelist%Rowtype;
+  Begin
+    --查找单据头
+    Begin
+      Select *
+        Into Row_h
+        From Fqlinehead
+       Where Fqhbillno = P_Billno
+         For Update;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, P_Billno || '->1 未找到单据');
+    End;
+    --[[[[查找发放单=  =P~ 2016.05.18
+    /*Begin
+      Select *
+        Into Row_fh
+        From Fqlinehead
+       Where Fqhbillno = Row_h.fqhchr1;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode, P_Billno || '->1 未找到发放单'||Row_h.fqhchr1);
+    End;*/
+    --]]]]---------------------------------
+    --检查单据类型
+    If P_Djlb <> Billtypejh Or P_Billid <> Billidjh Then
+      Raise_Application_Error(Errcode,
+                              P_Billno || '->2 单据类别错误,不能审核!');
+    End If;
+    --检查是否能审核
+    If Row_H.Fqhflag In (Flagcanceled, Flagapproved) Then
+      Raise_Application_Error(Errcode,
+                              P_Billno || '->3 单据已取消或已审核,不能修改!');
+    End If;
+  
+    Open Cur_d;
+    Loop
+      Fetch Cur_d
+        Into Row_d;
+      Exit When Cur_d%Notfound Or Cur_d%Notfound Is Null;
+      Select Seq_Tktcardfqtotal.Nextval, Seq_Tktcardfqlog.Nextval
+        Into Row_Total.Tcftseqno, Row_Log.Tcflseqno
+        From Dual;
+      Select * Into Row_List From Fqlinelist Where Fqlqno = Row_D.Fqdchr1;
+      If Row_D.Fqdchr2 Is Null Then
+        Row_Total.Tcftvipno := '0';
+      Else
+        Row_Total.Tcftvipno := Row_D.Fqdchr2;
+      End If;
+    
+      If Row_List.Fqlxqmode = '1' Then
+        Row_Total.Tcftstartdate := Row_List.Fqlksrq;
+        Row_Total.Tcftenddate   := Row_List.Fqljsrq;
+      Else
+        Row_Total.Tcftstartdate := Trunc(Sysdate);
+        Select Decode(Row_List.Fqlxqmode,
+                      '2',
+                      Trunc(Sysdate) + (Row_List.Fqldays - 1),
+                      To_Date('2099-12-31', 'yyyy-mm-dd'))
+          Into Row_Total.Tcftenddate
+          From Dual;
+      End If;
+      Row_Total.Tcftqtype   := Row_D.Fqdtype;
+      Row_Total.Tcftfqje    := Row_D.Fqdqje;
+      Row_Total.Tcftstatus  := 'Y';
+      Row_Total.Tcftvipexno := Row_Total.Tcftvipno;
+      Row_Total.Tcftmemo    := '线上券激活:' || P_Billno;
+      Row_Total.Tcftfstpid  := '0';
+      Row_Total.Tcftflag    := 'Y';
+      Row_Total.Tcftransno  := 0;
+      Row_Total.Tcfttype    := '2';
+      Row_Total.Tcftqmz     := Row_D.Fqdqmz;
+      Row_Total.Tcftjygs    := '002';
+      Row_Total.Tcftmkt     := '0';
+      Row_Total.Tcftsource  := /*'9'*/'6';--券来源:9是退货补现,已经被使用,换成6 =  =P~ 2016.05.18
+      Row_Total.Tcftfqmkt   := nvl(row_list.fqlmkt,'0');/*'0'Row_fh.FQHFQMKT;*/ --使用发放单的发券门店 =  =P~ 2016.05.18;
+      Row_Total.Tcftfqrule  := '0';
+      Row_Total.Tcftrulepj  := '0';
+      Row_Total.Tcftismzq   := Row_D.Fqdismzq;
+      Row_Total.Tcftqno     := Fgetfqno(Row_D.Fqdtype);
+      Inserttotal(Row_Total);
+    
+      --记录日志
+      Row_Log.Tcflvipno     := Row_Total.Tcftvipno;
+      Row_Log.Tcflstartdate := Row_Total.Tcftstartdate;
+      Row_Log.Tcflenddate   := Row_Total.Tcftenddate;
+      Row_Log.Tcfldate      := Sysdate;
+      Row_Log.Tcflzy        := 'X';
+      Row_Log.Tcflpopid     := '0';
+      Row_Log.Tcflpoprule   := '0';
+      Row_Log.Tcflmoney     := Row_Total.Tcftfqje;
+      Row_Log.Tcflye        := Row_Total.Tcftfqje;
+      Row_Log.Tcfloper      := P_Person;
+      Row_Log.Tcfljetype    := Row_Total.Tcftqtype;
+      Row_Log.Tcflvipseq    := Row_Total.Tcftseqno;
+      Row_Log.Tcflmkt       := /*Row_Total.Tcftmkt*/Row_Total.Tcftfqmkt;--发生门店调整 2016.05.18 =  =P~
+      Row_Log.Tcfljygs      := Row_Total.Tcftjygs;
+      Row_Log.Tcflsource    := Row_Total.Tcftsource;
+      Row_Log.Tcfltype      := '2';
+      Row_Log.Tcflywdh      := P_Billno;
+      Row_Log.Tcflismzq     := Row_Total.Tcftismzq;
+      Row_Log.Tcflqmz       := Row_Total.Tcftqmz;
+      Row_Log.Tcflqno       := Row_Total.Tcftqno;
+      Inserttotlog(Row_Log);
+    
+      Update Fqlinelist
+         Set Fqlyqno = Row_Total.Tcftqno
+       Where (Fqlbillno = Row_H.Fqhchr1 Or Row_H.Fqhchr1 Is Null)
+         And Fqlqno = Row_D.Fqdchr1
+         And Fqlyqno Is Null;
+      Update Fqlinedetail
+         Set Fqdchr3 = Row_Total.Tcftqno
+       Where Fqdbillno = P_Billno
+         And Fqdrowno = Row_D.Fqdrowno;
+    End Loop;
+    Close Cur_d;
+    --修改审核标志
+    Update Fqlinehead
+       Set Fqhflag      = Flagapproved,
+           Fqhauditor   = P_Person,
+           Fqhauditdate = Sysdate
+     Where Fqhbillno = P_Billno;
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+
+  Procedure Approve(P_Billno In Char,
+                    P_Person In Char,
+                    P_Billid In Char,
+                    P_Djlb   In Char) Is
+  Begin
+    If P_Djlb = Billtypeff Then
+      Bapprove_Ff(P_Billno, P_Person, P_Billid, P_Djlb);
+    Elsif P_Djlb = Billtypejh Then
+      Bapprove_Jh(P_Billno, P_Person, P_Billid, P_Djlb);
+    End If;
+    Commit;
+  End;
+End;

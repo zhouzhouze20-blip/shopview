@@ -1,0 +1,16 @@
+CREATE OR REPLACE PACKAGE BODY MOB_GETSYSPARA
+AS
+  -- 获取系统参数
+  -- 返回结果集为[参数代码，参数名称，能数值]
+  PROCEDURE GETSYSPARA
+  (
+    rc OUT RETCURSOR
+  )
+  AS
+  BEGIN
+    OPEN rc FOR
+      SELECT pparaid,pparaname,pparavalue FROM posprivatepara ORDER BY pparaid;
+  END GETSYSPARA;
+
+END MOB_GETSYSPARA;
+

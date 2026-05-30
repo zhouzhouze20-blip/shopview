@@ -1,0 +1,30 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETGOODSINFOLIST
+AS
+  -- 返回结果集为
+  -- 商品条码,主键  ,商品柜组,主键,唯一键  ,商品编码,唯一键,多单位码,唯一键,编码类型  P Z  ,商品名称,商品品类,商品品牌,商品单位,商品规格,包装含量
+  -- 零售价,会员价,会员价折扣分担,批发价  ,批发价折扣分担,销项税,削价价格，=0无削价,价格精度,最底批量数量,0-无批量  ,多单位标志（Y/N）
+  -- 是否输入批号标志（Y/N),是否允许授权折扣（Y/N),是否允许VIP折扣（Y/N),是否有赠送  ,是否电子秤商品,是否有配件,是否自提商品,最底折扣率
+  -- 最底折扣额,分析码,编码管理方法,备注,备用字段,备用字段,备用字段,备用字段,是否允许销红,库存数量,优惠单号,优惠类型,优惠零售价,优惠会员价
+  -- 优惠批发价,优惠零售价折扣率,优惠会员价折扣率,优惠批发价折扣率,优惠零售价折扣分担,优惠会员价折扣分担,优惠批发价折扣分担
+
+
+  PROCEDURE GETGOODSINFOLIST
+    (
+            vcode in varchar2,
+            vcodetype in char,
+
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+
+      select pgbarcode,pgmfid,pggdid,pguid,pgtype,pgcname,pgcatid,pgppcode,pgunit,'',pgbzhl,pgsj,pghyj,pgzkfd,pgpfj,0,pgxxtax
+      ,pgxjj,0.01,pgminpl,pgismsu,pgisbatch,pgiszk,pgisvip,pgiszs,pgisdzcm,'N','N',pgminzk,pgminzke,pganalcode,pgmanamode,
+      '','','',0.00,0.00,pgisxh,fGetStock(pggdid,pgmfid)/pgbzhl,'','',0,0,0,0,0,0,0,0,0 from posgoods
+      where (pgbarcode=vcode and vcodetype='0') or (pggdid=vcode and vcodetype='1') or (pganalcode=vcode and vcodetype='2');
+
+  END GETGOODSINFOLIST;
+
+END JAVA_GETGOODSINFOLIST;
+

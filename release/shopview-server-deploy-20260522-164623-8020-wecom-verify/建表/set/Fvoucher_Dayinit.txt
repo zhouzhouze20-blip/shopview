@@ -1,0 +1,213 @@
+CREATE OR REPLACE Package Body "FVOUCHER_DAYINIT" Is
+  b_Codename Varchar(20);
+  b_Ztdm     Varchar(20);
+  b_Date     Varchar(20);
+
+  Procedure Debuglog(p_Market In Varchar2,
+                     p_Proc   In Varchar2,
+                     p_Flag   In Char,
+                     p_Msg    In Varchar2 Default Null) Is
+    Pragma Autonomous_Transaction;
+    l_Msg Varchar2(1024);
+  Begin
+    If p_Flag = 'Y' Then
+      l_Msg := p_Msg;
+    Else
+      l_Msg := p_Msg || '->' || Substr(Sqlcode || ':' || Sqlerrm, 1, 1024);
+    End If;
+    Savepoint Debug;
+    Insert Into Dbusrmkt.Dayinit_Log
+    Values
+      (Sysdate, Systimestamp, p_Market, To_date(b_Date,'YYYYMMDD'), p_Proc, p_Flag, l_Msg);
+    Commit;
+  Exception
+    When Others Then
+      Rollback To Debug;
+      Raise;
+  End Debuglog;
+
+  Procedure Submit Is
+    l_Transno Number;
+  Begin
+    For Vr In (Select * From Sys_Dayinit_Config Where Market <> '0') Loop
+      Select Ztdm Into b_Ztdm From Cwzzzt Where Ztdymarket = Vr.Market;
+      If Vr.Market = '601' Then
+        For Vj In (Select *
+                     From Cwzztype
+                    Where Flag = 'Y'
+                      And Procpara = '1'
+                      And Code In
+                          ('202', '212','221','301', '321', '101', '111', '121','602') --601
+                    Order By Code) Loop
+          If Vj.Code In ('101', '111', '121') Then
+            Begin
+              FVOUCHER.run(b_Date,b_Date,Vj.code,'Future',b_Ztdm);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          Else
+            Select Seq_Cwzzvoucher.Nextval Into l_Transno From Dual;
+            Begin
+              Fvoucher.Run(b_Date,
+                           b_Date,
+                           '',
+                           '',
+                           Vj.Code,
+                           'Future',
+                           b_Ztdm,
+                           l_Transno);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          End If;
+        End Loop;
+      Elsif Vr.Market = '602' Then
+        For Vj In (Select *
+                     From Cwzztype
+                    Where Flag = 'Y'
+                      And Procpara = '1'
+                      And Code In ('203', '213','221','301', '321', '101', '111',
+                           '121', '602') --602
+                    Order By Code) Loop
+          If Vj.Code In ('101', '111', '121') Then
+            Begin
+              FVOUCHER.run(b_Date,b_Date,Vj.code,'Future',b_Ztdm);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          Else
+            Select Seq_Cwzzvoucher.Nextval Into l_Transno From Dual;
+            Begin
+              Fvoucher.Run(b_Date,
+                           b_Date,
+                           '',
+                           '',
+                           Vj.Code,
+                           'Future',
+                           b_Ztdm,
+                           l_Transno);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          End If;
+        End Loop;
+      Elsif Vr.Market = '603' Then
+        For Vj In (Select *
+                     From Cwzztype
+                    Where Flag = 'Y'
+                      And Procpara = '1'
+                      And Code In ('201', '211','221','301', '321', '101', '111',
+                           '121', '601') --603
+                    Order By Code) Loop
+          If Vj.Code In ('101', '111', '121') Then
+            Begin
+              FVOUCHER.run(b_Date,b_Date,Vj.code,'Future',b_Ztdm);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          Else
+            Select Seq_Cwzzvoucher.Nextval Into l_Transno From Dual;
+            Begin
+              Fvoucher.Run(b_Date,
+                           b_Date,
+                           '',
+                           '',
+                           Vj.Code,
+                           'Future',
+                           b_Ztdm,
+                           l_Transno);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          End If;
+        End Loop;
+       Elsif Vr.Market = '604' Then
+        For Vj In (Select *
+                     From Cwzztype
+                    Where Flag = 'Y'
+                      And Procpara = '1'
+                      And Code In ('204', '221','301', '321', '101', '111',
+                           '121', '603') --604
+                    Order By Code) Loop
+          If Vj.Code In ('101', '111', '121') Then
+            Begin
+              FVOUCHER.run(b_Date,b_Date,Vj.code,'Future',b_Ztdm);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          Else
+            Select Seq_Cwzzvoucher.Nextval Into l_Transno From Dual;
+            Begin
+              Fvoucher.Run(b_Date,
+                           b_Date,
+                           '',
+                           '',
+                           Vj.Code,
+                           'Future',
+                           b_Ztdm,
+                           l_Transno);
+              Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'Y');
+            Exception
+              When Others Then
+                Debuglog(Vr.Market, '['|| vj.code || ']' || Vj.Name, 'N');
+            End;
+          End If;
+        End Loop;
+      End If;
+    
+      Debuglog(Vr.Market, '凭证自动生成完成', 'Y');
+    End Loop;
+  Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Sp_Opererrors('凭证自动生成', Sqlcode, b_Codename || '--' || Sqlerrm);
+      Raise;
+  End Submit;
+
+  --执行过程
+  Procedure Run Is
+  Begin
+    b_Date := To_char(Trunc(Sysdate) - 1,'YYYYMMDD');
+    Submit;
+  Exception
+    When Others Then
+      Dbms_Output.Put_Line(Substr(Sqlerrm, 1, 255));
+  End Run;
+
+  Procedure Job_Submit(i_Time In Number) As
+    Jobid  Binary_Integer;
+    l_Time Number;
+  Begin
+    l_Time := Round(i_Time / 1440, 3);
+    Dbms_Job.Submit(Job       => Jobid,
+                    What      => 'FVOUCHER_DAYINIT.RUN;',
+                    Next_Date => Trunc(Sysdate) + l_Time,
+                    Interval  => 'TRUNC(SYSDATE) + ' || To_Char(l_Time, '0.0000'),
+                    No_Parse  => Null);
+    Commit;
+    Dbms_Output.Put_Line('JobID = ' || Jobid);
+  End Job_Submit;
+
+  Procedure Job_Remove As
+    l_Jobid Binary_Integer;
+  Begin
+    Select Job Into l_Jobid From Dba_Jobs Where What = 'FVOUCHER_DAYINIT.RUN;';
+    Dbms_Job.Remove(Job => l_Jobid);
+    Commit;
+  End Job_Remove;
+End Fvoucher_Dayinit;

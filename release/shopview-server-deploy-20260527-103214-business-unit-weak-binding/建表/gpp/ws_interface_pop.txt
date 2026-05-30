@@ -1,0 +1,422 @@
+create or replace package body ws_interface_pop as
+
+  Procedure P_OperErrors(vtypeid In Varchar2,
+                         verrid  In Varchar2,
+                         vkey    In Varchar2) As
+    pragma autonomous_transaction;
+  Begin
+    Insert Into DBUSRSYS.OperErrors
+    Values
+      (Sysdate, vtypeid, verrid, substr(vkey, 1, 255));
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+  End P_OperErrors;
+
+  Procedure Raise_Error(vmemo in varchar2) as
+  begin
+    Raise_Application_Error(Errcode, vmemo);
+  
+  end;
+
+  function fgenkey(vseqno varchar2,
+                   vpay   number,
+                   vdate  varchar2,
+                   vrule  varchar2) return varchar2 as
+  
+    tmp varchar2(2000); --组合字符串
+    num number; -- 中间值
+    key number := 0; -- 最终校验码 一般不会超过8位数
+  
+  begin
+  
+    --流水号按99取余乘以(20150131+买券金额) 20150131为固定数值
+    num := mod(vseqno, 99) * (20150131 + vpay); --本例结果为100751155
+  
+    --将num,vdate,字符串OUTLETS,vrule合成字符串
+  
+    tmp := to_char(num) || vdate || 'OUTLETS' || vrule;
+  
+    --本例结果为10075115520141231120923OUTLETSA:200;B:300;
+  
+    /*将组合字符串从第一位起将每一位逐个截取
+    并转换为ASCII乘以交易时间的分秒，并按交易时间的年月取余 计算累计和
+    最终形成校验码
+    */
+  
+    FOR i IN 1 .. LENGTH(tmp) LOOP
+      key := key + mod(ascii(substr(tmp, i, 1)) * substr(vdate, 10, 4),
+                       substr(vdate, 1, 6));
+    END LOOP;
+    --测试输出校验码
+    return to_char(key);
+    --本例结果为 4974776
+  end;
+
+  Procedure InsTkt(r_tkt In tktcardfqtotal%Rowtype) Is
+  Begin
+  
+    Insert Into tktcardfqtotal Values r_tkt;
+  
+  exception
+    when others then
+      p_opererrors('ws_interface.instkt',
+                   r_tkt.TCFTRANSNO,
+                   sqlcode || ':' || sqlerrm);
+      raise_application_error(errcode,
+                              '插入券批次失败！' || sqlcode || ':' || sqlerrm);
+  End;
+
+  Procedure InsTktLog(r_tktlog In tktcardfqlog%Rowtype) Is
+  Begin
+  
+    Insert Into tktcardfqlog Values r_tktlog;
+  exception
+    when others then
+      p_opererrors('ws_interface.InstktLog',
+                   r_tktlog.tcfltransno,
+                   sqlcode || ':' || sqlerrm);
+      raise_application_error(errcode,
+                              '记录券日志失败！' || sqlcode || ':' || sqlerrm);
+  End;
+  procedure mqcz(vtrance  varchar2,
+                 p_tktlog tktcardfqlog%Rowtype,
+                 voperid  varchar2,
+                 vmemo    varchar2) as
+    r_tktlog tktcardfqlog%Rowtype;
+    vye      number;
+  begin
+  
+    r_tktlog := p_tktlog;
+  
+    update tktcardfqtotal
+       set tcftfqje   = tcftfqje - p_tktlog.tcflmoney,
+           tcftstatus = decode(tcftfqje - p_tktlog.tcflmoney, 0, 'N', 'Y')
+     where tcftseqno = p_tktlog.tcflvipseq
+    returning tcftfqje into vye;
+  
+    if vye < 0 then
+      Raise_Application_Error(Errcode,
+                              '券[' || p_tktlog.tcflvipno || '] 余额不能为负数！');
+    end if;
+  
+    If Sql%Rowcount <= 0 Or Sql%Rowcount Is Null Then
+      Raise_Application_Error(Errcode,
+                              '券批次[' || p_tktlog.tcflvipseq || '] 未找到！');
+    else
+    
+      SELECT seq_tktcardfqlog.NEXTVAL INTO r_tktlog.tcflseqno FROM dual;
+    
+      r_tktlog.tcfldate  := sysdate;
+      r_tktlog.tcflmoney := -r_tktlog.tcflmoney;
+      r_tktlog.tcflye    := vye;
+      r_tktlog.tcflmemo  := vmemo;
+      r_tktlog.tcfloper  := voperid;
+      r_tktlog.tcflzy    := vtrance;
+    
+      Instktlog(r_tktlog);
+    
+    end if;
+  
+  end MQcz;
+
+  procedure sp_wsmq(p_type   varchar2,
+                    p_seqno  number,
+                    p_mkt    varchar2,
+                    p_dqno   varchar2,
+                    p_cardno varchar2,
+                    p_pay    number,
+                    p_rule   varchar2,
+                    p_memo   varchar2,
+                    o_ret    out varchar2,
+                    o_rmsg   out varchar2,
+                    o_vipseq out number) as
+  
+    vrule      varchar2(4000);
+    vnum       number;
+    vnum2      number;
+    vcz        number := 0;
+    vmq        number := 0;
+    v_opay     number;
+    v_mkt      varchar2(4);
+    row_tkt    tktcardfqtotal%rowtype;
+    row_tktlog tktcardfqlog%rowtype;
+  
+  begin
+    /*o_ret       := 'N';
+    o_rmsg      := null;*/
+  
+    /*if p_type = '5' then
+    for vi in (select tcfljetype, tcflvipno
+                 from tktcardfqlog
+                where tcfltransno = p_seqno
+                  and tcflsyjid = '0000'
+                  and tcflmkt = p_Mkt
+                order by 1) loop
+      --o_rticketno := o_rticketno || vi.tcfljetype || ':' || vi.tcflvipno || ';';
+    end loop;
+    if o_rticketno is null then
+      raise_application_error(Errcode, '无此交易！');
+    else
+      o_ret  := 'Y';
+      o_rmsg := '成功';
+      return;
+    end if;*/
+    --end if;
+    If P_type Is Null Then
+      --raise_application_error(Errcode, '交易类型传入错误！');
+      o_ret  := 'N';
+      o_rmsg := '交易类型传入错误';
+      return;
+    Elsif p_seqno Is Null Then
+      --raise_application_error(Errcode, '交易序号传入值错误!');
+      o_ret  := 'N';
+      o_rmsg := '交易序号传入值错误';
+      return;
+    Elsif p_Mkt Is Null Then
+      --raise_application_error(Errcode, '门店号传入错误!');
+      o_ret  := 'N';
+      o_rmsg := '门店号传入错误';
+      return;
+    end if;
+  
+    Select nvl(sum(decode(tcflzy, 'M', 1, 0)), 0),
+           nvl(sum(decode(tcflzy, 'N', 1, 0)), 0)
+      Into vmq, vcz
+      From tktcardfqlog
+     Where tcfltransno = p_seqno
+       and tcflsyjid = '0000'
+       and tcflmkt = p_Mkt;
+  
+    begin
+      select mfcode
+        into v_mkt
+        from manaframe
+       where mfclass = '1'
+         and mftypecode = '2'
+         and mfcode = p_Mkt;
+    Exception
+      When Others Then
+        --raise_application_error(Errcode, '不存在此门店【' || p_Mkt || '】');
+        o_ret  := 'N';
+        o_rmsg := '不存在此门店【' || p_Mkt || '】';
+        return;
+    end;
+  
+    if p_type = '1' then
+      /*  if fgenkey(p_seqno, p_pay, p_date, p_rule) <> nvl(p_key,'#') then
+        raise_application_error(Errcode, '校验失败');
+      end if;*/
+    
+      If vmq > 0 Then
+        /* raise_application_error(Errcode,
+        '交易序号[' || p_seqno || ']重复!');*/
+        o_ret  := 'N';
+        o_rmsg := '交易序号[' || p_seqno || ']重复!';
+        return;
+      elsIf vcz > 0 Then
+        /*raise_application_error(Errcode,
+        '交易序号[' || p_seqno || ']已冲正!');*/
+        o_ret  := 'N';
+        o_rmsg := '交易序号[' || p_seqno || ']已冲正!';
+        return;
+      End If;
+    
+      if p_rule Is Null Then
+        --raise_application_error(Errcode, '买券规则不能为空!');
+        o_ret  := 'N';
+        o_rmsg := '买券规则不能为空';
+        return;
+        /*Elsif p_sdate Is Null Then
+        raise_application_error(Errcode, '券开始日期传入错误!');
+        Elsif p_edate Is Null Then
+        raise_application_error(Errcode, '券结束日期传入错误!');*/
+      end if;
+    
+      select nvl(length(p_rule) - length(replace(p_rule, ';', '')), 0)
+        into vnum
+        from dual;
+      select nvl(length(p_rule) - length(replace(p_rule, ':', '')), 0)
+        into vnum2
+        from dual;
+    
+      if  vnum2=0 or vnum = 0 then
+        --raise_application_error(Errcode, '买券规则传入错误!');
+        o_ret  := 'N';
+        o_rmsg := '买券规则传入错误';
+        return;
+      end if;
+    
+      for i in 1 .. vnum loop
+        vrule := fgetpara(';' || p_rule, ';', i);
+        SELECT seq_tktcardfqtotal.NEXTVAL INTO row_tkt.tcftseqno FROM dual;
+        row_tkt.tcftvipno     := p_cardno; --salepopms.fgetticketno;
+        row_tkt.tcftstartdate := to_date(fgetpara(':' || vrule || ':',
+                                                  ':',
+                                                  3),
+                                         'YYYYMMDDHH24MISS'); --to_date(p_sdate, 'YYYYMMDDHH24MISS');
+        row_tkt.tcftenddate   := to_date(fgetpara(':' || vrule || ':',
+                                                  ':',
+                                                  4),
+                                         'YYYYMMDDHH24MISS'); --to_date(p_edate, 'YYYYMMDDHH24MISS');
+        row_tkt.tcftqtype     := fgetpara(':' || vrule || ':', ':', 1);
+        row_tkt.tcftfqje      := fgetpara(':' || vrule || ':', ':', 2);
+        row_tkt.tcftstatus    := 'Y';
+        row_tkt.tcftvipexno   := row_tkt.tcftvipno;
+        row_tkt.tcftmemo      := substr(p_memo, 1, 60);
+        row_tkt.tcftzpno      := '';
+        row_tkt.tcftfstpid    := p_dqno;
+        row_tkt.tcftcltpid    := p_dqno;
+        row_tkt.tcftflag      := 'Y';
+        row_tkt.tcftransno    := p_seqno;
+        row_tkt.tcfttype      := '1'; --'2';--电子券
+        row_tkt.tcftqmz       := row_tkt.tcftfqje;
+        row_tkt.tcftmkt       := fgetpara(':' || vrule || ':', ':', 5); --'1';
+        row_tkt.tcftjygs      := '002';
+        row_tkt.tcftfqmkt     := p_mkt;
+        row_tkt.tcftfqrule    := '0';
+        row_tkt.tcftrulepj    := '0';
+        row_tkt.tcftsource    := '2';
+        row_tkt.tcftismzq    :='N';
+      
+        if row_tkt.tcftqtype not between 'A' AND 'Z' then
+          --raise_application_error(Errcode, '券种错误');
+          o_ret  := 'N';
+          o_rmsg := '券种错误';
+          return;
+        end if;
+        if nvl(row_tkt.tcftfqje, 0) <= 0 then
+          /*raise_application_error(Errcode,
+                                  row_tkt.tcftqtype || '券金额必须大于0');
+          return;*/
+          o_ret  := 'N';
+          o_rmsg := row_tkt.tcftqtype || '券金额必须大于0';
+          return;
+        end if;
+        begin
+          Instkt(row_tkt);
+        exception
+          when others then
+            o_ret  := 'N';
+            o_rmsg := '插入券号失败';
+            return;
+            --raise;
+        end;
+        SELECT seq_tktcardfqlog.NEXTVAL
+          INTO row_tktlog.tcflseqno
+          FROM dual;
+        row_tktlog.tcflvipno     := row_tkt.tcftvipno;
+        row_tktlog.tcflstartdate := row_tkt.tcftstartdate;
+        row_tktlog.tcflenddate   := row_tkt.tcftenddate;
+        row_tktlog.tcfldate      := sysdate;
+        row_tktlog.tcflzy        := 'M';
+        row_tktlog.tcflpopid     := p_dqno;
+        row_tktlog.tcflpoprule   := '0';
+        row_tktlog.tcflmoney     := row_tkt.tcftfqje;
+        row_tktlog.tcflye        := row_tkt.tcftfqje;
+        row_tktlog.tcfloper      := 'crm';
+        row_tktlog.tcflsyjid     := '0000';
+        row_tktlog.tcflinvno     := '';
+        row_tktlog.tcflmemo      := row_tkt.tcftmemo;
+        row_tktlog.tcflsyjtrace  := row_tkt.tcftransno;
+        row_tktlog.tcfljetype    := row_tkt.tcftqtype;
+        row_tktlog.tcflvipseq    := row_tkt.tcftseqno;
+        row_tktlog.tcflmkt       := row_tkt.tcftfqmkt;
+        row_tktlog.tcfljygs      := row_tkt.tcftjygs;
+        row_tktlog.tcflsource    := row_tkt.tcftsource;
+        row_tktlog.tcfltransno   := row_tkt.tcftransno;
+        row_tktlog.tcfltype      := row_tkt.tcfttype;
+        row_tktlog.tcflqchg      := '';
+        row_tktlog.tcflchr1      := '';
+        row_tktlog.tcflchr2      := '';
+        row_tktlog.tcflchr3      := '0';
+        row_tktlog.tcflnum1      := '0';
+        row_tktlog.tcflnum2      := p_pay;
+        row_tktlog.tcflnum3      := '';
+        row_tktlog.tcflywdh      := '';
+        row_tktlog.tcflismzq       := row_tkt.tcftismzq  ;
+        begin
+          InstktLog(row_tktlog);
+        exception
+          when others then
+            /*o_rmsg := '插入券日志失败';
+            raise;*/
+            o_ret  := 'N';
+            o_rmsg := '插入券日志失败';
+            return;
+        end;
+      
+      /*o_rticketno := o_rticketno || row_tkt.tcftqtype || ':' ||
+                                               row_tkt.tcftvipno || ';';*/
+      end loop;
+    
+      o_ret  := 'Y';
+      o_rmsg := '成功';
+     o_vipseq:=row_tkt.tcftseqno;
+    elsif P_type = '2' then
+      --检查交易一致性
+      If vmq > 0 Then
+      
+        select min(tcflnum2)
+          into v_opay
+          from tktcardfqlog
+         where tcfltransno = p_seqno
+           and tcflsyjid = '0000'
+           and tcflmkt = p_Mkt;
+      
+        -- 原交易数据不存在
+        If abs(v_opay) <> abs(p_pay) Then
+          --Raise_Application_Error(Errcode, '冲正找不到原交易！');
+          o_ret  := 'N';
+          o_rmsg := '冲正找不到原交易';
+          return;
+        end if;
+      end if;
+    
+      --如果找到原交易且无冲正,则修改批次余额
+      If vmq > 0 And vcz = 0 Then
+        for vi in (Select *
+                     From tktcardfqlog
+                    Where tcfltransno = p_seqno
+                      and tcflsyjid = '0000'
+                      and tcflmkt = p_Mkt
+                      and tcflzy = 'M') loop
+        
+          --MQcz('N', vi, 'cr', p_memo);
+          MQcz('N', vi, 'crm-cz', p_memo);
+        end loop;
+      
+      elsIf vmq = 0 And vcz = 0 Then
+            
+      
+        o_ret  := 'Y';
+        o_rmsg := '成功';
+        o_vipseq:=  row_tkt.tcftvipno;
+      
+      else
+        o_ret  := 'Y';
+        o_rmsg := '成功';
+      end if;
+    
+    else
+      --Raise_Application_Error(Errcode, '错误的交易类型!');
+      o_ret  := 'N';
+      o_rmsg := '错误的交易类型';
+      return;
+    end if;
+    commit;
+  Exception
+    When Others Then
+      Rollback;
+      p_opererrors('ws_interface.sp_wsmq',
+                   p_seqno,
+                   sqlcode || ':' || sqlerrm);
+      o_ret  := 'N';
+      o_rmsg := substr(replace(nvl(o_rmsg, Sqlerrm), 'ORA-20027: ', ''),
+                       1,
+                       400);
+  end;
+begin
+  null;
+end;

@@ -1,0 +1,422 @@
+-- Create table
+create table DBUSRPUB.CONTMAIN
+(
+  cmcontno      VARCHAR2(20) not null,
+  cmstatus      CHAR(1) not null,
+  cmtype        CHAR(1) not null,
+  cmmfid        VARCHAR2(20),
+  cmsupid       VARCHAR2(20) not null,
+  cmwmid        CHAR(1) not null,
+  cmtitle       VARCHAR2(60) not null,
+  cmobject      VARCHAR2(60) not null,
+  cmppname      VARCHAR2(400),
+  cmcatname     VARCHAR2(60),
+  cmcatnum      NUMBER(6),
+  cmeffdate     DATE not null,
+  cmlapdate     DATE not null,
+  cmmoney       NUMBER(16,4),
+  cmpaycode     CHAR(4) not null,
+  cmrefermode   CHAR(1),
+  cmreferplace  VARCHAR2(30),
+  cmbysettle    CHAR(1) not null,
+  cmyfkmode     CHAR(1) not null,
+  cmyfk         NUMBER(14,4),
+  cmsetmode     CHAR(1) not null,
+  cmzqts1       NUMBER(4),
+  cmzqts2       NUMBER(8,2),
+  cmzqts3       NUMBER(4),
+  cmzqts4       NUMBER(4),
+  cmzqts5       NUMBER(4),
+  cmzqrate1     NUMBER(5,4),
+  cmzqrate2     NUMBER(5,4),
+  cmzqrate3     NUMBER(5,4),
+  cmzqrate4     NUMBER(5,4),
+  cmzqrate5     NUMBER(5,4),
+  cmdhfs        CHAR(1),
+  cmweek0       CHAR(1),
+  cmweek1       CHAR(1),
+  cmweek2       CHAR(1),
+  cmweek3       CHAR(1),
+  cmweek4       CHAR(1),
+  cmweek5       CHAR(1),
+  cmweek6       CHAR(1),
+  cmpasign      CHAR(1) default 'N' not null,
+  cmpasignper   VARCHAR2(30),
+  cmpasigndate  DATE,
+  cmpbsign      CHAR(1) default 'N' not null,
+  cmpbsignper   VARCHAR2(30),
+  cmpbsigndate  DATE,
+  cminputor     VARCHAR2(20) not null,
+  cminputdate   DATE not null,
+  cmauditor     VARCHAR2(20),
+  cmauditdate   DATE,
+  cmannulor     VARCHAR2(20),
+  cmannuldate   DATE,
+  cmfreezer     VARCHAR2(20),
+  cmfreezedate  DATE,
+  cmmemo        VARCHAR2(1000),
+  cmjsmkt       VARCHAR2(20),
+  cmkl          NUMBER(16,4),
+  cmlastsetdate DATE,
+  cmsettletype  CHAR(1),
+  cmlastqsdate  DATE,
+  cmchr1        VARCHAR2(40),
+  cmchr2        VARCHAR2(40),
+  cmchr3        VARCHAR2(40),
+  cmchr4        VARCHAR2(40),
+  cmchr5        VARCHAR2(40),
+  cmchr6        VARCHAR2(40),
+  cmchr7        VARCHAR2(40),
+  cmchr8        VARCHAR2(40),
+  cmchr9        VARCHAR2(40),
+  cmchr10       VARCHAR2(40),
+  cmpostype     VARCHAR2(1) default 'Y',
+  cmbanktype    VARCHAR2(1) default 'Y',
+  cmqzyq        VARCHAR2(1),
+  cmtqmon       NUMBER,
+  cmjmon        NUMBER,
+  cmzljl        NUMBER(16,4),
+  cmzcfkr       NUMBER,
+  cmzjtype      VARCHAR2(2) default 'S',
+  cmdqcl        VARCHAR2(1) default 'S',
+  cmyqmon       NUMBER,
+  cmtqzz        VARCHAR2(1) default 'N',
+  cmtqzzmon     NUMBER,
+  cmmzts        NUMBER,
+  cmzj          CHAR(1),
+  cmwgf         CHAR(1),
+  cmpos         CHAR(1),
+  cmygf         CHAR(1),
+  cmyxs         VARCHAR2(40),
+  cmsqk         CHAR(1) default 'N',
+  cmsqkoper     VARCHAR2(40),
+  cmsptype      CHAR(1) default 'B',
+  cmjsr         VARCHAR2(20),
+  cmyt          VARCHAR2(40),
+  cmkyrq        DATE,
+  cmzsy         VARCHAR2(20),
+  cmzjbz        VARCHAR2(30),
+  cmzjbzdj      VARCHAR2(30),
+  cmzjbzbz      VARCHAR2(30),
+  cmzczdrts     VARCHAR2(30),
+  cmhtbh        VARCHAR2(30),
+  cmnum1        NUMBER(16,4),
+  cmnum2        NUMBER(16,4),
+  cmnum3        NUMBER(16,4),
+  cmjhqd        CHAR(1),
+  cmmasterno    VARCHAR2(20),
+  cmseqno       VARCHAR2(2),
+  cmcontact     VARCHAR2(20),
+  cmadd         VARCHAR2(100),
+  cmtel         VARCHAR2(100),
+  cmfax         VARCHAR2(100),
+  cmqq          VARCHAR2(100),
+  cmemail       VARCHAR2(100),
+  cmsuptype     VARCHAR2(2),
+  cmhhtype      VARCHAR2(2),
+  cmhhterm      VARCHAR2(2),
+  cmjkcond      VARCHAR2(2),
+  cmchar1       VARCHAR2(100),
+  cmchar2       VARCHAR2(100),
+  cmchar3       VARCHAR2(100),
+  cmchar4       VARCHAR2(100),
+  cmchar5       VARCHAR2(100),
+  cmchar6       VARCHAR2(100),
+  cmchar7       VARCHAR2(100),
+  cmchar8       VARCHAR2(100),
+  cmchar9       VARCHAR2(100),
+  cmchar0       VARCHAR2(100),
+  signdate      DATE,
+  deliverydate  DATE,
+  tackbackdate  DATE,
+  sjcgdate      DATE,
+  effectdate    DATE,
+  zxqsrq        DATE,
+  zxjzrq        DATE,
+  yszq1         NUMBER default 0 not null,
+  yszq2         NUMBER default 0 not null,
+  yszq3         NUMBER default 0 not null,
+  settlegroup   VARCHAR2(10),
+  cmttr         VARCHAR2(20),
+  cmttdate      DATE,
+  cmdate1       DATE,
+  cmdate2       DATE,
+  cmdate3       DATE,
+  cmkhfs        CHAR(1),
+  cmznjfs       CHAR(1) default '1'
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 384K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.CONTMAIN
+  is '[CM]合同主体信息';
+-- Add comments to the columns 
+comment on column DBUSRPUB.CONTMAIN.cmcontno
+  is '合同编号(子合同号)';
+comment on column DBUSRPUB.CONTMAIN.cmstatus
+  is '状态未生效	B/已生效	Y/停用	S/终止	N/已审批	A/过期	Q/';
+comment on column DBUSRPUB.CONTMAIN.cmtype
+  is '类型';
+comment on column DBUSRPUB.CONTMAIN.cmmfid
+  is '签订部门';
+comment on column DBUSRPUB.CONTMAIN.cmsupid
+  is '供应商代码';
+comment on column DBUSRPUB.CONTMAIN.cmwmid
+  is '经营方式';
+comment on column DBUSRPUB.CONTMAIN.cmtitle
+  is '主题';
+comment on column DBUSRPUB.CONTMAIN.cmobject
+  is '合同标的';
+comment on column DBUSRPUB.CONTMAIN.cmppname
+  is '品牌';
+comment on column DBUSRPUB.CONTMAIN.cmcatname
+  is '品种';
+comment on column DBUSRPUB.CONTMAIN.cmcatnum
+  is '品种数量';
+comment on column DBUSRPUB.CONTMAIN.cmeffdate
+  is '生效日期';
+comment on column DBUSRPUB.CONTMAIN.cmlapdate
+  is '失效日期';
+comment on column DBUSRPUB.CONTMAIN.cmmoney
+  is '月目标销售额';
+comment on column DBUSRPUB.CONTMAIN.cmpaycode
+  is '付款方式';
+comment on column DBUSRPUB.CONTMAIN.cmrefermode
+  is '提货方式';
+comment on column DBUSRPUB.CONTMAIN.cmreferplace
+  is '提货地点';
+comment on column DBUSRPUB.CONTMAIN.cmbysettle
+  is '结算依据';
+comment on column DBUSRPUB.CONTMAIN.cmyfkmode
+  is '超额方式';
+comment on column DBUSRPUB.CONTMAIN.cmsetmode
+  is '结算方式';
+comment on column DBUSRPUB.CONTMAIN.cmzqts1
+  is '店长人数';
+comment on column DBUSRPUB.CONTMAIN.cmdhfs
+  is '到货方式';
+comment on column DBUSRPUB.CONTMAIN.cmweek0
+  is '售价形式';
+comment on column DBUSRPUB.CONTMAIN.cmweek1
+  is '购物袋形式';
+comment on column DBUSRPUB.CONTMAIN.cmweek2
+  is '是否提供增值税发票';
+comment on column DBUSRPUB.CONTMAIN.cmweek3
+  is '促销人员工装';
+comment on column DBUSRPUB.CONTMAIN.cmweek4
+  is '店长工装';
+comment on column DBUSRPUB.CONTMAIN.cmweek5
+  is '保底方式';
+comment on column DBUSRPUB.CONTMAIN.cmpasign
+  is '甲方是否签字';
+comment on column DBUSRPUB.CONTMAIN.cmpasignper
+  is '甲方签字人';
+comment on column DBUSRPUB.CONTMAIN.cmpasigndate
+  is '甲方签字日期';
+comment on column DBUSRPUB.CONTMAIN.cmpbsign
+  is '乙方是否签字';
+comment on column DBUSRPUB.CONTMAIN.cmpbsignper
+  is '乙方签字人';
+comment on column DBUSRPUB.CONTMAIN.cmpbsigndate
+  is '乙方签字日期';
+comment on column DBUSRPUB.CONTMAIN.cminputor
+  is '录入员';
+comment on column DBUSRPUB.CONTMAIN.cminputdate
+  is '录入日期';
+comment on column DBUSRPUB.CONTMAIN.cmauditor
+  is '审核人';
+comment on column DBUSRPUB.CONTMAIN.cmauditdate
+  is '审核日期';
+comment on column DBUSRPUB.CONTMAIN.cmannulor
+  is '解除/终止人';
+comment on column DBUSRPUB.CONTMAIN.cmannuldate
+  is '解除/终止日期';
+comment on column DBUSRPUB.CONTMAIN.cmfreezer
+  is '挂起人';
+comment on column DBUSRPUB.CONTMAIN.cmfreezedate
+  is '挂起日期';
+comment on column DBUSRPUB.CONTMAIN.cmmemo
+  is 'MEMO';
+comment on column DBUSRPUB.CONTMAIN.cmlastsetdate
+  is '上次结算日期';
+comment on column DBUSRPUB.CONTMAIN.cmsettletype
+  is '是否清算';
+comment on column DBUSRPUB.CONTMAIN.cmlastqsdate
+  is '上次清算日期';
+comment on column DBUSRPUB.CONTMAIN.cmchr1
+  is '合同分类';
+comment on column DBUSRPUB.CONTMAIN.cmchr2
+  is '是否卓展独有品牌';
+comment on column DBUSRPUB.CONTMAIN.cmchr3
+  is '业种';
+comment on column DBUSRPUB.CONTMAIN.cmchr4
+  is '是否标准合作条件';
+comment on column DBUSRPUB.CONTMAIN.cmchr5
+  is '电费承担';
+comment on column DBUSRPUB.CONTMAIN.cmchr6
+  is '电力增容费承担';
+comment on column DBUSRPUB.CONTMAIN.cmchr7
+  is '供应商参加活动方式';
+comment on column DBUSRPUB.CONTMAIN.cmchr8
+  is '合同所处阶段 [租赁-XDJLX]';
+comment on column DBUSRPUB.CONTMAIN.cmchr9
+  is '撤场原因[租赁-ENDREASON]';
+comment on column DBUSRPUB.CONTMAIN.cmchr10
+  is '招商原合同编号';
+comment on column DBUSRPUB.CONTMAIN.cmpostype
+  is '收款方式 代收银Y/自收银N';
+comment on column DBUSRPUB.CONTMAIN.cmbanktype
+  is '银行刷卡 进商场银行帐户Y/进商户自开帐户N';
+comment on column DBUSRPUB.CONTMAIN.cmqzyq
+  is '缴租要求 月结Y/提前交租N';
+comment on column DBUSRPUB.CONTMAIN.cmtqmon
+  is '提前几月 -1不提前 0-提前 1- 提前一个月';
+comment on column DBUSRPUB.CONTMAIN.cmjmon
+  is '计费周期';
+comment on column DBUSRPUB.CONTMAIN.cmzljl
+  is '滞纳金率';
+comment on column DBUSRPUB.CONTMAIN.cmzcfkr
+  is '缴款期限(天) 最迟付款日为帐单后几日';
+comment on column DBUSRPUB.CONTMAIN.cmzjtype
+  is '合同租金计算模式：月租金+抽成租金(抽成、保底)S/月租金、抽成租金(抽成)两者取高';
+comment on column DBUSRPUB.CONTMAIN.cmdqcl
+  is '到期处理 自动延续Y/自动终止S ';
+comment on column DBUSRPUB.CONTMAIN.cmyqmon
+  is '自动延续期限几月';
+comment on column DBUSRPUB.CONTMAIN.cmtqzz
+  is '提前终止 处罚Y/不处罚N';
+comment on column DBUSRPUB.CONTMAIN.cmtqzzmon
+  is '提前终止期限 几月';
+comment on column DBUSRPUB.CONTMAIN.cmmzts
+  is '合同期内装修免租天数';
+comment on column DBUSRPUB.CONTMAIN.cmyxs
+  is '原意向书编号';
+comment on column DBUSRPUB.CONTMAIN.cmsqk
+  is '首期缴款单生成标志(Y),(E)合同清退';
+comment on column DBUSRPUB.CONTMAIN.cmsqkoper
+  is '首期缴款单生成人';
+comment on column DBUSRPUB.CONTMAIN.cmsptype
+  is '租赁合同类型S=商位 G=广告位 Z=展位 B=百货';
+comment on column DBUSRPUB.CONTMAIN.cmjsr
+  is '接手人';
+comment on column DBUSRPUB.CONTMAIN.cmyt
+  is '业态';
+comment on column DBUSRPUB.CONTMAIN.cmkyrq
+  is '开业日期';
+comment on column DBUSRPUB.CONTMAIN.cmzsy
+  is '招商员';
+comment on column DBUSRPUB.CONTMAIN.cmzczdrts
+  is '滞纳金计算方式';
+comment on column DBUSRPUB.CONTMAIN.cmhtbh
+  is '合同档案号';
+comment on column DBUSRPUB.CONTMAIN.cmjhqd
+  is '进货渠道';
+comment on column DBUSRPUB.CONTMAIN.cmmasterno
+  is '主合同号';
+comment on column DBUSRPUB.CONTMAIN.cmseqno
+  is '序号(00为主合同,固定为两位)';
+comment on column DBUSRPUB.CONTMAIN.cmcontact
+  is '联系人';
+comment on column DBUSRPUB.CONTMAIN.cmadd
+  is '联系地址';
+comment on column DBUSRPUB.CONTMAIN.cmtel
+  is '联系电话';
+comment on column DBUSRPUB.CONTMAIN.cmfax
+  is '传真号';
+comment on column DBUSRPUB.CONTMAIN.cmqq
+  is 'QQ号';
+comment on column DBUSRPUB.CONTMAIN.cmemail
+  is 'EMAIL地址';
+comment on column DBUSRPUB.CONTMAIN.cmsuptype
+  is '供应商类型';
+comment on column DBUSRPUB.CONTMAIN.cmhhtype
+  is '换货方式';
+comment on column DBUSRPUB.CONTMAIN.cmhhterm
+  is '换货期限';
+comment on column DBUSRPUB.CONTMAIN.cmjkcond
+  is '结款条件';
+comment on column DBUSRPUB.CONTMAIN.cmchar1
+  is '开户行';
+comment on column DBUSRPUB.CONTMAIN.cmchar2
+  is '银行帐号';
+comment on column DBUSRPUB.CONTMAIN.cmchar4
+  is '店招';
+comment on column DBUSRPUB.CONTMAIN.signdate
+  is '签约日期';
+comment on column DBUSRPUB.CONTMAIN.deliverydate
+  is '交付日期';
+comment on column DBUSRPUB.CONTMAIN.tackbackdate
+  is '收回日期';
+comment on column DBUSRPUB.CONTMAIN.sjcgdate
+  is '离场日期 ';
+comment on column DBUSRPUB.CONTMAIN.effectdate
+  is '生效日期';
+comment on column DBUSRPUB.CONTMAIN.zxqsrq
+  is '装修起始日';
+comment on column DBUSRPUB.CONTMAIN.zxjzrq
+  is '装修截止日';
+comment on column DBUSRPUB.CONTMAIN.yszq1
+  is '预收周期 租金';
+comment on column DBUSRPUB.CONTMAIN.yszq2
+  is '预收周期 管理费';
+comment on column DBUSRPUB.CONTMAIN.yszq3
+  is '预收周期 推广费';
+comment on column DBUSRPUB.CONTMAIN.settlegroup
+  is '结算组';
+comment on column DBUSRPUB.CONTMAIN.cmttr
+  is '淘汰员';
+comment on column DBUSRPUB.CONTMAIN.cmttdate
+  is '淘汰日期';
+comment on column DBUSRPUB.CONTMAIN.cmkhfs
+  is '保底中销售考核方式1按销售收入2未达标差额3按考核指标';
+comment on column DBUSRPUB.CONTMAIN.cmznjfs
+  is '1按缴款日期算2按指定日期算';
+-- Create/Recreate indexes 
+create index DBUSRPUB.IDX_CM_SUPID on DBUSRPUB.CONTMAIN (CMSUPID)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.IDX_COMATIN_CMFEFFDATE on DBUSRPUB.CONTMAIN (CMEFFDATE)
+  tablespace DATA_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 64K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.CONTMAIN
+  add constraint PK_CONTMAIN primary key (CMCONTNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

@@ -1,0 +1,19 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETSYJPAYMODE
+AS
+  -- 返回结果集为
+  -- 付款方式代码,上级编码,编码级次,付款方式名称,付款类型,是否找零,是否溢余,是否末级,是否金卡工程,最低付款金额,最高付款金额,付款汇率,找零汇率,四舍五入方式,四舍五入精度
+  PROCEDURE GETSYJPAYMODE
+    (
+            vsyjh in VARCHAR2,
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select ppmcode,ppmpcode,ppmclass,ppmname,ppmtype,ppmiszl,ppmisyy,ppmflag,ppmisjkgc,ppmminje,ppmmaxje,ppmhl,1,0,0.01
+            from pospaytemplet,pospaymode,syjmain where pptid = syjpaytemplet and
+            syjid=vsyjh and pptcode = ppmcode and ppmstatus='Y' order by pptseq;
+  END GETSYJPAYMODE;
+
+END JAVA_GETSYJPAYMODE;
+

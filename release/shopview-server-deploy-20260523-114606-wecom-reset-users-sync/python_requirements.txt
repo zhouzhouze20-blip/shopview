@@ -1,0 +1,30 @@
+# 核心Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# 数据库相关
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.7
+
+# 数据验证和序列化
+pydantic[email]==2.5.0
+
+# 文件处理
+python-multipart==0.0.6
+openpyxl==3.1.5
+xlrd==2.0.2
+
+# 模板引擎
+jinja2==3.1.2
+
+# 安全相关
+python-jose==3.3.0
+cryptography==46.0.6
+passlib[bcrypt]==1.7.4
+
+# 环境变量
+python-dotenv==1.0.0
+
+# 额外工具
+requests==2.31.0

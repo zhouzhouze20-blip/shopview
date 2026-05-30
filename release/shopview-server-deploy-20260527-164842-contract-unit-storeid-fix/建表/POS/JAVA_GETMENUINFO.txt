@@ -1,0 +1,19 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETMENUINFO
+AS
+  -- 返回结果集为
+    -- 代码,描述,上级代码,级次,末级标志,是否显示,有效标志,是否记录工作日志,帮助信息
+  PROCEDURE GETMENUINFO
+    (
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pfid,pfname,pfpcid,pflevel,pflastflag,pfflag,pfenable,pfiswork,pfhlptext
+      from posfunction
+      where pfposos = 'A' or pfposos = 'J' or pfposos='T'
+      order by pfid;
+  END GETMENUINFO;
+
+END JAVA_GETMENUINFO;
+

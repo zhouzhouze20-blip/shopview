@@ -1,0 +1,16 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_CREATEGOODSSUNITS
+AS
+  -- 返回结果集为
+  -- 商品编码,单位代码,单位,包装含量,对应的商品信息中的条码
+  PROCEDURE CREATEGOODSSUNITS
+    (
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pgugdid,pguid,pguunit,pgubzhl,pgubarcode from posgoodsunits;
+  END CREATEGOODSSUNITS;
+
+END JAVA_CREATEGOODSSUNITS;
+

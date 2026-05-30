@@ -1,0 +1,340 @@
+-- Create table
+create table MANAFRAME
+(
+  mfcode          VARCHAR2(20) not null,
+  mfcname         VARCHAR2(40) not null,
+  mfename         VARCHAR2(60),
+  mfcatcode       VARCHAR2(20),
+  mfsubject       VARCHAR2(20),
+  mfclass         NUMBER(2) default 1 not null,
+  mffcode         VARCHAR2(20) not null,
+  mfpcode         VARCHAR2(20) default '0' not null,
+  mfflag          CHAR(1) default 'N' not null,
+  mfstatus        CHAR(1) default 'Y' not null,
+  mftypecode      CHAR(1) not null,
+  mfisweb         CHAR(1) default 'N' not null,
+  mfcglx          CHAR(1) default '0' not null,
+  mflsfs          CHAR(1) default '1' not null,
+  mfisjjps        CHAR(1) default 'N' not null,
+  mfisjjbl        NUMBER(5,4),
+  mfdefjsyj       CHAR(1) default '0',
+  mfisxh          CHAR(1) default 'N' not null,
+  mfismgys        CHAR(1) default 'Y' not null,
+  mfswfzr         VARCHAR2(20),
+  mftel           VARCHAR2(20),
+  mffax           VARCHAR2(20),
+  mfemail         VARCHAR2(40),
+  mfplanmll       NUMBER(5,4),
+  mfplangdfl      NUMBER(5,4),
+  mfplanbdfl      NUMBER(5,4),
+  mfyymj          NUMBER(12,2),
+  mfmemo          VARCHAR2(80),
+  mfisareacenter  CHAR(1),
+  mfareacenter    VARCHAR2(20),
+  mfsubco         VARCHAR2(20),
+  mfcatgroup      VARCHAR2(10),
+  mfinitflag      CHAR(1) default 'N',
+  mfmanaunit      VARCHAR2(20),
+  mfdsbu          CHAR(1),
+  mfyt            VARCHAR2(2),
+  mfcattype       VARCHAR2(20),
+  mfgtmj          NUMBER,
+  mfgtl           NUMBER,
+  mfpmkcmin       NUMBER,
+  mfpmkcmax       NUMBER,
+  mfjhzq          NUMBER,
+  mfasicode       VARCHAR2(20),
+  mfmallsat       CHAR(1),
+  mflocation      VARCHAR2(4),
+  mfshape         VARCHAR2(4),
+  mflength        VARCHAR2(4),
+  mfeasy          CHAR(1),
+  mfspxz          VARCHAR2(10),
+  mfzqjh          VARCHAR2(10),
+  mfhygh          VARCHAR2(10),
+  mfytgh          VARCHAR2(10),
+  mfzlgh          VARCHAR2(10),
+  mfkind          VARCHAR2(2),
+  mfjzarea        NUMBER,
+  mfzjarea        NUMBER,
+  mfarealx        CHAR(1),
+  mfexprent       NUMBER,
+  mfexpsj         NUMBER,
+  mfcentertype    VARCHAR2(10),
+  mfsupplywh      VARCHAR2(20),
+  mfis_xssy       CHAR(1),
+  mfhth           VARCHAR2(20),
+  mfoprid         VARCHAR2(20),
+  mfadtid         VARCHAR2(20),
+  mflast_modified DATE default SYSDATE,
+  mflast_billid   VARCHAR2(6),
+  mflast_billno   VARCHAR2(20),
+  mflast_operid   VARCHAR2(20),
+  mfoprdate       DATE,
+  mfadtdate       DATE,
+  mfsource        CHAR(1),
+  mfld            VARCHAR2(20),
+  mflc            VARCHAR2(20),
+  mfjyfs          VARCHAR2(20),
+  mfjywz          VARCHAR2(20),
+  mfjyqy          VARCHAR2(20),
+  mfchr1          VARCHAR2(40),
+  mfchr2          VARCHAR2(40),
+  mfchr3          VARCHAR2(40),
+  mfnum1          NUMBER,
+  mfnum2          NUMBER,
+  mfnum3          NUMBER
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 256K
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table MANAFRAME
+  is '[MF]管理架构';
+-- Add comments to the columns 
+comment on column MANAFRAME.mfcode
+  is '编码';
+comment on column MANAFRAME.mfcname
+  is '中文名称';
+comment on column MANAFRAME.mfename
+  is '英文名称';
+comment on column MANAFRAME.mfcatcode
+  is '经营区域';
+comment on column MANAFRAME.mfsubject
+  is '核算代码';
+comment on column MANAFRAME.mfclass
+  is '级次';
+comment on column MANAFRAME.mffcode
+  is 'MFFCODE';
+comment on column MANAFRAME.mfpcode
+  is '上级编码';
+comment on column MANAFRAME.mfflag
+  is '末级标志';
+comment on column MANAFRAME.mfstatus
+  is '状态';
+comment on column MANAFRAME.mftypecode
+  is '类型(第一级)';
+comment on column MANAFRAME.mfisweb
+  is '是否网上发布';
+comment on column MANAFRAME.mfcglx
+  is '仓柜类型';
+comment on column MANAFRAME.mflsfs
+  is '门店连锁方式';
+comment on column MANAFRAME.mfisjjps
+  is '是否加价配送';
+comment on column MANAFRAME.mfisjjbl
+  is '加价比率';
+comment on column MANAFRAME.mfdefjsyj
+  is '缺省结算依据  --> 柜组(0) MALL(1)';
+comment on column MANAFRAME.mfisxh
+  is '是否允许销红';
+comment on column MANAFRAME.mfismgys
+  is '专柜允许多供应商';
+comment on column MANAFRAME.mfswfzr
+  is '实物负责人';
+comment on column MANAFRAME.mftel
+  is '联系电话';
+comment on column MANAFRAME.mffax
+  is '传真';
+comment on column MANAFRAME.mfemail
+  is 'EMAIL';
+comment on column MANAFRAME.mfplanmll
+  is '计划毛利';
+comment on column MANAFRAME.mfplangdfl
+  is '固定费率';
+comment on column MANAFRAME.mfplanbdfl
+  is '变动费率';
+comment on column MANAFRAME.mfyymj
+  is '营业面积(实测面积)';
+comment on column MANAFRAME.mfmemo
+  is '备注';
+comment on column MANAFRAME.mfisareacenter
+  is 'MFISAREACENTER';
+comment on column MANAFRAME.mfareacenter
+  is 'MFAREACENTER';
+comment on column MANAFRAME.mfsubco
+  is '所属经营公司';
+comment on column MANAFRAME.mfcatgroup
+  is '岗组';
+comment on column MANAFRAME.mfmanaunit
+  is '经营公司';
+comment on column MANAFRAME.mfdsbu
+  is '是否百货管理单位（门店)';
+comment on column MANAFRAME.mfyt
+  is '业态';
+comment on column MANAFRAME.mfcattype
+  is '商品类别编码';
+comment on column MANAFRAME.mfgtmj
+  is '含公摊面积';
+comment on column MANAFRAME.mfgtl
+  is '公摊率';
+comment on column MANAFRAME.mfpmkcmin
+  is '最低平米库存金额';
+comment on column MANAFRAME.mfpmkcmax
+  is '最高平米库存金额';
+comment on column MANAFRAME.mfjhzq
+  is '进货周期';
+comment on column MANAFRAME.mfasicode
+  is '辅助码（商铺编码）';
+comment on column MANAFRAME.mfmallsat
+  is '是否有效';
+comment on column MANAFRAME.mflocation
+  is '方位';
+comment on column MANAFRAME.mfshape
+  is '形状';
+comment on column MANAFRAME.mflength
+  is '长度';
+comment on column MANAFRAME.mfeasy
+  is '租赁难易';
+comment on column MANAFRAME.mfspxz
+  is '广告类型';
+comment on column MANAFRAME.mfzqjh
+  is '广告介质';
+comment on column MANAFRAME.mfhygh
+  is '行  业';
+comment on column MANAFRAME.mfytgh
+  is '业态';
+comment on column MANAFRAME.mfzlgh
+  is '品  牌';
+comment on column MANAFRAME.mfkind
+  is '商铺类型';
+comment on column MANAFRAME.mfjzarea
+  is '建筑面积';
+comment on column MANAFRAME.mfzjarea
+  is '租金面积';
+comment on column MANAFRAME.mfarealx
+  is '收楼标志';
+comment on column MANAFRAME.mfexprent
+  is '单位租金';
+comment on column MANAFRAME.mfexpsj
+  is '总租金';
+comment on column MANAFRAME.mfsupplywh
+  is '租户事务协调';
+comment on column MANAFRAME.mfis_xssy
+  is '商铺辅助信息(a自持商铺b返租商铺c代租商铺d自有商铺)家乐园需求';
+comment on column MANAFRAME.mfhth
+  is '合约号';
+comment on column MANAFRAME.mfoprid
+  is '录入人';
+comment on column MANAFRAME.mfadtid
+  is '审核人';
+comment on column MANAFRAME.mflast_modified
+  is '最后修改时间';
+comment on column MANAFRAME.mflast_billid
+  is '最后修改单据id';
+comment on column MANAFRAME.mflast_billno
+  is '最后修改单据';
+comment on column MANAFRAME.mflast_operid
+  is '最后修改人';
+comment on column MANAFRAME.mfoprdate
+  is '录入时间';
+comment on column MANAFRAME.mfadtdate
+  is '审核时间';
+comment on column MANAFRAME.mfsource
+  is '来源（0：定义 1:拆分 2：合并）';
+comment on column MANAFRAME.mfld
+  is '楼栋   (燕莎需求)';
+comment on column MANAFRAME.mflc
+  is '楼层   (燕莎需求)';
+comment on column MANAFRAME.mfjyfs
+  is '经营方式   (燕莎需求)';
+comment on column MANAFRAME.mfjywz
+  is '经营位置   (燕莎需求)';
+comment on column MANAFRAME.mfjyqy
+  is '区域   (燕莎需求) ';
+comment on column MANAFRAME.mfchr1
+  is '保留';
+comment on column MANAFRAME.mfchr2
+  is '保留';
+comment on column MANAFRAME.mfchr3
+  is '保留';
+comment on column MANAFRAME.mfnum1
+  is '保留';
+comment on column MANAFRAME.mfnum2
+  is '保留';
+comment on column MANAFRAME.mfnum3
+  is '保留';
+-- Create/Recreate indexes 
+create index IDX_MF_CAT on MANAFRAME (MFCATCODE)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_MF_CLASS on MANAFRAME (MFCLASS)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_MF_FCODE on MANAFRAME (MFFCODE)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_MF_PCODE on MANAFRAME (MFPCODE)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index IDX_MF_TYPE on MANAFRAME (MFTYPECODE)
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table MANAFRAME
+  add constraint PK_MANAFRAME primary key (MFCODE)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

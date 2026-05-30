@@ -1,0 +1,48 @@
+CREATE OR REPLACE Package Body Java_Getbackgoodsinfo As
+
+  -- 返回结果集为
+  -- 收银机号,小票号,行号,营业员,商品条码,商品编码,编码类别,商品柜组,商品品类,商品品牌,多单位码,批号,优惠单据编号,名称,单位,
+  -- 包装含量,销售数量,零售价,销售价格,合计金额,合计折扣,会员折扣额,会员折扣分担,优惠折扣额,优惠折扣分担,零时折扣额,零时折让额
+  -- 零时总品折扣,零时总品折让,批量折扣,赠送折扣,临时折扣分担,单品授权卡号,单品授权卡类别,单品授权卡授权折扣分担,是否允许VIP折扣,
+  -- 税率,商品标志,以旧换新条码,原收银机号,原小票号,发货地点,备注
+  Procedure Getbackgoodsinfo
+  (
+    Vmkt     In Varchar2,
+    Voldsyj  In Varchar2,
+    Voldfphm In Int,
+    Vcode    In Varchar2,
+    Vgz      In Varchar2,
+    Vuid     In Varchar2,
+    Rc       Out Retcursor
+  ) As
+  Begin
+    Open Rc For
+      Select 'SYJH', 0, 0, Fposidtogh(Max(Sdsaleman)), Max(Sd.Sdbarcode),
+             Max(Sd.Sdgdid), Max(Sdgdtype), Sdmfid, Max(Sdcatid),
+             Max(Sdppcode), Sdmsuid, Max(Sdbatchno), Max(Sdpopbno),
+             'GOODSNAME', 'UNIT', Max(Sdbzhl), Sum(Sdsl), Sdsj,
+             Round((Sdcjje + Sdpopzk + Sdcustzk + Sdgrantzk + Sdrulezke) / Sdsl,
+                    2),
+             Sum(Sdcjje + Sdpopzk + Sdcustzk + Sdgrantzk + Sdrulezke),
+             Sum(Sdpopzk + Sdcustzk + Sdgrantzk + Sdrulezke), Sum(Sdcustzk),
+             Max(Sdzkfd), Null, Null, Null, Null, Null, Null, Max(Sdzkfd),
+             Null, 0, Max(Sdrulebno), Sum(Sdrulezke), Max(Sdrulezkfd), '',
+             Null, Null, 'N', 1, Max(Sdisflag), Max(Sdanalcode),
+             Max(Sdysyjid), Max(Sdyinvno), Max(Sdfhdd), '', '', '', 0, 0,nvl(sdspsx,'00')
+      From   Selldetail Sd
+      Where  Spmarket = Vmkt And
+             Sdbillno = (Select Shbillno
+                         From   Sellhead
+                         Where  Shmarket = Vmkt And
+                                Shsyjid = Voldsyj And
+                                Shinvno = Voldfphm/* And
+                                Shdjlb In ('1', 'A')*/) And
+             Sdgdid = Vcode And
+             Sdmfid = Vgz And
+             Sdmsuid = Vuid
+      Group  By Sdgdid, Sdmfid, Sdppcode, Sdmsuid, Sdsj,
+                Round((Sdcjje + Sdpopzk + Sdcustzk + Sdgrantzk + Sdrulezke) / Sdsl,
+                       2),nvl(sdspsx,'00');
+  End Getbackgoodsinfo;
+
+End Java_Getbackgoodsinfo;

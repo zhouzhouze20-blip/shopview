@@ -1,0 +1,36 @@
+[
+  {
+    "department_keywords": ["财务"],
+    "position_keywords": ["财务"],
+    "match_any": true,
+    "role_codes": ["finance"],
+    "scope_mode": "CUSTOM",
+    "scope_dimensions": {
+      "store": ["$store_id"]
+    }
+  },
+  {
+    "position_keywords": ["部门主管", "部门经理", "主管", "经理"],
+    "role_codes": ["dept_manager"],
+    "scope_mode": "CUSTOM",
+    "scope_dimensions": {
+      "department": ["$department"]
+    }
+  },
+  {
+    "position_keywords": ["柜组负责人", "柜组主管", "柜组长", "柜长", "组长"],
+    "role_codes": ["group_manager"],
+    "scope_mode": "CUSTOM",
+    "scope_dimensions": {
+      "department": ["$department"]
+    }
+  },
+  {
+    "userids": ["zhangsan"],
+    "role_codes": ["store_admin"],
+    "scope_mode": "CUSTOM",
+    "scope_dimensions": {
+      "store": ["601"]
+    }
+  }
+]

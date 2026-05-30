@@ -1,0 +1,1425 @@
+CREATE OR REPLACE Package Body Poptktex Is
+  Currentdate Date;
+  Procedure Reduce_Qje(v_Crmmkt In Char,
+                       Vsyjh    In Char,
+                       Vfphm    In Number,
+                       v_Person In Varchar,
+                       Vxfseq   In Number,
+                       Vcardno  In Char,
+                       i_Tpid   In Varchar2,
+                       i_Ruleno In Varchar2,
+                       i_Source In Varchar2,
+                       Vqje     In Out Number,
+                       Vtype    In Char,
+                       Oqye     Out Number) Is
+    Cursor c_Bt Is
+      Select *
+        From (Select *
+                From Tktcardfqtotal
+               Where Tcftvipno = Vcardno
+                 And Tcftstatus = 'Y'
+                 And Tcftflag = 'Y'
+                 And (Tcftmkt = '0' Or
+                     (Tcftmkt = '1' And Tcftfqmkt = v_Crmmkt))
+                 And Tcftqtype = Vtype
+                 And Tcftfqje > 0
+                 And
+                    --tcftstartdate <= trunc(Sysdate) And
+                    --券种单独设置有效期
+                     Tcftenddate >= Trunc(Sysdate)
+                 And Tcftfstpid Like i_Tpid
+                 And Tcftfqrule Like i_Ruleno
+                 And Tcftsource Like i_Source
+              Union All
+              Select *
+                From Tktcardfqtotal t
+               Where Tcftvipno = Vcardno
+                 And Tcftstatus = 'Y'
+                 And Tcftflag = 'Y'
+                 And Tcftqtype = Vtype
+                 And Tcftfqje > 0
+                 And ((Tcftmkt = '2' And Exists
+                      (Select Tpiid, Tpcertarea, Bmdmkt
+                          From Tktpopinfo, Billmktdetail
+                         Where Tpiid = Bmdbillno
+                           And Bmdbillid = 'RRR'
+                           And Tpcertarea = '2'
+                           And Tpiid = t.Tcftfstpid
+                           And Bmdmkt = v_Crmmkt)))
+                 And
+                    --tcftstartdate <= trunc(Sysdate) And
+                    --券种单独设置有效期
+                     Tcftenddate >= Trunc(Sysdate)
+                 And Tcftfstpid Like i_Tpid
+                 And Tcftfqrule Like i_Ruleno
+                 And Tcftsource Like i_Source)
+       Order By Tcftseqno;
+    r_Bt    c_Bt%Rowtype;
+    v_Btye  Number;
+    Vcurqje Number;
+  
+    --log
+    Vseqno Number;
+    Vzy    Char(1);
+    --vkjtype char(1);
+  Begin
+    Oqye := Vqje;
+    Open c_Bt;
+    Loop
+      Fetch c_Bt
+        Into r_Bt;
+      Exit When c_Bt%Notfound Or c_Bt%Notfound Is Null;
+      Vcurqje := Least(Oqye, r_Bt.Tcftfqje);
+      v_Btye  := r_Bt.Tcftfqje;
+      --vkjtype := '1';
+      If Vcurqje <= 0.01 Then
+        Exit;
+      End If;
+      --批次余额
+      v_Btye := v_Btye - Vcurqje;
+      Update Tktcardfqtotal
+         Set Tcftfqje = Tcftfqje - Vcurqje
+       Where Tcftseqno = r_Bt.Tcftseqno
+         And Tcftqtype = Vtype;
+      Update Tktcardfqtotal
+         Set Tcftstatus = Decode(Tcftfqje, 0, 'N', 'Y')
+       Where Tcftseqno = r_Bt.Tcftseqno
+         And Tcftqtype = Vtype;
+      Select Seq_Tktcardfqlog.Nextval Into Vseqno From Dual;
+      --摘要
+      Vzy := 'N'; --退买
+      Insert Into Tktcardfqlog
+        (Tcflseqno,
+         Tcflvipseq,
+         Tcflvipno,
+         Tcflstartdate,
+         Tcflenddate,
+         Tcflzy,
+         Tcflpopid,
+         Tcflpoprule,
+         Tcfldate,
+         Tcflmoney,
+         Tcflye,
+         Tcfloper,
+         Tcflmemo,
+         Tcflsyjid,
+         Tcflinvno,
+         Tcflsyjtrace,
+         Tcfljetype,
+         Tcflmkt,
+         Tcfljygs,
+         Tcflsource,
+         Tcfltype)
+      Values
+        (Vseqno,
+         r_Bt.Tcftseqno,
+         r_Bt.Tcftvipno,
+         r_Bt.Tcftstartdate,
+         r_Bt.Tcftenddate,
+         Vzy,
+         r_Bt.Tcftfstpid,
+         r_Bt.Tcftfqrule,
+         Sysdate,
+         Vcurqje,
+         v_Btye,
+         v_Person,
+         '后台',
+         Vsyjh,
+         Vfphm,
+         Vxfseq,
+         Vtype,
+         --vkjtype,
+         v_Crmmkt,
+         r_Bt.Tcftjygs,
+         r_Bt.Tcftsource,
+         r_Bt.Tcfttype);
+      --计算余额
+      Oqye := Oqye - Vcurqje;
+      If Oqye <= 0.01 Then
+        Oqye := 0;
+        Exit;
+      End If;
+      --<<NX_MARK>>
+      Null;
+    End Loop;
+  End;
+  Procedure Bapprove(p_Billno In Varchar2,
+                     p_Person In Varchar2,
+                     p_Billid In Varchar2,
+                     p_Djlb   In Varchar2) Is
+    Row_Head    Btkthead%Rowtype;
+    Row_Tr      Tktrule%Rowtype;
+    Row_Poprule Poprule%Rowtype;
+    l_Rulelb    Char(1);
+    l_Seq       Number;
+    --vstartdate DATE;
+    --venddate   DATE;
+    l_Qno        Varchar2(20);
+    l_Qtype      Char(1);
+    l_Pj         Char(1);
+    l_Area       Varchar2(20);
+    o_Retcode    Number;
+    o_Retmsg     Varchar2(255);
+    l_Qye        Number;
+    l_Ismz       Char(1);
+    l_Prnsite    Char(1);
+    r_Info       Saruleinfo%Rowtype;
+    l_Topicsdate Date;
+    l_Topicedate Date;
+    l_Qstartdate Date;
+    l_Qenddate   Date;
+    Ls_Cmdkey    Varchar2(50);
+    --l_zkbl     NUMBER;
+    --l_fdbl     NUMBER;
+  Begin
+    Begin
+      Select *
+        Into Row_Head
+        From Btkthead
+       Where Bthbillno = p_Billno
+         For Update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, p_Billno || '->1 单据不存在');
+    End;
+    If Row_Head.Bthdjlb <> p_Djlb Or
+       p_Djlb Not In (Type_Mq, Type_Sa, Type_Tq, Type_Sc, Type_Zk, Type_Zp,Type_Bz) Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.1 单据类别不一致');
+    End If;
+    If p_Billid Not In
+       (Billidmq, Billidsa, Billidtq, Billidsc, Billidzk, Billidzp,Billidbz) Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.2 单据编号不一致');
+    End If;
+    If Row_Head.Bthflag In (Flagcanceled, Flagapproved) Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->3 单据已取消或已审核，不能修改！');
+    End If;
+    If Trim(Row_Head.Bthjygs) Is Null Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->5.1 请指定经营公司！');
+    End If;
+    If Trim(Row_Head.Bthmkt) Is Null Then
+      Raise_Application_Error(Errcode, p_Billno || '->5.2 请指定门店！');
+    End If;
+    If Row_Head.Bthflag <> Flagediting Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->6 单据已经发送，或已审核！');
+    End If;
+    If p_Djlb = Type_Mq Then
+      l_Rulelb := '4';
+      If Trim(Row_Head.Bthchr1) Is Null Then
+        Raise_Application_Error(Errcode, p_Billno || '->5.3 请指定档期！');
+      End If;
+    Elsif p_Djlb = Type_Tq Then
+      l_Rulelb := '4';
+      If Trim(Row_Head.Bthchr1) Is Null Then
+        Raise_Application_Error(Errcode, p_Billno || '->5.3 请指定档期！');
+      End If;
+    Elsif p_Djlb = Type_Zp Then
+      l_Rulelb := 'B';
+      If Trim(Row_Head.Bthchr1) Is Null Then
+        Raise_Application_Error(Errcode, p_Billno || '->5.3 请指定档期！');
+      End If;
+    Elsif p_Djlb = Type_Bz Then
+       l_Rulelb := 'F';
+    Else
+      l_Rulelb := '3';
+    End If;
+    If p_Djlb <> Type_Zk Then
+      Begin
+        If p_Djlb = Type_Zp or p_Djlb = Type_Bz Then
+          Select *
+            Into Row_Poprule
+            From Poprule
+           Where Prid = Row_Head.Bthruleid
+             And Prmode = l_Rulelb;
+          If Row_Poprule.Prstatus <> 'Y' Then
+            Raise_Application_Error(Errcode,
+                                    p_Billno || '->7 规则[' ||
+                                    Row_Head.Bthruleid || ']状态不正确,请检查!');
+          End If;
+        Else
+          Select *
+            Into Row_Tr
+            From Tktrule
+           Where Trcode = Row_Head.Bthruleid
+             And Trrulelb = l_Rulelb;
+          If Row_Tr.Trflag <> 'Y' Then
+            Raise_Application_Error(Errcode,
+                                    p_Billno || '->7 规则[' ||
+                                    Row_Head.Bthruleid || ']状态不正确,请检查!');
+          End If;
+        End If;
+      Exception
+        When No_Data_Found Then
+          Raise_Application_Error(Errcode,
+                                  p_Billno || '->8 规则' ||
+                                  Row_Head.Bthruleid || ']不存在,请检查!');
+      End;
+    End If;
+    If p_Djlb = Type_Mq Then
+      --查找返券档期
+      Salepopms.Gettktpopinfo(Row_Head.Bthchr1,
+                              'CARDNO',
+                              'DATE',
+                              o_Retcode,
+                              o_Retmsg,
+                              l_Topicsdate,
+                              l_Topicedate,
+                              l_Qno,
+                              l_Qtype,
+                              l_Pj,
+                              l_Area,
+                              l_Ismz,
+                              l_Prnsite);
+      --买券拼券规则记为通收
+      l_Pj := '0';
+      For r_Det In (Select * From Btktdetail Where Btdbillno = p_Billno) Loop
+        l_Qstartdate := Fgetqexpiredate(Row_Head.Bthchr1,
+                                        r_Det.Btdchr1,
+                                        '1');
+        l_Qenddate   := Fgetqexpiredate(Row_Head.Bthchr1,
+                                        r_Det.Btdchr1,
+                                        '2');
+        If l_Qstartdate Is Null Then
+          l_Qstartdate := l_Topicsdate;
+        End If;
+        If l_Qenddate Is Null Then
+          l_Qenddate := l_Topicedate;
+        End If;
+        -- 记券
+        Update Tktcardfqtotal
+           Set Tcftfqje = Nvl(Tcftfqje, 0) + r_Det.Btdbuyje
+         Where Tcftvipno = r_Det.Btdno1
+           And Tcftstartdate = l_Qstartdate
+           And Tcftenddate = l_Qenddate
+           And Tcftfstpid = Row_Head.Bthchr1
+           And Tcftfqrule = Row_Head.Bthruleid
+           And Tcftstatus = 'Y'
+           And Tcfttype = '1'
+           And Tcftmkt = l_Area
+           And Tcftrulepj = l_Pj
+           And Tcftjygs = Row_Head.Bthjygs
+           And Tcftfqmkt = Row_Head.Bthmkt
+           And Tcftsource = '8'
+           And Tcftqtype = r_Det.Btdchr1
+        Returning Tcftseqno Into l_Seq;
+        If Sql%Rowcount = 0 Or Sql%Rowcount Is Null Then
+          Select Seq_Tktcardfqtotal.Nextval Into l_Seq From Dual;
+          Insert Into Tktcardfqtotal
+            (Tcftseqno,
+             Tcftvipno,
+             Tcftstartdate,
+             Tcftenddate,
+             Tcftqtype,
+             Tcftfqje,
+             Tcftstatus,
+             Tcftvipexno,
+             Tcftmemo,
+             Tcftzpno,
+             Tcftfstpid,
+             Tcftcltpid,
+             Tcftflag,
+             Tcftransno,
+             Tcfttype,
+             Tcftqmz,
+             Tcftmkt,
+             Tcftjygs,
+             Tcftfqmkt,
+             Tcftfqrule,
+             Tcftrulepj,
+             Tcftsource)
+          Values
+            (l_Seq,
+             r_Det.Btdno1,
+             l_Qstartdate,
+             l_Qenddate,
+             r_Det.Btdchr1,
+             r_Det.Btdbuyje,
+             'Y',
+             r_Det.Btdno1,
+             '买券单号:' || p_Billno,
+             Null,
+             Row_Head.Bthchr1,
+             Row_Head.Bthchr1,
+             'Y',
+             Null,
+             '1',
+             Null,
+             l_Area,
+             Row_Head.Bthjygs,
+             Row_Head.Bthmkt,
+             Row_Head.Bthruleid,
+             l_Pj,
+             '8');
+        End If;
+        If r_Det.Btdbuyje > 0 Then
+          Insert Into Tktcardfqlog
+            (Tcflseqno,
+             Tcflvipno,
+             Tcflstartdate,
+             Tcflenddate,
+             Tcfldate,
+             Tcflzy,
+             Tcflpopid,
+             Tcflpoprule,
+             Tcflmoney,
+             Tcflye,
+             Tcfloper,
+             Tcflsyjid,
+             Tcflinvno,
+             Tcflmemo,
+             Tcflsyjtrace,
+             Tcfljetype,
+             Tcflvipseq,
+             Tcflmkt,
+             Tcfljygs,
+             Tcflsource,
+             Tcfltype)
+          Values
+            (Seq_Tktcardfqlog.Nextval,
+             r_Det.Btdno1,
+             l_Qstartdate,
+             l_Qenddate,
+             Sysdate,
+             'M',
+             Row_Head.Bthchr1,
+             Row_Head.Bthruleid,
+             r_Det.Btdbuyje,
+             r_Det.Btdbuyje,
+             p_Person,
+             Null,
+             Null,
+             '买券单号:' || p_Billno,
+             Null,
+             r_Det.Btdchr1,
+             l_Seq,
+             Row_Head.Bthmkt,
+             Row_Head.Bthjygs,
+             '8',
+             '1');
+        End If;
+        /*IF r_det.btdbqje > 0 THEN
+          INSERT INTO tktcardfqlog
+            (tcflseqno, tcflvipno, tcflstartdate, tcflenddate,
+             tcfldate, tcflzy, tcflpopid, tcflpoprule, tcflmoney, tcflye,
+             tcfloper, tcflsyjid, tcflinvno, tcflmemo, tcflsyjtrace, 
+             tcfljetype, tcflvipseq, tcflmkt, tcfljygs, tcflsource, tcfltype)
+          VALUES
+            (seq_tktcardfqlog.NEXTVAL, r_det.btdno1, vstartdate, venddate,
+             SYSDATE, 'M', row_head.bthchr1, row_head.bthruleid, r_det.btdbqje, r_det.btdbqje,
+             p_person, NULL, NULL, '买券单号:'||p_billno, NULL, 
+             '2', l_seq, row_head.bthmkt, row_head.bthjygs, '2', '1');
+        END IF;*/
+      End Loop;
+    Elsif p_Djlb = Type_Tq Then
+      For r_Det In (Select * From Btktdetail Where Btdbillno = p_Billno) Loop
+        If r_Det.Btdnum1 > 0.01 Then
+          Reduce_Qje(Row_Head.Bthmkt,
+                     '0000',
+                     0,
+                     p_Person,
+                     0,
+                     r_Det.Btdno1,
+                     Row_Head.Bthchr1,
+                     Row_Head.Bthruleid,
+                     '8',
+                     r_Det.Btdnum1,
+                     r_Det.Btdchr1,
+                     l_Qye);
+          If l_Qye > 0.01 Then
+            Raise_Application_Error(Errcode,
+                                    r_Det.Btdno1 || '->1 ' || r_Det.Btdchr1 ||
+                                    '券余额不够，超出' || To_Number(l_Qye) || '元！');
+          End If;
+        End If;
+        /*If r_det.btdnum2 > 0 Then --bq
+           reduce_qje(row_head.bthmkt,'0000',0,p_person,0,r_det.btdno1,row_head.bthchr1,row_head.bthruleid,
+                      '%',r_det.btdnum2,'B',l_qye);
+           If l_qye > 0.01 Then
+              raise_application_error(errcode,
+                             r_det.btdno1 || '->2 B券余额不够，超出'||to_number(l_qye)||'元！');
+           End If;
+        End If;*/
+      End Loop;
+    Elsif p_Djlb = Type_Sa Or p_Djlb = Type_Sc Or p_Djlb = Type_Zk Or
+          p_Djlb = Type_Zp or p_Djlb = Type_Bz Then
+      For r_Det In (Select * From Btktdetail Where Btdbillno = p_Billno) Loop
+        If Row_Head.Bthchr3 In (Modegoods, Modecomb) Then
+          --r_info.sriseqno    := 
+          r_Info.Sritopid     := Row_Head.Bthchr1;
+          r_Info.Sriruleid    := Row_Head.Bthruleid;
+          r_Info.Srijygs      := Row_Head.Bthjygs;
+          r_Info.Srimkt       := Row_Head.Bthmkt;
+          r_Info.Srimode      := Row_Head.Bthchr3;
+          r_Info.Sribillno    := Row_Head.Bthbillno;
+          r_Info.Srigdid      := r_Det.Btdno1;
+          r_Info.Sribarcode   := r_Det.Btdno2;
+          r_Info.Srisupid     := r_Det.Btdsupid;
+          r_Info.Srimfid      := Nvl(r_Det.Btdmfid, 'ALL');
+          r_Info.Sricatid     := r_Det.Btdcatid;
+          r_Info.Srippcode    := r_Det.Btdppcode;
+          r_Info.Sriksrq      := Row_Head.Bthqdate1;
+          r_Info.Srijsrq      := Row_Head.Bthqdate2;
+          r_Info.Srikssj      := '00:00';
+          r_Info.Srijssj      := '23:59';
+          r_Info.Srieffdate   := Row_Head.Btheffdate;
+          r_Info.Srilapdate   := Row_Head.Bthlapdate;
+          r_Info.Sriefistoday := Row_Head.Bthchr2;
+          r_Info.Srimemo      := Row_Head.Bthmemo;
+          r_Info.Srispsx      := r_Det.Btdchr1;
+          r_Info.Srdkxe       := Row_Head.Bthnum2;
+          /*r_info.sribankcode := 
+          r_info.srino1      := 
+          r_info.srino2      := */
+          If Row_Head.Bthchr3 = Modegoods Then
+            Select Gbzcff
+              Into r_Info.Srispsx
+              From Goodsbase
+             Where Gbid = r_Info.Srigdid
+               And Gbmanaunit = Row_Head.Bthjygs;
+          End If;
+          If p_Djlb = Type_Sa Then
+            Insert Into Saruleinfo
+              Select Seq_Saruleinfo.Nextval,
+                     r_Info.Sritopid,
+                     r_Info.Sriruleid,
+                     r_Info.Srijygs,
+                     Bmdmkt,
+                     r_Info.Srimode,
+                     r_Info.Sribillno,
+                     r_Info.Srigdid,
+                     r_Info.Sribarcode,
+                     r_Info.Srisupid,
+                     r_Info.Srimfid,
+                     r_Info.Sricatid,
+                     r_Info.Srippcode,
+                     r_Info.Sriksrq,
+                     r_Info.Srijsrq,
+                     r_Info.Srikssj,
+                     r_Info.Srijssj,
+                     r_Info.Srieffdate,
+                     r_Info.Srilapdate,
+                     r_Info.Sriefistoday,
+                     r_Info.Srimemo,
+                     Btbbankcode,
+                     Btbno1,
+                     Btbno2,
+                     r_Info.Srispsx,
+                     r_Info.Srdkxe,
+                     p_Djlb
+                From Btktbank, Billmktdetail
+               Where Btdbillno = Bmdbillno
+                 And Bmdbillno = p_Billno
+                 And Bmdbillid = p_Billid;
+          Elsif p_Djlb In (Type_Sc, Type_Zp) Then
+            Insert Into Saruleinfo
+              Select Seq_Saruleinfo.Nextval,
+                     r_Info.Sritopid,
+                     r_Info.Sriruleid,
+                     r_Info.Srijygs,
+                     Bmdmkt,
+                     r_Info.Srimode,
+                     r_Info.Sribillno,
+                     r_Info.Srigdid,
+                     r_Info.Sribarcode,
+                     r_Info.Srisupid,
+                     r_Info.Srimfid,
+                     r_Info.Sricatid,
+                     r_Info.Srippcode,
+                     r_Info.Sriksrq,
+                     r_Info.Srijsrq,
+                     r_Info.Srikssj,
+                     r_Info.Srijssj,
+                     r_Info.Srieffdate,
+                     r_Info.Srilapdate,
+                     r_Info.Sriefistoday,
+                     r_Info.Srimemo,
+                     '',
+                     '',
+                     '',
+                     r_Info.Srispsx,
+                     0,
+                     p_Djlb
+                From Billmktdetail
+               Where Bmdbillno = p_Billno
+                 And Bmdbillid = p_Billid;
+          Elsif p_Djlb In (Type_Zk,Type_Bz) Then
+            Insert Into Zksaruleinfo
+              Select Seq_Zksaruleinfo.Nextval,
+                     r_Info.Sritopid,
+                     r_Info.Srijygs,
+                     Bmdmkt,
+                     r_Info.Srimode,
+                     r_Info.Sribillno,
+                     r_Info.Srigdid,
+                     r_Info.Sribarcode,
+                     r_Info.Srisupid,
+                     r_Info.Srimfid,
+                     r_Info.Sricatid,
+                     r_Info.Srippcode,
+                     r_Info.Srispsx,
+                     r_Info.Sriksrq,
+                     r_Info.Srijsrq,
+                     r_Info.Srikssj,
+                     r_Info.Srijssj,
+                     Btbbankcode,
+                     Btbno1,
+                     Btbno2,
+                     Btrule,
+                     r_Det.Btdnum3,
+                     r_Det.Btdnum4,
+                     p_Djlb,
+                     r_Info.Srimemo,
+                     Btstart,
+                     Btlenth,
+                     btdkxe,
+                     btdkdrxe,
+                     btdqzxe,
+                     btdrzxe
+                From Btktbank, Billmktdetail
+               Where Btdbillno = Bmdbillno
+                 And Bmdbillno = p_Billno
+                 And Bmdbillid = p_Billid;
+          Else
+            Raise_Application_Error(Errcode,
+                                    Row_Head.Bthchr3 || '追送方式错误');
+          End If;
+        Elsif Row_Head.Bthchr3 = Modesup Then
+          --定义按供应商时候，以商品形式存入中间表
+          For r_Gd In (Select Gbid, Btdsupid, Gbcatcode, Gbppcode, Gbzcff
+                         From Btktdetail, Suppliergoods, Goodsbase
+                        Where Btdbillno = p_Billno
+                          And Sgssupid = Btdsupid
+                          And Sgsgdid = Gbid
+                          And Sgsmanaunit = Row_Head.Bthjygs) Loop
+            r_Info.Sritopid     := Row_Head.Bthchr1;
+            r_Info.Sriruleid    := Row_Head.Bthruleid;
+            r_Info.Srijygs      := Row_Head.Bthjygs;
+            r_Info.Srimkt       := Row_Head.Bthmkt;
+            r_Info.Srimode      := Modegoods;
+            r_Info.Sribillno    := Row_Head.Bthbillno;
+            r_Info.Srigdid      := r_Gd.Gbid;
+            r_Info.Sribarcode   := r_Gd.Gbid;
+            r_Info.Srisupid     := r_Gd.Btdsupid;
+            r_Info.Srimfid      := Nvl(r_Det.Btdmfid, 'ALL');
+            r_Info.Sricatid     := r_Gd.Gbcatcode;
+            r_Info.Srippcode    := r_Gd.Gbppcode;
+            r_Info.Sriksrq      := Row_Head.Bthqdate1;
+            r_Info.Srijsrq      := Row_Head.Bthqdate2;
+            r_Info.Srikssj      := '00:00';
+            r_Info.Srijssj      := '23:59';
+            r_Info.Srieffdate   := Row_Head.Btheffdate;
+            r_Info.Srilapdate   := Row_Head.Bthlapdate;
+            r_Info.Sriefistoday := Row_Head.Bthchr2;
+            r_Info.Srimemo      := Row_Head.Bthmemo;
+            r_Info.Srispsx      := r_Gd.Gbzcff;
+            r_Info.Srdkxe       := Row_Head.Bthnum2;
+            If p_Djlb = Type_Sa Then
+              Insert Into Saruleinfo
+                Select Seq_Saruleinfo.Nextval,
+                       r_Info.Sritopid,
+                       r_Info.Sriruleid,
+                       r_Info.Srijygs,
+                       Bmdmkt,
+                       r_Info.Srimode,
+                       r_Info.Sribillno,
+                       r_Info.Srigdid,
+                       r_Info.Sribarcode,
+                       r_Info.Srisupid,
+                       r_Info.Srimfid,
+                       r_Info.Sricatid,
+                       r_Info.Srippcode,
+                       r_Info.Sriksrq,
+                       r_Info.Srijsrq,
+                       r_Info.Srikssj,
+                       r_Info.Srijssj,
+                       r_Info.Srieffdate,
+                       r_Info.Srilapdate,
+                       r_Info.Sriefistoday,
+                       r_Info.Srimemo,
+                       Btbbankcode,
+                       Btbno1,
+                       Btbno2,
+                       r_Info.Srispsx,
+                       r_Info.Srdkxe,
+                       p_Djlb
+                  From Btktbank, Billmktdetail
+                 Where Btdbillno = Bmdbillno
+                   And Bmdbillno = p_Billno
+                   And Bmdbillid = p_Billid;
+            Elsif p_Djlb In (Type_Sc, Type_Zp) Then
+              Insert Into Saruleinfo
+                Select Seq_Saruleinfo.Nextval,
+                       r_Info.Sritopid,
+                       r_Info.Sriruleid,
+                       r_Info.Srijygs,
+                       Bmdmkt,
+                       r_Info.Srimode,
+                       r_Info.Sribillno,
+                       r_Info.Srigdid,
+                       r_Info.Sribarcode,
+                       r_Info.Srisupid,
+                       r_Info.Srimfid,
+                       r_Info.Sricatid,
+                       r_Info.Srippcode,
+                       r_Info.Sriksrq,
+                       r_Info.Srijsrq,
+                       r_Info.Srikssj,
+                       r_Info.Srijssj,
+                       r_Info.Srieffdate,
+                       r_Info.Srilapdate,
+                       r_Info.Sriefistoday,
+                       r_Info.Srimemo,
+                       '',
+                       '',
+                       '',
+                       r_Info.Srispsx,
+                       0,
+                       p_Djlb
+                  From Billmktdetail
+                 Where Bmdbillno = p_Billno
+                   And Bmdgroup = r_Info.Srimkt
+                   And Bmdbillid = p_Billid;
+            Elsif p_Djlb in(Type_Zk,Type_Bz) Then
+              Insert Into Zksaruleinfo
+                Select Seq_Zksaruleinfo.Nextval,
+                       r_Info.Sritopid,
+                       r_Info.Srijygs,
+                       Bmdmkt,
+                       r_Info.Srimode,
+                       r_Info.Sribillno,
+                       r_Info.Srigdid,
+                       r_Info.Sribarcode,
+                       r_Info.Srisupid,
+                       r_Info.Srimfid,
+                       r_Info.Sricatid,
+                       r_Info.Srippcode,
+                       r_Info.Srispsx,
+                       r_Info.Sriksrq,
+                       r_Info.Srijsrq,
+                       r_Info.Srikssj,
+                       r_Info.Srijssj,
+                       Btbbankcode,
+                       Btbno1,
+                       Btbno2,
+                       Btrule,
+                       r_Det.Btdnum3,
+                       r_Det.Btdnum4,
+                       p_Djlb,
+                       r_Info.Srimemo,
+                       Btstart,
+                       Btlenth,
+                       btdkxe,
+                       btdkdrxe,
+                       btdqzxe,
+                       btdrzxe 
+                  From Btktbank, Billmktdetail
+                 Where Btdbillno = Bmdbillno
+                   And Bmdbillno = p_Billno
+                   And Bmdbillid = p_Billid;
+            Else
+              Raise_Application_Error(Errcode,
+                                      Row_Head.Bthchr3 || '追送方式错误');
+            End If;
+          End Loop;
+        Else
+          Raise_Application_Error(Errcode,
+                                  Row_Head.Bthchr3 || '追送方式错误');
+        End If;
+      End Loop;
+    End If;
+    Ls_Cmdkey := '''' || p_Billno || '''' || ',' || '''' || p_Billid || '''';
+    If p_Djlb In (Type_Sa, Type_Sc) Then
+      Cmdsend.Sp_Cmdsend_Bill(Cmdsa, p_Billno, p_Billid, Ls_Cmdkey);
+    Elsif p_Djlb in(Type_Zk,Type_Bz) Then
+      Cmdsend.Sp_Cmdsend_Bill(Cmdsazk, p_Billno, p_Billid, Ls_Cmdkey);
+    End If;
+    --
+    Update Btkthead
+       Set Bthflag   = Flagapproved,
+           Auditor   = p_Person,
+           --Auditdate = Fgeterpdate
+           Auditdate = sysdate
+     Where Bthbillno = p_Billno;
+  End;
+  Procedure Approve(p_Billno In Varchar2,
+                    p_Person In Varchar2,
+                    p_Billid In Varchar2,
+                    p_Djlb   In Varchar2) Is
+  Begin
+    Bapprove(p_Billno, p_Person, p_Billid, p_Djlb);
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+  Procedure Cancle(p_Billno In Varchar2,
+                   p_Person In Varchar2,
+                   p_Billid In Varchar2,
+                   p_Djlb   In Varchar2) Is
+    Row_Head  Btkthead%Rowtype;
+    Ls_Cmdkey Varchar2(50);
+  Begin
+    Begin
+      Select *
+        Into Row_Head
+        From Btkthead
+       Where Bthbillno = p_Billno
+         For Update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, p_Billno || '->1 单据不存在');
+    End;
+    If Row_Head.Bthdjlb <> p_Djlb Or
+       p_Djlb Not In (Type_Sc, Type_Sa, Type_Zk,type_zp,type_BZ) Then
+      --追送
+      Raise_Application_Error(Errcode, p_Billno || '->2.1 单据类别不一致');
+    End If;
+    If p_Billid Not In (Billidsc, Billidsa, Billidzk,billidzp,billidBz) Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.2 单据编号不一致');
+    End If;
+    If Row_Head.Bthflag Not In (Flagapproved) Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->3 单据未审核，不能取消！');
+    End If;
+    --
+    If p_Djlb In (Type_Sc, Type_Sa,type_zp) Then
+      Delete From Saruleinfo
+       Where Sribillno = p_Billno
+         And Srijygs = Row_Head.Bthjygs;
+    Elsif p_Djlb in(Type_Zk,Type_Bz) Then
+      Delete From Zksaruleinfo
+       Where Sribillno = p_Billno
+         And Srijygs = Row_Head.Bthjygs;
+    End If;
+    Ls_Cmdkey := '''' || p_Billno || '''' || ',' || '''' || p_Billid || '''';
+    If p_Djlb In (Type_Sa, Type_Sc,type_zp) Then
+      Cmdsend.Sp_Cmdsend_Bill(Cmdcanclesa, p_Billno, p_Billid, Ls_Cmdkey);
+    Else
+      Cmdsend.Sp_Cmdsend_Bill(Cmdcanclesazk, p_Billno, p_Billid, Ls_Cmdkey);
+    End If;
+    --修改本地标志
+    Update Btkthead
+       Set Bthflag   = Flagcanceled,
+           btqxrq = sysdate,
+           btqxr   = p_Person
+     Where Bthbillno = p_Billno;
+    If Sql%Rowcount <> 1 Or Sql%Rowcount Is Null Then
+      Raise_Application_Error(Errcode,
+                              p_Billno || '->4 修改审核标志失败！');
+    End If;
+  End;
+
+  --前台买券
+  Procedure Sp_Possendmq(Vbillno   In Number,
+                         Vtransno  In Number,
+                         o_Retcode Out Number,
+                         o_Retmsg  Out Varchar2) Is
+    Row_Hd       Sellhead%Rowtype;
+    l_Topicsdate Date;
+    l_Topicedate Date;
+    l_Qstartdate Date;
+    l_Qenddate   Date;
+    --vstartdate DATE;
+    --venddate   DATE;
+    l_Qno     Varchar2(20);
+    l_a_m     Char(1);
+    l_Pj      Char(1);
+    l_Area    Varchar2(20);
+    l_Crmmkt  Varchar2(20);
+    l_Ismz    Char(1);
+    l_Prnsite Char(1);
+    r_Rule    Tktrule%Rowtype;
+    l_Totfqje Number;
+    r_Log     Tktcardfqlog%Rowtype;
+    l_Ye      Number;
+    Cursor Cur_Fqdet(Vrule In Varchar2) Is
+      Select * From Tktrulefqdet Where Trdcode = Vrule;
+    Row_Fqdet Tktrulefqdet%Rowtype;
+    l_Tqje    Number;
+    l_Seq     Number;
+    Ltransno  Number;
+    l_Qe      Number;
+    --l_maxqe   NUMBER;
+    l_Seqno Number;
+  Begin
+    --'V'; //买券付款
+    --'W'; //红冲买券付款
+    --'Y'; //退券付款
+    --'Z'; //退券付款红冲
+    l_Totfqje := 0;
+    Begin
+      Select *
+        Into Row_Hd
+        From Sellhead
+       Where Shbillno = Vbillno
+         And Shdjlb In ('V', 'W', 'Y', 'Z')
+         For Update Nowait;
+      /*      if row_hd.shstatus <> 'N' then
+        o_retcode := -1;
+        o_retmsg  := to_char(vbillno) || '->' || '小票状态为Y,不能买券';
+        return ;
+      end if;*/
+    Exception
+      When No_Data_Found Then
+        o_Retcode := -1;
+        o_Retmsg  := To_Char(Vbillno) || '->' || '没有找到此小票';
+        Return;
+    End;
+    If Vtransno = 0 Or Vtransno Is Null Then
+      Select Seq_Popms.Nextval Into Ltransno From Dual;
+    Else
+      Ltransno := Vtransno;
+    End If;
+    If Row_Hd.Shdjlb = 'W' Then
+      Begin
+        Select *
+          Into r_Log
+          From Tktcardfqlog
+         Where Tcflzy = 'w'
+           And Tcflinvno = Row_Hd.Shinvno
+           And Tcflsyjid = Row_Hd.Shsyjid
+           And Tcflsource = '2';
+        o_Retcode := -1;
+        o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,已经红冲过';
+        Sp_Opererrors('sp_possendmq',
+                      '10003',
+                      To_Char(Vbillno) || '->' || '红冲失败,已经红冲过');
+        Return;
+      Exception
+        When Others Then
+          Begin
+            Select Tktcardfqlog.*
+              Into r_Log
+              From Tktcardfqlog, Tktcardfqtotal
+             Where Tcflzy = 'w'
+               And Tcflinvno = Row_Hd.Shinvno
+               And Tcflsyjid = Row_Hd.Shsyjid
+               And Tcflvipno = Tcftvipno
+               And Tcftqtype = Tcfljetype
+               And Tcftfqje < Tcflmoney
+               And Tcftstatus = 'Y'
+               And Tcflsource = '2'
+               And Rownum = 1;
+            o_Retcode := -1;
+            o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,券' ||
+                         r_Log.Tcflvipno || '金额不足!';
+            Sp_Opererrors('sp_possendmq',
+                          '10003',
+                          To_Char(Vbillno) || '->' || '红冲失败,券' ||
+                          r_Log.Tcflvipno || '金额不足!');
+            Return;
+          Exception
+            When Others Then
+              Update Tktcardfqtotal a
+                 Set (Tcftfqje, Tcftflag) =
+                     (Select a.Tcftfqje - Tcflmoney,
+                             Decode(Tcfltype, '1', Tcfltype, 'N')
+                        From Tktcardfqlog
+                       Where Tcflzy = 'm'
+                         And Tcflinvno = Row_Hd.Shinvno
+                         And Tcflsyjid = Row_Hd.Shsyjid
+                         And Tcflvipno = a.Tcftvipno
+                         And a.Tcftqtype = Tcfljetype
+                         And Tcftstatus = 'Y'
+                         And a.Tcftsource = '2')
+               Where Exists (Select '1'
+                        From Tktcardfqlog
+                       Where Tcflzy = 'm'
+                         And Tcflinvno = Row_Hd.Shinvno
+                         And Tcflsyjid = Row_Hd.Shsyjid
+                         And Tcflvipno = a.Tcftvipno
+                         And a.Tcftqtype = Tcfljetype
+                         And Tcftstatus = 'Y'
+                         And a.Tcftsource = '2');
+              Insert Into Tktcardfqlog
+                Select Seq_Tktcardfqlog.Nextval,
+                       Tcflvipno,
+                       Tcflstartdate,
+                       Tcflenddate,
+                       Tcfldate,
+                       'w',
+                       Tcflpopid,
+                       Tcflpoprule,
+                       Tcflmoney,
+                       Tcftfqje - Tcflmoney,
+                       Tcfloper,
+                       Tcflsyjid,
+                       Tcflinvno,
+                       To_Char(Sysdate, 'YYYY-MM-DD hh24:mm:ss'),
+                       Tcflsyjtrace,
+                       Tcfljetype,
+                       Tcflvipseq,
+                       Tcflmkt,
+                       Tcfljygs,
+                       Tcflsource,
+                       Ltransno,
+                       Tcfltype,
+                       Tcflqchg,
+                       Tcflchr1,
+                       Tcflchr2,
+                       Tcflchr3,
+                       Tcflnum1,
+                       Tcflnum2,
+                       Tcflnum3,
+                       Tcflywdh,
+                       tcflismzq,
+                       tcflqmz,
+                       tcflqno
+                  From Tktcardfqlog, Tktcardfqtotal
+                 Where Tcflzy = 'm'
+                   And Tcflinvno = Row_Hd.Shinvno
+                   And Tcflsyjid = Row_Hd.Shsyjid
+                   And Tcflvipno = Tcftvipno
+                   And Tcftqtype = Tcfljetype
+                   And Tcflsource = '2';
+          End;
+      End;
+    Elsif Row_Hd.Shdjlb = 'Z' Then
+      Begin
+        Select *
+          Into r_Log
+          From Tktcardfqlog
+         Where Tcflzy = 'z'
+           And Tcflinvno = Row_Hd.Shinvno
+           And Tcflsyjid = Row_Hd.Shsyjid
+           And Tcflsource = '2';
+        o_Retcode := -1;
+        o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,已经红冲过';
+        Sp_Opererrors('sp_possendmq',
+                      '10003',
+                      To_Char(Vbillno) || '->' || '红冲失败,已经红冲过');
+        Return;
+      Exception
+        When Others Then
+          Update Tktcardfqtotal a
+             Set (Tcftfqje, Tcftflag) =
+                 (Select a.Tcftfqje + Tcflmoney,
+                         Decode(Tcfltype, '1', Tcfltype, 'Y')
+                    From Tktcardfqlog
+                   Where Tcflzy = 'n'
+                     And Tcflinvno = Row_Hd.Shinvno
+                     And Tcflsyjid = Row_Hd.Shsyjid
+                     And Tcflvipno = a.Tcftvipno
+                     And a.Tcftqtype = Tcfljetype
+                     And a.Tcftsource = '2')
+           Where Exists (Select Tcflseqno
+                    From Tktcardfqlog
+                   Where Tcflzy = 'n'
+                     And Tcflinvno = Row_Hd.Shinvno
+                     And Tcflsyjid = Row_Hd.Shsyjid
+                     And Tcflvipno = a.Tcftvipno
+                     And a.Tcftqtype = Tcfljetype
+                     And a.Tcftsource = '2');
+          Insert Into Tktcardfqlog
+            Select Seq_Tktcardfqlog.Nextval,
+                   Tcflvipno,
+                   Tcflstartdate,
+                   Tcflenddate,
+                   Tcfldate,
+                   'z',
+                   Tcflpopid,
+                   Tcflpoprule,
+                   Tcflmoney,
+                   Tcftfqje + Tcflmoney,
+                   Tcfloper,
+                   Tcflsyjid,
+                   Tcflinvno,
+                   To_Char(Sysdate, 'YYYY-MM-DD hh24:mm:ss'),
+                   Tcflsyjtrace,
+                   Tcfljetype,
+                   Tcflvipseq,
+                   Tcflmkt,
+                   Tcfljygs,
+                   Tcflsource,
+                   Ltransno,
+                   Tcfltype,
+                   Tcflqchg,
+                   Tcflchr1,
+                   Tcflchr2,
+                   Tcflchr3,
+                   Tcflnum1,
+                   Tcflnum2,
+                   Tcflnum3,
+                   Tcflywdh,
+                   tcflismzq,
+                   tcflqmz,
+                   tcflqno
+              From Tktcardfqlog, Tktcardfqtotal
+             Where Tcflzy = 'n'
+               And Tcflinvno = Row_Hd.Shinvno
+               And Tcflsyjid = Row_Hd.Shsyjid
+               And Tcflvipno = Tcftvipno
+               And Tcftqtype = Tcfljetype
+               And Tcflsource = '2';
+      End;
+    Else
+      l_Crmmkt := Fgetcrmmkt(Row_Hd.Shmanaunit, Row_Hd.Shmarket);
+      For Vr In (Select Sdgdid, Sum(Sdcjje) Sdcjje, Sdcatid Tpid
+                   From Selldetail
+                  Where Sdbillno = Vbillno
+                  Group By Sdgdid, Sdcatid) Loop
+        Select * Into r_Rule From Tktrule Where Trcode = Vr.Sdgdid;
+        Salepopms.Gettktpopinfo(Vr.Tpid,
+                                Row_Hd.Shcustno,
+                                'ALL',
+                                o_Retcode,
+                                o_Retmsg,
+                                l_Topicsdate,
+                                l_Topicedate,
+                                l_Qno,
+                                l_a_m,
+                                l_Pj,
+                                l_Area,
+                                l_Ismz,
+                                l_Prnsite);
+        If o_Retcode <> '0' Then
+          Return;
+        End If;
+        If Row_Hd.Shdjlb = 'V' Then
+          --买券
+          Salepopms.Calctkt(p_Transno   => Ltransno,
+                            p_Mu        => Row_Hd.Shmanaunit,
+                            p_Mkt       => l_Crmmkt,
+                            p_Ismz      => l_Ismz,
+                            p_Cardno    => Row_Hd.Shcustno,
+                            p_Billno    => Row_Hd.Shbillno,
+                            p_Syjid     => Row_Hd.Shsyjid,
+                            p_Invno     => Row_Hd.Shinvno,
+                            p_Rule      => Vr.Sdgdid,
+                            p_Fqrulemje => r_Rule.Trxfje,
+                            p_Fqxspay   => Vr.Sdcjje,
+                            p_Tpid      => Vr.Tpid,
+                            p_Person    => Row_Hd.Shchecker,
+                            p_Source    => '2',
+                            o_Retcode   => o_Retcode,
+                            o_Retmsg    => o_Retmsg,
+                            o_Totfqje   => l_Totfqje);
+          If o_Retcode <> '0' Then
+            Return;
+          End If;
+        Elsif Row_Hd.Shdjlb = 'Y' Then
+          --退券
+          If l_a_m = '2' Then
+            --只退电子券
+            Return;
+          Else
+            Open Cur_Fqdet(r_Rule.Trcode); --返券规则 返明细券种
+            Loop
+              Fetch Cur_Fqdet
+                Into Row_Fqdet;
+              Exit When Cur_Fqdet%Notfound Or Cur_Fqdet%Notfound Is Null;
+              l_Qstartdate := Fgetqexpiredate(Vr.Tpid,
+                                              Row_Fqdet.Trdqtype,
+                                              '1');
+              l_Qenddate   := Fgetqexpiredate(Vr.Tpid,
+                                              Row_Fqdet.Trdqtype,
+                                              '2');
+              If l_Qstartdate Is Null Then
+                l_Qstartdate := l_Topicsdate;
+              End If;
+              If l_Qenddate Is Null Then
+                l_Qenddate := l_Topicedate;
+              End If;
+              l_Tqje := Trunc(Vr.Sdcjje / r_Rule.Trxfje, 0) *
+                        Row_Fqdet.Trdqje;
+              While l_Tqje > 0 Loop
+                Begin
+                  Select Tcftfqje, Tcftseqno
+                    Into l_Qe, l_Seqno
+                    From Tktcardfqtotal
+                   Where Tcftvipno = Row_Hd.Shcustno
+                        --AND tcftstartdate = vstartdate
+                     And Tcftstartdate = l_Qstartdate
+                        --AND tcftenddate = venddate
+                     And Tcftenddate = l_Qenddate
+                     And Tcftqtype = Row_Fqdet.Trdqtype --券种A～Z
+                     And Tcftfstpid = Vr.Tpid
+                     And Tcfttype = l_a_m
+                     And Tcftmkt = l_Area --券使用范围，--0通用 1本门店 2指定门店
+                     And Tcftjygs = Row_Hd.Shmanaunit
+                     And Tcftfqmkt = l_Crmmkt
+                        --AND tcftsource = '2'
+                     And Tcftfqje > 0
+                     And Rownum = 1;
+                Exception
+                  When Others Then
+                    o_Retcode := -1;
+                    o_Retmsg  := To_Char(Vbillno) || '->' ||
+                                 Row_Fqdet.Trdqtype || '券券额不足!' ||
+                                 To_Char(l_Tqje);
+                    Sp_Opererrors('sp_possendmq',
+                                  '10003',
+                                  To_Char(Vbillno) || '->' ||
+                                  Row_Fqdet.Trdqtype || '券券额不足!' ||
+                                  To_Char(l_Tqje));
+                    Return;
+                End;
+                l_Qe := Least(l_Tqje, l_Qe);
+                Update Tktcardfqtotal
+                   Set Tcftfqje = Tcftfqje - l_Qe
+                 Where Tcftseqno = l_Seqno
+                Returning Tcftseqno, Tcftfqje Into l_Seq, l_Ye;
+                Insert Into Tktcardfqlog
+                  (Tcflseqno,
+                   Tcflvipno,
+                   Tcflstartdate,
+                   Tcflenddate,
+                   Tcfldate,
+                   Tcflzy,
+                   Tcflpopid,
+                   Tcflpoprule,
+                   Tcflmoney,
+                   Tcflye,
+                   Tcfloper,
+                   Tcflsyjid,
+                   Tcflinvno,
+                   Tcflmemo,
+                   Tcflsyjtrace,
+                   Tcfljetype,
+                   Tcflvipseq,
+                   Tcflmkt,
+                   Tcfljygs,
+                   Tcflsource,
+                   Tcfltransno,
+                   Tcfltype,
+                   Tcflqchg,
+                   Tcflchr1,
+                   Tcflchr2,
+                   Tcflchr3,
+                   Tcflnum1,
+                   Tcflywdh)
+                Values
+                  (Seq_Tktcardfqlog.Nextval,
+                   Row_Hd.Shcustno,
+                   l_Qstartdate,
+                   l_Qenddate,
+                   Sysdate /*currentdate*/,
+                   'n',
+                   Vr.Tpid,
+                   r_Rule.Trcode,
+                   l_Qe,
+                   l_Ye,
+                   Row_Hd.Shchecker,
+                   Row_Hd.Shsyjid,
+                   Row_Hd.Shinvno,
+                   '',
+                   Vbillno,
+                   Row_Fqdet.Trdqtype,
+                   l_Seq,
+                   l_Crmmkt,
+                   Row_Hd.Shmanaunit,
+                   '2',
+                   Ltransno,
+                   l_a_m,
+                   'N',
+                   '',
+                   '',
+                   '2',
+                   0,
+                   Vbillno);
+                l_Tqje    := l_Tqje - l_Qe;
+                l_Totfqje := l_Totfqje + l_Qe;
+              End Loop;
+            End Loop;
+            Close Cur_Fqdet;
+          End If;
+        End If;
+      End Loop;
+      Update Sellhead
+         Set Shfqflag = 'Y', Shfqje = l_Totfqje, Shsaflag = '2'
+       Where Shbillno = Vbillno;
+    End If;
+    --Commit;
+    o_Retcode := 0;
+    o_Retmsg  := '成功';
+  Exception
+    When Others Then
+      --Rollback;
+      If Cur_Fqdet%Isopen Or Cur_Fqdet%Isopen Is Null Then
+        Close Cur_Fqdet;
+      End If;
+      o_Retcode := -1;
+      o_Retmsg  := To_Char(Vbillno) || '->' || Sqlerrm;
+      Sp_Opererrors('sp_possendmq',
+                    '10003',
+                    To_Char(Vbillno) || '->' || Sqlerrm);
+  End;
+  --退券计算,不做update
+  Procedure Sp_Possendmq_Cal(Vbillno   In Number,
+                             Vtransno  In Number,
+                             o_Retcode Out Number,
+                             o_Retmsg  Out Varchar2) Is
+    Row_Hd       Sellhead%Rowtype;
+    l_Topicsdate Date;
+    l_Topicedate Date;
+    --vstartdate DATE;
+    --venddate   DATE;
+    l_Qno     Varchar2(20);
+    l_a_m     Char(1);
+    l_Pj      Char(1);
+    l_Area    Varchar2(20);
+    l_Crmmkt  Varchar2(20);
+    l_Ismz    Char(1);
+    l_Prnsite Char(1);
+    r_Rule    Tktrule%Rowtype;
+    --l_totfqje  NUMBER;
+    r_Log Tktcardfqlog%Rowtype;
+    --l_ye       NUMBER;
+    /* Cursor cur_fqdet(vrule In Varchar2) Is
+      Select * From tktrulefqdet Where trdcode = vrule;
+    row_fqdet tktrulefqdet%Rowtype;*/
+    --l_tqje    NUMBER;
+    --l_seq     NUMBER;
+    --ltransno  NUMBER;
+    l_Maxje   Number; --可退最大金额
+    l_Minrate Number;
+  Begin
+    --'V'; //买券付款
+    --'W'; //红冲买券付款
+    --'Y'; //退券付款
+    --'Z'; //退券付款红冲
+    /*    Select *
+     Into row_hd
+     From sellhead
+    Where shbillno = vbillno And
+        shdjlb In ('W', 'Y', 'Z') And
+        shstatus = 'N';*/
+  
+    Begin
+      Select *
+        Into Row_Hd
+        From Sellhead
+       Where Shbillno = Vbillno
+         And Shdjlb In ('W', 'Y', 'Z');
+      /* if row_hd.shstatus <> 'N' then
+        o_retcode := -1;
+        o_retmsg  := to_char(vbillno) || '->' || '小票状态为Y,不能买券';
+        return ;
+      end if;*/
+    Exception
+      When No_Data_Found Then
+        o_Retcode := -1;
+        o_Retmsg  := To_Char(Vbillno) || '->' || '没有找到此小票';
+        Return;
+    End;
+    If Row_Hd.Shdjlb = 'W' Then
+      Begin
+        Select *
+          Into r_Log
+          From Tktcardfqlog
+         Where Tcflzy = 'w'
+           And Tcflinvno = Row_Hd.Shinvno
+           And Tcflsyjid = Row_Hd.Shsyjid
+           And Tcflsource = '2';
+        o_Retcode := -1;
+        o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,已经红冲过';
+        Return;
+      Exception
+        When Others Then
+          Select Tktcardfqlog.*
+            Into r_Log
+            From Tktcardfqlog, Tktcardfqtotal
+           Where Tcflzy = 'w'
+             And Tcflinvno = Row_Hd.Shinvno
+             And Tcflsyjid = Row_Hd.Shsyjid
+             And Tcflvipno = Tcftvipno
+             And Tcftqtype = Tcfljetype
+             And Tcftfqje < Tcflmoney
+             And Tcftstatus = 'Y'
+             And Tcflsource = '2'
+             And Rownum = 1;
+          o_Retcode := -1;
+          o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,券' ||
+                       r_Log.Tcflvipno || '金额不足!';
+          Return;
+      End;
+    Elsif Row_Hd.Shdjlb = 'Z' Then
+      Select *
+        Into r_Log
+        From Tktcardfqlog
+       Where Tcflzy = 'z'
+         And Tcflinvno = Row_Hd.Shinvno
+         And Tcflsyjid = Row_Hd.Shsyjid
+         And Tcflsource = '2';
+      o_Retcode := -1;
+      o_Retmsg  := To_Char(Vbillno) || '->' || '红冲失败,已经红冲过';
+      Return;
+    Else
+      -- Y  前台买券退货 
+      l_Crmmkt := Fgetcrmmkt(Row_Hd.Shmanaunit, Row_Hd.Shmarket);
+      For Vr In (Select Sdgdid,
+                        Sum(Sdsl) Sdsl,
+                        Sum(Sdcjje) Sdcjje,
+                        Sdcatid Tpid
+                   From Selldetail
+                  Where Sdbillno = Vbillno
+                  Group By Sdgdid, Sdcatid) Loop
+        Select * Into r_Rule From Tktrule Where Trcode = Vr.Sdgdid;
+      
+        Salepopms.Gettktpopinfo(Vr.Tpid,
+                                Row_Hd.Shcustno,
+                                'ALL',
+                                o_Retcode,
+                                o_Retmsg,
+                                l_Topicsdate,
+                                l_Topicedate,
+                                l_Qno,
+                                l_a_m,
+                                l_Pj,
+                                l_Area,
+                                l_Ismz,
+                                l_Prnsite);
+        If o_Retcode <> '0' Then
+          Return;
+        End If;
+        If l_a_m = '2' Then
+          --只退电子券
+          o_Retcode := -1;
+          o_Retmsg  := Vr.Sdgdid || '->' || '只能退电子券!';
+          Return;
+        Else
+          Select Nvl(Min(Sum(Tcftfqje) / Trdqje), 0)
+            Into l_Minrate
+            From Tktcardfqtotal, Tktrulefqdet
+           Where Tcftvipno = Row_Hd.Shcustno
+                --AND tcftstartdate = vstartdate
+             And Tcftstartdate =
+                 Nvl(Fgetqexpiredate(Vr.Tpid, Trdqtype, '1'), l_Topicsdate)
+                --AND tcftenddate = venddate
+             And Tcftenddate =
+                 Nvl(Fgetqexpiredate(Vr.Tpid, Trdqtype, '2'), l_Topicedate)
+             And Tcftqtype = Trdqtype
+             And --券种A～Z
+                 Trdcode = Vr.Sdgdid
+             And Tcftfstpid = Vr.Tpid
+             And Tcfttype = l_a_m
+             And Tcftmkt = l_Area --券使用范围，--0通用 1本门店 2指定门店
+             And Tcftjygs = Row_Hd.Shmanaunit
+             And Tcftfqmkt = l_Crmmkt
+          --AND tcftsource = '2'
+           Group By Tcftqtype, Trdqje;
+          l_Maxje := Trunc(l_Minrate) * r_Rule.Trxfje;
+          If l_Maxje < Vr.Sdcjje Then
+            o_Retcode := -1;
+            o_Retmsg  := To_Char(Vr.Sdgdid) || '->' || '券额不足,最大可退金额:' ||
+                         To_Char(l_Maxje);
+            Return;
+          Elsif Vr.Sdcjje / r_Rule.Trxfje <>
+                Trunc(Vr.Sdcjje / r_Rule.Trxfje) Then
+            o_Retcode := -1;
+            o_Retmsg  := To_Char(Vr.Sdgdid) || '->' || '退券金额必须是[' ||
+                         To_Char(r_Rule.Trxfje) || ']整数倍!';
+            Return;
+          End If;
+        End If;
+      End Loop;
+    End If;
+    o_Retcode := 0;
+    o_Retmsg  := '成功';
+  End;
+Begin
+  Currentdate := Fgeterpdate;
+End;

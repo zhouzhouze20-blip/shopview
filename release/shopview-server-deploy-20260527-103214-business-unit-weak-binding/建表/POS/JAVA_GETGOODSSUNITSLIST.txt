@@ -1,0 +1,17 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETGOODSSUNITSLIST
+AS
+  -- 返回结果集为
+  -- 商品代码,代码,计量单位,条码
+  PROCEDURE GETGOODSSUNITSLIST
+    (
+            vpgugdid in VARCHAR2,
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pgugdid,pguid,pguunit,pgubzhl,pgubarcode from posgoodsunits where pgugdid=vpgugdid;
+  END GETGOODSSUNITSLIST;
+
+END JAVA_GETGOODSSUNITSLIST;
+

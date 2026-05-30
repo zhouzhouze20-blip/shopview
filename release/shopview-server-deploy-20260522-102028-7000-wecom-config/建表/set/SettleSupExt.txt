@@ -1,0 +1,243 @@
+CREATE OR REPLACE Package Body SettleSupExt Is
+  CurrentPlace Varchar2(60) := fGetPrivatePara('1N');
+
+  Procedure Sp_Init_Bd(i_contno In Varchar2,
+                       i_mkt    In Varchar2,
+                       i_mfid   In Varchar2) Is
+    ls_sql Varchar2(1000);
+  Begin
+     DBUSRSYS.sp_debug('Sp_Init_Bd',i_ContNo ||'-'||i_mfid);
+    Update contbd
+       Set cbisbd = Null
+     Where cbcontno = i_contno
+       And cbmkt = i_mkt
+       And cbmfid = i_mfid
+       And cbisbd = 'Q';
+    --更新合同保底中的已清算标志，将已生成清算数据的保底期更新为已处理清算
+    Update contbd
+       Set cbisqs = Null
+     Where cbcontno = i_contno
+       And cbmkt = i_mkt
+       And cbmfid = i_mfid
+       And cbisqs = 'Q';
+    If CurrentPlace <> 'HQ' Then
+      --同步更新到总部
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisbd = Null Where cbcontno = :1 And cbmkt = :2 And cbmfid = :3 And cbisbd = ''Q''';
+      Execute Immediate ls_sql
+        Using i_contno, i_mkt, i_mfid;
+
+      --同步更新到总部
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisqs = Null Where cbcontno = :1 And cbmkt = :2 And cbmfid = :3 And cbisqs = ''Q''';
+      Execute Immediate ls_sql
+        Using i_contno, i_mkt, i_mfid;
+    End If;
+  End;
+
+  Procedure Sp_SetN_Bd(i_ContNo In Varchar2, i_SeqNo In Number) Is
+    ls_sql Varchar2(1000);
+  Begin
+    DBUSRSYS.sp_debug('Sp_SetN_Bd',i_ContNo ||'-'||i_SeqNo);
+    Update contbd
+       Set cbisbd = 'N'
+     Where cbcontno = i_contno
+       And cbseqno = i_SeqNo
+       And Nvl(cbisbd, 'N') = 'Y';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisbd = 'N'
+      Where cbcontno = i_contno
+        And cbseqno = i_SeqNo
+        And Nvl(cbisbd, 'N') = 'Y';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisbd = ''N'' Where cbcontno = :1 And cbseqno = :2 And Nvl(cbisbd, ''N'') = ''Y''';
+      Execute Immediate ls_sql
+        Using i_contno, i_SeqNo;
+    End If;
+
+  End;
+
+  Procedure Sp_SetN_Qs(i_ContNo In Varchar2, i_SeqNo In Number) Is
+    ls_sql Varchar2(1000);
+  Begin
+    Update contbd
+       Set cbisqs = 'N'
+     Where cbcontno = i_contno
+       And cbseqno = i_SeqNo
+       And Nvl(cbisqs, 'N') = 'Y';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisqs = 'N'
+      Where cbcontno = i_contno
+        And cbseqno = i_SeqNo
+        And Nvl(cbisqs, 'N') = 'Y';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisqs = ''N'' Where cbcontno = :1 And cbseqno = :2 And Nvl(cbisqs, ''N'') = ''Y''';
+      Execute Immediate ls_sql
+        Using i_contno, i_SeqNo;
+    End If;
+
+  End;
+
+  Procedure Sp_SetQ_Bd(i_ContNo In Varchar2, i_SeqNo In Number) Is
+    ls_sql Varchar2(1000);
+  Begin
+    DBUSRSYS.sp_debug('Sp_SetQ_Bd',i_ContNo ||'-'||i_SeqNo);
+    Update contbd
+       Set cbisbd = 'Q'
+     Where cbcontno = i_contno
+       And cbseqno = i_SeqNo
+       And Nvl(cbisbd, 'N') <> 'Y';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisbd = 'Q'
+      Where cbcontno = i_contno
+        And cbseqno = i_SeqNo
+        And Nvl(cbisbd, 'N') <> 'Y';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisbd = ''Q'' Where cbcontno = :1 And cbseqno = :2';-- And Nvl(cbisqs, ''N'') = ''Y''
+      Execute Immediate ls_sql
+        Using i_contno, i_SeqNo;
+    End If;
+
+  End;
+
+  Procedure Sp_SetQ_Qs(i_ContNo In Varchar2, i_SeqNo In Number) Is
+    ls_sql Varchar2(1000);
+  Begin
+    Update contbd
+       Set cbisqs = 'Q'
+     Where cbcontno = i_contno
+       And cbseqno = i_SeqNo
+       And Nvl(cbisqs, 'N') <> 'Y';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisqs = 'Q'
+      Where cbcontno = i_contno
+        And cbseqno = i_SeqNo
+        And Nvl(cbisqs, 'N') <> 'Y';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisqs = ''Q'' Where cbcontno = :1 And cbseqno = :2';-- And Nvl(cbisqs, ''N'') = ''Y''
+      Execute Immediate ls_sql
+        Using i_contno, i_SeqNo;
+    End If;
+
+  End;
+
+  Procedure Sp_SetY_Bd(i_ContNo In Varchar2) Is
+    ls_sql Varchar2(1000);
+  Begin
+    DBUSRSYS.sp_debug('Sp_SetY_Bd',i_ContNo);
+    Update contbd
+       Set cbisbd = 'Y'
+     Where cbcontno = i_ContNo
+       And cbisbd = 'Q';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisbd = 'Y'
+      Where cbcontno = i_ContNo
+        And cbisbd = 'Q';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisbd = ''Y'' Where cbcontno = :1 And cbisbd = ''Q''';
+      Execute Immediate ls_sql
+        Using i_contno;
+    End If;
+
+  End;
+  Procedure Sp_SetY_Qs(i_ContNo In Varchar2) Is
+    ls_sql Varchar2(1000);
+  Begin
+    Update contbd
+       Set cbisqs = 'Y'
+     Where cbcontno = i_ContNo
+       And cbisqs = 'Q';
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contbd@sys
+        Set cbisqs = 'Y'
+      Where cbcontno = i_ContNo
+        And cbisqs = 'Q';*/
+      ls_sql := 'Update dbusrpub.contbd@sys Set cbisqs = ''Y'' Where cbcontno = :1 And cbisqs = ''Q''';
+      Execute Immediate ls_sql
+        Using i_contno;
+    End If;
+  End;
+
+  Procedure Sp_UpdateCharge(i_BillNo In Varchar2,
+                            i_ContNo In Varchar2,
+                            i_RowNo  In Number) Is
+    ls_sql Varchar2(1000);
+  Begin
+    Update contsupcharge
+       Set cscjsbillno = i_BillNo
+     Where csccontno = i_ContNo
+       And cscrowno = i_RowNo;
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contsupcharge@sys
+        Set cscjsbillno = i_BillNo
+      Where csccontno = i_ContNo
+        And cscrowno = i_RowNo;*/
+      ls_sql := 'Update dbusrpub.contsupcharge@sys Set cscjsbillno = :1 Where csccontno = :2 And cscrowno = :3';
+      Execute Immediate ls_sql
+        Using i_BillNo, i_contno, i_RowNo;
+    End If;
+
+  End;
+  Procedure Sp_UpdateChargeFlag(i_BillNo In Varchar2, i_Flag In Char) Is
+    ls_sql Varchar2(1000);
+  Begin
+    Update contsupcharge
+       Set cscflag = i_Flag
+     Where nvl(cscjsbillno, '0') = i_BillNo
+       And cscismcjs = SettleSup.setmodeyc;
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      /*Update dbusrpub.contsupcharge@sys
+        Set cscflag = i_Flag
+      Where nvl(cscjsbillno, '0') = i_BillNo
+        And cscismcjs = SettleSup.setmodeyc;*/
+      ls_sql := 'Update dbusrpub.contsupcharge@sys Set cscflag = :1 Where nvl(cscjsbillno, ''0'') = :2 And cscismcjs = :3';
+      Execute Immediate ls_sql
+        Using i_Flag, i_BillNo, SettleSup.setmodeyc;
+    End If;
+
+  End;
+  Procedure Sp_UpdateSettleDate(i_isQs     In Varchar2,
+                                i_ContNo   In Varchar2,
+                                i_ThisDate In Date) Is
+    ls_sql Varchar2(1000);
+  Begin
+    If i_isQs = 'Y' Then
+      Update contmain
+         Set cmlastqsdate = i_ThisDate
+       Where cmcontno = i_ContNo;
+    Else
+      Update contmain
+         Set cmlastsetdate = i_ThisDate
+       Where cmcontno = i_ContNo;
+    End If;
+    --同步更新到总部
+    If CurrentPlace <> 'HQ' Then
+      If i_isQs = 'Y' Then
+        /*Update dbusrpub.contmain@sys
+          Set cmlastqsdate = i_ThisDate
+        Where cmcontno = i_ContNo;*/
+        ls_sql := 'Update dbusrpub.contmain@sys Set cmlastqsdate = :1 Where cmcontno = :2 ';
+        Execute Immediate ls_sql
+          Using i_ThisDate, i_ContNo;
+      Else
+        /*Update dbusrpub.contmain@sys
+          Set cmlastsetdate = i_ThisDate
+        Where cmcontno = i_ContNo;*/
+        ls_sql := 'Update dbusrpub.contmain@sys Set cmlastsetdate = :1 Where cmcontno = :2 ';
+        Execute Immediate ls_sql
+          Using i_ThisDate, i_ContNo;
+      End If;
+    End If;
+
+  End;
+
+Begin
+  Null;
+End SettleSupExt;
+

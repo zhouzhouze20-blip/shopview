@@ -1,0 +1,203 @@
+CREATE OR REPLACE Package Body Bpopsettleset Is
+
+  /*根据合同号,找到经营范围，用,号分隔*/
+  Function Fgetcontmfid(Vcontno In Varchar2) Return Varchar2 Is
+    l_Return Varchar2(100);
+  Begin
+    For Vr In (Select Distinct Cmfmfid
+               From   Contmanaframe
+               Where  Cmfcontno = Vcontno And
+                      (Cmfmfid Is Not Null And Cmfmfid <> 0)) Loop
+      l_Return := l_Return || ',' || Vr.Cmfmfid;
+    End Loop;
+    Return l_Return;
+  Exception
+    When Others Then
+      Return '';
+  End;
+
+  Procedure Approve
+  (
+    p_Billno In Char,
+    p_Person In Char,
+    p_Billid In Char,
+    p_Djlb   In Char
+  ) Is
+    r_Psh        Popsettlehead%Rowtype;
+    r_Mastercont Contmain%Rowtype;
+    r_Subcont    Contmain%Rowtype;
+    l_Exist      Popsettlehead.Pshbillno%Type;
+  Begin
+    Begin
+      Select *
+      Into   r_Psh
+      From   Popsettlehead
+      Where  Pshbillno = p_Billno
+      For    Update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, '没有找到单据[' || p_Billno || ']!');
+      When Others Then
+        Raise;
+    End;
+    If r_Psh.Pshstatus <> Flagediting Then
+      Raise_Application_Error(Errcode, '单据状态不正确，单据已经审核!');
+    End If;
+    /*检查合同*/
+    Begin
+      Select *
+      Into   r_Mastercont
+      From   Contmain
+      Where  Cmcontno = r_Psh.Pshcontno;
+    Exception
+      When Others Then
+        Raise_Application_Error(Errcode,
+                                '没有找到合同[' || r_Psh.Pshcontno || ']!');
+    End;
+    If r_Mastercont.Cmsupid <> r_Psh.Pshsupid Or
+       r_Mastercont.Cmwmid <> r_Psh.Pshwmid Then
+      Raise_Application_Error(Errcode,
+                              '合同[' || r_Psh.Pshcontno ||
+                               ']与此单据供应商或经营方式不相符!');
+    End If;
+    /*查找是否存在有效的子合同*/
+   /* Begin
+      Select Contmain.*
+      Into   r_Subcont
+      From   Contmain, Contmanaframe
+      Where  Cmmasterno = r_Mastercont.Cmcontno And
+             Cmcontno = Cmfcontno And
+             Cmstatus In ('Y', 'Q') And
+             Cmeffdate <= r_Psh.Pshedate And
+             Cmlapdate >= r_Psh.Pshsdate And
+             Cmfmfid = r_Psh.Pshmfid And
+             Rownum = 1;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode,
+                                '在日期段[' ||
+                                 To_Char(r_Psh.Pshsdate, 'YYYYMMDD') ||
+                                 ']-[' ||
+                                 To_Char(r_Psh.Pshedate, 'YYYYMMDD') ||
+                                 ']柜组[' || r_Psh.Pshmfid || ']没有找到主合同[' ||
+                                 r_Psh.Pshcontno || ']有效的子合同]!');
+    End;*/
+    /*判断日期是否交叉*/
+    Begin
+      Select Pshbillno
+      Into   l_Exist
+      From   Popsettlehead
+      Where  Pshcontno = r_Psh.Pshcontno And
+             Pshmfid = r_Psh.Pshmfid And
+             Nvl(Earlydate, Pshsdate) <= r_Psh.Pshedate And
+             Pshedate >= r_Psh.Pshsdate And
+             Pshstatus Not In (Flagcanceled) And
+             Pshbillno <> r_Psh.Pshbillno and
+             Rownum = 1;
+      Raise_Application_Error(Errcode,
+                              '单据[' || r_Psh.Pshbillno || ']与单据[' ||
+                               l_Exist || ']时间段重复,请检查!');
+    Exception
+      When No_Data_Found Then
+        Null;
+    End;
+    Update Popsettlehead
+    Set    Auditor = p_Person, Auditdate = Sysdate, Pshstatus = Flagapproved
+    Where  Pshbillno = p_Billno;
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+
+  Procedure Cancel
+  (
+    p_Billno In Char,
+    p_Person In Char,
+    p_Billid In Char,
+    p_Djlb   In Char
+  ) Is
+    r_Psh Popsettlehead%Rowtype;
+  Begin
+    Begin
+      Select *
+      Into   r_Psh
+      From   Popsettlehead
+      Where  Pshbillno = p_Billno
+      For    Update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, '没有找到单据[' || p_Billno || ']!');
+      When Others Then
+        Raise;
+    End;
+    If r_Psh.Pshstatus = Flagediting Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据还未审核,不用取消!');
+    End If;
+    /*If r_Psh.Pshstatus = 'S' Then
+      Raise_Application_Error(errcode, '单据状态不正确:单据已结算,不能取消,只能终止!');
+    End If;*/
+    If r_Psh.Pshstatus = Flagcanceled Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据已取消,不用再次取消');
+    End If;
+    /*If r_Psh.Pshstatus = 'C' Then
+      Raise_Application_Error(errcode, '单据状态不正确:单据已取消,不用再次取消');
+    End If;*/
+    Update Popsettlehead
+    Set    Canceler = p_Person, Canceldate = Sysdate,
+           Pshstatus = Flagcanceled
+    Where  Pshbillno = p_Billno;
+    Commit;
+  End;
+
+  Procedure Stop
+  (
+    p_Billno In Char,
+    p_Person In Char,
+    p_Billid In Char,
+    p_Djlb   In Char
+  ) Is
+    r_Psh Popsettlehead%Rowtype;
+  Begin
+    Begin
+      Select *
+      Into   r_Psh
+      From   Popsettlehead
+      Where  Pshbillno = p_Billno
+      For    Update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, '没有找到单据[' || p_Billno || ']!');
+      When Others Then
+        Raise;
+    End;
+    If r_Psh.Pshstatus = Flagediting Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据还未审核,不用终止!');
+    End If;
+    /*If r_Psh.Pshstatus = 'S' Then
+      Raise_Application_Error(errcode, '单据状态不正确:单据已结算,不能取消,只能终止!');
+    End If;*/
+    If r_Psh.Pshstatus = Flagcanceled Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据已取消,不能终止');
+    End If;
+    If r_Psh.Pshstatus = Flagstop Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据已终止,不用再次终止');
+    End If;
+    If r_Psh.Pshstatus = Flagoutdate Then
+      Raise_Application_Error(Errcode, '单据状态不正确:单据已过期,不能终止');
+    End If;
+    If r_Psh.Earlydate >= r_Psh.Pshedate Then
+      Raise_Application_Error(Errcode, '提前终止日期不能大于等于结束日期,请检查!');
+    End If;
+    Update Popsettlehead
+    Set    Stoper = p_Person, Stopdate = Sysdate, Pshstatus = Flagstop
+    Where  Pshbillno = p_Billno;
+    Commit;
+  End;
+
+Begin
+  -- Initialization
+  Null;
+End Bpopsettleset;
+

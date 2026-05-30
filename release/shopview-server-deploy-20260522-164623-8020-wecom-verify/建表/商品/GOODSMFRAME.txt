@@ -1,0 +1,165 @@
+-- Create table
+create table DBUSRPUB.GOODSMFRAME
+(
+  gmfgdid       VARCHAR2(20) not null,
+  gmfmfid       VARCHAR2(20) not null,
+  gmfmarket     VARCHAR2(20) not null,
+  gmfstatus     CHAR(1) not null,
+  gmfmanacls    CHAR(1),
+  gmfmscode     VARCHAR2(20),
+  gmfsupid      VARCHAR2(20) not null,
+  gmfwmid       CHAR(1) not null,
+  gmfisxj       CHAR(1) default 'N',
+  gmfxjj        NUMBER,
+  gmfisdzcm     CHAR(1),
+  gmfdzcmlx     CHAR(1),
+  gmfmaintor    VARCHAR2(20),
+  gmfmaintdate  DATE,
+  gmfcgrq       DATE,
+  gmfxszq       NUMBER,
+  gmfdhzq       NUMBER,
+  gmfmaxkcsl    NUMBER,
+  gmfminkcsl    NUMBER,
+  gmfbhmode     CHAR(1) default '3',
+  gmfpsmode     VARCHAR2(20),
+  gmfstr1       VARCHAR2(20),
+  gmfstr2       VARCHAR2(20),
+  gmfstr3       VARCHAR2(100),
+  gmffirstsale  DATE,
+  gmflastsale   DATE,
+  gmffirstinstr DATE,
+  gmflastinstr  DATE
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 50M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.GOODSMFRAME
+  is '[GMF]商品的经营管理结构';
+-- Add comments to the columns 
+comment on column DBUSRPUB.GOODSMFRAME.gmfgdid
+  is '商品代码';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmfid
+  is '存放位置';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmarket
+  is '管理架构第一级';
+comment on column DBUSRPUB.GOODSMFRAME.gmfstatus
+  is '状态';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmanacls
+  is '经营级别';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmscode
+  is '货位';
+comment on column DBUSRPUB.GOODSMFRAME.gmfsupid
+  is '主营供应商';
+comment on column DBUSRPUB.GOODSMFRAME.gmfwmid
+  is '主营经营方式';
+comment on column DBUSRPUB.GOODSMFRAME.gmfisxj
+  is 'GMFISXJ';
+comment on column DBUSRPUB.GOODSMFRAME.gmfxjj
+  is 'GMFXJJ';
+comment on column DBUSRPUB.GOODSMFRAME.gmfisdzcm
+  is '是否电子称码';
+comment on column DBUSRPUB.GOODSMFRAME.gmfdzcmlx
+  is '电子称码类型';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmaintor
+  is '维护员';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmaintdate
+  is '维护日期';
+comment on column DBUSRPUB.GOODSMFRAME.gmfcgrq
+  is '撤柜日期';
+comment on column DBUSRPUB.GOODSMFRAME.gmfxszq
+  is '销售周期';
+comment on column DBUSRPUB.GOODSMFRAME.gmfdhzq
+  is '订货周期';
+comment on column DBUSRPUB.GOODSMFRAME.gmfmaxkcsl
+  is '最大库存数量';
+comment on column DBUSRPUB.GOODSMFRAME.gmfminkcsl
+  is '最小库存数量';
+comment on column DBUSRPUB.GOODSMFRAME.gmfbhmode
+  is '补货方式(配送 1 ,直供  2,自采 3)';
+comment on column DBUSRPUB.GOODSMFRAME.gmfstr1
+  is '停售标识(H:手工停售,A:自动停售)';
+-- Create/Recreate indexes 
+create index DBUSRPUB.INDEX_GMF_GDID on DBUSRPUB.GOODSMFRAME (GMFGDID)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.INDEX_GMF_MARKET on DBUSRPUB.GOODSMFRAME (GMFMARKET)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.INDEX_GMF_MFCODE on DBUSRPUB.GOODSMFRAME (GMFMFID)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.INDEX_GMF_MKTGDID on DBUSRPUB.GOODSMFRAME (GMFMARKET, GMFGDID)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+create index DBUSRPUB.INDEX_GMF_SHELF on DBUSRPUB.GOODSMFRAME (GMFMSCODE)
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.GOODSMFRAME
+  add constraint PK_GOODSMFRAME primary key (GMFGDID, GMFMFID)
+  using index 
+  tablespace INDX_SPC
+  pctfree 10
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 10M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

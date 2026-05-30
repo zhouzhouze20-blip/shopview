@@ -1,0 +1,32 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_CREATECRMVIPZK
+AS
+	-- 返回结果集为
+	-- 序号,优惠单号,优惠类型,'ZKL'，卡类型,商品编码,柜组,'00',商品品类,商品品牌,数量,电子秤商品的优惠的时间间隔(秒),开始日期,结束日期,开始时间,结束时间,优惠零售价,优惠会员价,优惠批发价,优惠零售价折扣率,优惠会员价折扣率,优惠批发价折扣率,优惠零售价折扣分担,优惠会员价折扣分担,优惠批发价折扣分担,备用(memo)，备用(设置类型 2 优先 )，备用，备用，备用
+  PROCEDURE CREATECRMVIPZK
+    (
+      mktcode IN VARCHAR2, /* 门店号          */
+      rc OUT RETCURSOR
+    )
+  AS
+   jygs varchar2(3);
+   mkt  varchar2(3);
+   mktk varchar2(6);
+  BEGIN/*
+    jygs := substr(mktcode,1,3);
+    mkt := substr(mktcode,5,3);
+    mktk := jygs||mkt;
+    OPEN rc FOR
+     SELECT  ZKSEQ,ZKBILLNO,ZKMODE,'ZKL',ZKCUSTTYPE,ZKGDID,ZKMFID,'00',zkcatcode,zkppcode,
+     0,1,nvl(to_char(zkstartdate,'YYYY/MM/DD'),to_char(sysdate,'YYYY/MM/DD')) ,nvl(to_char(zkenddate,'YYYY/MM/DD'),'2099/12/31'),nvl(zkstarttime,'00:00'),nvl(zkendtime,'23:59'),
+        0,zkrate,0,zkrate,zkrate,1,0,0,0,Zkpropcode ,zktimemode,'',0,decode(Zkchr3,'Y',1,0)
+     from rulezk where zkmkt=mktk;*/
+     OPEN rc FOR
+     select to_char(pgasj),to_char(PGASJ) ,DECODE (PGAMOUNT,0,'1',1,'2'),'zkl',
+     pgauid, DECODE (PGAMOUNT,0,pgagdid,''),DECODE (PGAMOUNT,0,PGAGDID,'0'),'00','','',
+     0,1,GGASTADATE,GGAENDDATE,'00:00','23:59',
+     0,pgahyj,0,pgahyj,pgahyj,1,0,0,0,'0' ,'1','',0,PGISZSZ  from posgoodsamount;
+  END CREATECRMVIPZK;
+
+END JAVA_CREATECRMVIPZK;
+
+

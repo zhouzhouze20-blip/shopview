@@ -1,0 +1,834 @@
+CREATE OR REPLACE PACKAGE BODY "SALEPOPMS_GIFT" IS
+
+ PROCEDURE sp_salemsrule
+  (
+    p_billno  IN NUMBER,
+    p_transno IN NUMBER,
+    o_retcode OUT NUMBER,
+    o_retmsg  OUT VARCHAR2
+  ) AS
+    lispop       CHAR(1);
+    l_crmmkt     VARCHAR2(20); --CRM MKT
+    l_xssj       CHAR(5); --销售时间
+    l_totfqje    NUMBER; --总可返券金额 根据行递减
+    l_valid_fqje NUMBER; --行可返券金额
+    l_totwxje    NUMBER; --总无效金额 根据行递减
+    l_totlimitje NUMBER; --合计 受限券金额
+    l_rowlimitje NUMBER; --行 受限券金额
+    l_jesign     NUMBER;
+    row_fqrule   tktrule%ROWTYPE; --小票明细的返券规则
+    row_flrue    poprule%ROWTYPE; --满赠规则
+    row_h        sellhead%ROWTYPE;
+    row_d        selldetail%ROWTYPE;
+    l_i          NUMBER; --规则促销小票行数
+    l_exists     NUMBER;
+    --lisgk        NUMBER;
+    llever NUMBER;
+    lmje   NUMBER;
+    lfqje  NUMBER;
+    lmk    NUMBER;
+    ----
+    --lrownum          NUMBER;
+    l_act_invalid_je NUMBER; --实际无效金额
+    l_temp1          NUMBER; --
+    --l_rowkc   NUMBER; --行扣除
+    l_flflag2 CHAR(1); --满赠 付款方式控制参数
+    --返券有效金额分摊方法
+    --1返券力度降序分摊有效金额 2行号降序分摊无效金额(卓展需求)
+    l_fqvalidjeft CHAR(1) := TRIM(fgetmanapara('FQ_VALIDJEFT'));
+    l_overnight   DATE; --通宵营业时间
+    b_ismf  char(1) :='Y';
+    b_ispp  char(1):='Y';
+    b_isgd  char(1):='Y';
+    CURSOR cur_d IS
+      SELECT *
+        FROM selldetail
+       WHERE sdbillno = p_billno
+       ORDER BY decode(l_fqvalidjeft, '2', sdrowno, 1) DESC,
+                sdfqrule DESC, sdrowno;
+    --
+    row_tsfd TKTSELLFLDETAIL%ROWTYPE;
+    --
+  BEGIN
+
+    --查找小票信息
+    BEGIN
+      SELECT * INTO row_h FROM sellhead WHERE shbillno = p_billno;
+    EXCEPTION
+      WHEN no_data_found THEN
+        o_retcode := 1;
+        o_retmsg  := '未找到该小票!||小票序列号:' || to_char(p_billno);
+        RETURN;
+    END;
+    IF row_h.shfqflag = 'Y' THEN
+      o_retcode := 1;
+      o_retmsg  := '小票已经返券!||小票序列号:' || to_char(p_billno);
+      RETURN;
+    END IF;
+    --销售、红冲销售才返券
+    -- 红冲销售走扣回 salethhc 过程 20090417
+    IF fvirtualsaletype(row_h.shdjlb) <> '1' THEN
+      o_retcode := 3;
+      o_retmsg  := '不支持的小票类型!小票序列号:' || to_char(p_billno) || ', 小票类别:' ||
+                   fvirtualsaletype(row_h.shdjlb);
+      RETURN;
+    END IF;
+    --换货小票
+    IF row_h.shishh = 'Y' THEN
+      o_retcode := 3;
+      o_retmsg  := '此为换货小票!小票序列号:' || to_char(p_billno) || ', 小票类别:' ||
+                  fvirtualsaletype( row_h.shdjlb);
+      RETURN;
+    END IF;
+
+
+    l_crmmkt := fgetcrmmkt(row_h.shmanaunit, row_h.shmarket);
+    l_jesign := 1;
+    FOR vr IN (SELECT ROWID, t.*
+                 FROM sellpayment t
+                WHERE spbillno = p_billno)
+    LOOP
+      lispop := least(salepopms.fgetispoppay(row_h.shmanaunit, l_crmmkt, vr.sppmcode,
+                                   vr.sppayerid),
+                      salepopms.fgetisczkpop(row_h.shmanaunit, vr.sppmcode, vr.spno));
+      UPDATE sellpayment SET spispop = lispop WHERE ROWID = vr.ROWID;
+    END LOOP;
+    UPDATE sellpaygoods t1
+       SET spgispop = (SELECT spispop
+                          FROM sellpayment
+                         WHERE spbillno = t1.spgbillno
+                           AND sprowno = t1.spgrowno)
+     WHERE spgbillno = p_billno;
+    --计算小票中不允许返券的付款金额
+    IF l_fqvalidjeft = '2' THEN
+      SELECT round(nvl(SUM(spggdmoney * spgerate), 0), 2)
+        INTO l_totlimitje --合计 受限付款金额
+        FROM sellpaygoods
+       WHERE spgbillno = p_billno
+         AND spgispop = 'N';
+    END IF;
+    --
+    SELECT round(nvl(SUM(spmoney * sperate), 0), 2)
+      INTO l_temp1 --无效金额
+      FROM sellpayment
+     WHERE spbillno = p_billno
+       AND spispop = 'N';
+    --
+    l_act_invalid_je := l_temp1 - row_h.shsysy;
+    IF l_act_invalid_je < 0 THEN
+      l_act_invalid_je := 0;
+    END IF;
+    l_totfqje := row_h.shoughtpay - l_act_invalid_je; --总可返券金额
+    l_totwxje := l_act_invalid_je;
+    --扣除 指定行受限
+    l_totwxje := l_totwxje - l_totlimitje;
+    IF l_totwxje < 0 THEN
+      l_totwxje := 0;
+    END IF;
+    -- 考虑余额累计 就低 此时不RETURN 2009.04.16
+    -- 小票当天返券余额累计
+    l_overnight := fgetbusinessdate(row_h.shdate);
+
+    --销售时间
+    SELECT to_char(row_h.shdate, 'HH24:MI') INTO l_xssj FROM dual;
+    --找出小票中所有可以返券的商品
+    l_i := 0;
+    OPEN cur_d;
+    LOOP
+      FETCH cur_d
+        INTO row_d;
+      EXIT WHEN cur_d%NOTFOUND OR cur_d%NOTFOUND IS NULL;
+      --档期表 tktpopinfo
+      --档期规则 tktruledet trrulelb->规则类型1:返券 3:追券 4:买券 B:满赠 C:满减
+      --确认商品是否参与返券满赠,前台已获取
+      --
+      --行受限付款金额
+      l_rowlimitje := salepopms.fgetrowlimitje(row_d.sdbillno, row_d.sdrowno);
+      --0000 打折||满减||返券||满赠
+      IF substr(TRIM(row_d.sdpoprule), 4, 2) <> '00' THEN
+         row_fqrule := NULL;
+        IF substr(TRIM(row_d.sdpoprule), 4, 1) <> '0' AND
+           row_d.sdfqrule <> '0' THEN
+          BEGIN
+            SELECT *
+              INTO row_fqrule
+              FROM tktrule
+             WHERE trcode = row_d.sdfqrule
+               AND trrulelb = '1';
+            IF row_fqrule.trfaqje = 0 OR row_fqrule.trxfje = 0 THEN
+              o_retcode := 1;
+              o_retmsg  := '返券规则[' || row_d.sdfqrule || ']满金额或返券总金额为零!';
+              RETURN;
+            END IF;
+          EXCEPTION
+            WHEN OTHERS THEN
+              o_retcode := 1;
+              o_retmsg  := '返券规则[' || row_d.sdfqrule || ']不存在!小票序列号:' ||
+                           to_char(p_billno);
+              RETURN;
+          END;
+          l_i := l_i + 1; --找到返券促销信息
+        END IF;
+        --row_d.sdflrule
+        --popcurinfo popzpbarcode='DMJ' 满赠规则 popbillno
+        l_flflag2 := '#';
+        row_flrue := NULL;
+        IF substr(TRIM(row_d.sdpoprule), 5, 1) <> '0' THEN
+          BEGIN
+            SELECT *
+              INTO row_flrue
+              FROM poprule
+             WHERE prid = row_d.sdflrule
+               AND prmode = 'B';
+            l_flflag2 := row_flrue.prflag2;
+          EXCEPTION
+            WHEN OTHERS THEN
+              o_retcode := 1;
+              o_retmsg  := '满赠规则[' || row_d.sdflrule || ']不存在!小票序列号:' ||
+                           to_char(p_billno);
+              RETURN;
+          END;
+          --row_flrue.prflag1
+          --相同赠送条件的赠品是全送或任选其一
+          --row_flrue.prflag2
+          --有限制的付款方式或参加了满减活动就整单都不能送
+          --1.按整笔销售金额赠送
+          --2.按受限付款方式外的金额赠送
+          --3.有受限付款方式则整笔不赠送
+        END IF;
+        --
+        IF l_fqvalidjeft = '1' THEN
+          --
+          l_valid_fqje := least(l_totfqje, row_d.sdcjje - l_rowlimitje);
+          l_totfqje    := l_totfqje - l_valid_fqje;
+          IF l_totfqje < 0 THEN
+            l_totfqje := 0;
+          END IF;
+        ELSIF l_fqvalidjeft = '2' THEN
+          l_temp1      := least(l_totwxje, row_d.sdcjje - l_rowlimitje);
+          l_valid_fqje := row_d.sdcjje - l_temp1 - l_rowlimitje;
+          l_totwxje    := l_totwxje - l_temp1;
+          IF l_totwxje < 0 THEN
+            l_totwxje := 0;
+          END IF;
+        END IF;
+        row_tsfd              := NULL;
+        row_tsfd.tsfdbillno   := row_d.sdbillno; --小票billno
+        row_tsfd.tsfdrowno    := row_d.sdrowno; --小票商品行号
+        row_tsfd.tsfdpgmfid   := row_d.sdmfid; --商品柜组
+        row_tsfd.tsfdpggdid   := row_d.sdgdid; --商品编码
+        row_tsfd.tsfdcjje     := row_d.sdcjje * l_jesign; --成交金额
+        row_tsfd.tsfdpid      := row_d.sdnum1; --档期
+        row_tsfd.tsfdfqrule   := nvl(row_fqrule.trcode, '0'); --返券规则
+        row_tsfd.tsfdfqxfje   := nvl(row_fqrule.trxfje, 0); --返券规则满金额
+        row_tsfd.tsfdfqje     := nvl(row_fqrule.trfaqje, 0); --返券规则返总金额
+        row_tsfd.tsfdisjd     := nvl(TRIM(row_fqrule.trstr2), '1'); --返券规则是否就低 1/0
+        row_tsfd.tsfdpayje    := l_valid_fqje * l_jesign; --行可返券金额
+        row_tsfd.tsfdsyjid    := row_h.shsyjid; --收银机
+        row_tsfd.tsfdinvno    := row_h.shinvno; --发票号
+        row_tsfd.tsfdno       := row_h.shcustno; --sellhead.shcustno 会员卡号
+        row_tsfd.tsfdtransno  := p_transno; --返券事务号
+        row_tsfd.tsfdyfqje    := 0; --应返券总金额
+        row_tsfd.tsfdrfqye1   := l_valid_fqje * l_jesign; --行余额1  当前行计算
+        row_tsfd.tsfdrfqye2   := l_valid_fqje * l_jesign; --行余额2  实际余额
+        row_tsfd.tsfdmaxsbqje := 0;--row_d.sdn2; --最大收券额
+        row_tsfd.tsfdftqtfkkc := 0; --分摊其他付款扣除
+        row_tsfd.tsfdptransno := 0;
+      begin
+        select pgmsummf,pgmsumpp,pgmsumgd into b_ismf,b_ispp,b_isgd from popgroupmode where pgmcode = row_flrue.prflag4;
+        exception when others then
+           null;
+        end;
+        if b_ismf ='Y' THEN
+           Row_Tsfd.Tsfdmfid := '#';
+        ELSE
+           Row_Tsfd.Tsfdmfid := Row_Tsfd.Tsfdpgmfid;
+        END IF;
+        if b_ispp ='Y' THEN
+           Row_Tsfd.Tsfdmfid := Row_Tsfd.Tsfdmfid||',#';
+        ELSE
+           Row_Tsfd.Tsfdmfid := Row_Tsfd.Tsfdmfid||','||row_d.SDPPCODE;
+        END IF;
+        if b_isgd ='Y' THEN
+           Row_Tsfd.Tsfdmfid := Row_Tsfd.Tsfdmfid||',#';
+        ELSE
+           Row_Tsfd.Tsfdmfid := Row_Tsfd.Tsfdmfid||','||row_d.sdgdid;
+        END IF;
+        -- 满赠用------------> start
+        --row_flrue.prflag1
+        --相同赠送条件的赠品是全送或任选其一
+        --row_flrue.prflag2
+        --有限制的付款方式或参加了满减活动就整单都不能送
+        --1.按整笔销售金额赠送
+        --2.按受限付款方式外的金额赠送
+        --3.有受限付款方式则整笔不赠送
+        SELECT decode(l_flflag2, '#', NULL, row_d.sdflrule),
+               --满赠规则(返礼)
+               --l_jesign * decode(l_flflag2, '#', 0, '1', 0, l_rowkc), --满赠_实扣金额
+               l_jesign *
+                decode(l_flflag2, '#', 0, '1', row_d.sdcjje, '2',
+                       l_valid_fqje, '3',
+                       decode(sign(l_act_invalid_je), 0, row_d.sdcjje, 0)) --满赠有效金额
+          INTO row_tsfd.tsfdflrule,
+               --满赠规则(返礼)
+               --row_tsfd.tsfdflskje, --满赠_实扣金额
+               row_tsfd.tsfdflyxje --满赠有效金额
+          FROM dual;
+        row_tsfd.tsfdflskje := row_d.sdcjje - row_tsfd.tsfdflyxje;
+        --
+        row_tsfd.tsfdflflag1 := nvl(row_flrue.prflag1, 'N'); --相同赠送条件的赠品
+        row_tsfd.tsfdflflag2 := nvl(row_flrue.prflag2, 'N'); --受限付款方式控制
+        -- 满赠用<----------- end
+        row_tsfd.tsfdmarket   := row_h.shmarket; --门店
+        row_tsfd.tsfdmu       := row_h.shmanaunit; --经营公司
+        row_tsfd.tsfdflflag   := 'N'; --是否已满赠
+        row_tsfd.tsfdnum1     := 0;
+        row_tsfd.tsfdnum2     := 0;
+        row_tsfd.tsfdnum3     := 0;
+        row_tsfd.tsfdchr1     := Fgetmanapara('Q2'); --返券模式,对应manapara[q2]参数
+        row_tsfd.tsfdchr2     := '';
+        row_tsfd.tsfdchr3     := '';
+        row_tsfd.tsfdbcje     := l_valid_fqje * l_jesign; --本次可返券金额
+        row_tsfd.tsfdfqye     := l_valid_fqje * l_jesign; --小票返券余额
+        row_tsfd.tsfdcbillno  := row_d.sdbillno; --当前小票号
+        row_tsfd.tsfdcrowno   := row_d.sdrowno; --当前行号
+        row_tsfd.tsfddate     := l_overnight; --小票日期 trunc(sellhead.shdate)
+        row_tsfd.tsfdyefqrule := nvl(row_fqrule.trcode, '0'); --余额返券规则
+        row_tsfd.tsfdpriority := 0; -- 返券力度优先级 降序
+        --插入到小票返券明细表
+        INSERT INTO TKTSELLFLDETAIL VALUES row_tsfd;
+        IF l_fqvalidjeft = '1' AND l_totfqje = 0 THEN
+          EXIT; --有效付款金额已分摊完
+        END IF;
+      ELSE
+        IF l_fqvalidjeft = '1' THEN
+          --
+          l_valid_fqje := least(l_totfqje, row_d.sdcjje - l_rowlimitje);
+          l_totfqje    := l_totfqje - row_d.sdcjje;
+          IF l_totfqje < 0 THEN
+            l_totfqje := 0;
+          END IF;
+        ELSIF l_fqvalidjeft = '2' THEN
+          --l_temp1 := least(l_totwxje, row_d.sdcjje - l_rowlimitje);
+          l_temp1      := row_d.sdcjje - l_rowlimitje;
+          l_valid_fqje := row_d.sdcjje - l_temp1 - l_rowlimitje;
+          l_totwxje    := l_totwxje - l_temp1;
+          IF l_totwxje < 0 THEN
+            l_totwxje := 0;
+          END IF;
+        END IF;
+        --
+      END IF;
+    END LOOP;
+    CLOSE cur_d;
+
+    l_exists := SQL%ROWCOUNT;
+    dbms_output.put_line(l_exists);
+    --
+    <<sp_salemsruleskip>>
+    o_retcode := 0;
+    o_retmsg  := '执行成功';
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF cur_d%ISOPEN THEN
+        CLOSE cur_d;
+      END IF;
+      ROLLBACK;
+      o_retcode := -1;
+      o_retmsg  := '执行失败,小票序列号:' || to_char(p_billno) || ',' ||
+                   to_char(SQLCODE) || ',' || SQLERRM;
+  END;
+  Procedure Mzrulecale
+  (
+    p_Transno In Number,
+    o_Retcode Out Number,
+    o_Retmsg  Out Varchar2
+  ) Is
+    l_Shmu  Varchar2(20);
+    l_Shmkt Varchar2(20);
+  Begin
+    --将小票与规则对应
+    For r_Slt In (Select *
+                  From    Mzgifttranslist
+                  Where  Mgtltransno = p_Transno ) Loop
+      Begin
+        Sp_Salemsrule(r_Slt.mgtlbillno , p_Transno, o_Retcode, o_Retmsg);
+      Exception
+        When Others Then
+          Raise_Application_Error(Errcode, 'err2!' || Sqlerrm);
+      End;
+      --o_retcode 0 成功 ，1 失败，- 1 意外错误， 2 无返券
+      If o_Retcode <> 0 Then
+        If o_Retcode < 0 Then
+          Raise_Application_Error(Errcode, '满赠规则计算失败!' || o_Retmsg);
+        Elsif o_Retcode = 1 Then
+          Raise_Application_Error(Errcode, '满赠规则计算错误!' || o_Retmsg);
+        End If;
+      End If;
+    End Loop;
+  End;
+  /*创建计算满赠的事物列表*/
+  PROCEDURE appendtranslist
+  (
+    p_jygs    IN VARCHAR2,
+    p_mkt     IN VARCHAR2,
+    p_billno  IN NUMBER,
+    p_syjid   IN VARCHAR2,
+    p_invno   IN VARCHAR2,
+    p_operid  IN VARCHAR2,
+    p_transno IN NUMBER,
+    o_flag    OUT CHAR
+  ) IS
+    l_slttransno NUMBER;
+    l_new        NUMBER := 0;
+  BEGIN
+   /* INSERT INTO selllisttemp
+          (sltbillno, sltsyjid, sltinvno, slttransno, sltdate)
+        VALUES
+          (p_billno, p_syjid, p_invno, p_transno, SYSDATE);
+     */   l_slttransno := p_transno;
+        l_new        := l_new + 1;
+        o_flag := 'Y';
+
+    INSERT INTO mzgifttranslist
+      (mgtltransno, mgtljygs, mgtlmkt, mgtlbillno, mgtlsyjid, mgtlinvno,
+       mgtloperid, mgtloperdate, mgtljstransno, mgtlstatus)
+    VALUES
+      (p_transno, p_jygs, p_mkt, p_billno, p_syjid, p_invno, p_operid,
+       SYSDATE, l_slttransno, 'N');
+    IF SQL%ROWCOUNT <> 1 OR SQL%ROWCOUNT IS NULL THEN
+      ROLLBACK;
+      raise_application_error(-20009, '插入赠礼小票列表失败!');
+    ELSE
+      COMMIT;
+    END IF;
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+      RAISE;
+  END;
+
+  PROCEDURE genmzgift
+  (
+    p_transno IN NUMBER,
+    p_prdid   IN VARCHAR2,
+    p_prdrow  IN NUMBER,
+    p_prdcode IN VARCHAR2,
+    p_giftnum IN NUMBER,
+    p_person  IN VARCHAR2,
+    o_retcode OUT NUMBER,
+    o_retmsg  OUT VARCHAR2
+  ) IS
+    l_exists NUMBER;
+    r_zpbm   crmzpbm%ROWTYPE;
+    r_zpjxc /*dbusrvip.*/
+    crmzpjxclist%ROWTYPE;
+    v_sl     NUMBER;
+  BEGIN
+    BEGIN
+      SELECT 1
+        INTO l_exists
+        FROM mzgiftselldetail
+       WHERE msdtransno = p_transno
+         AND msdflrule = p_prdid
+         AND msdrrow = p_prdrow;
+      GOTO skip;
+    EXCEPTION
+      WHEN no_data_found THEN
+        NULL;
+    END;
+    INSERT INTO mzgiftselldetail
+      (msdtransno, msdflrule, msdpid, msdcjje, msdskje, msdyxje, msdflflag1,
+       msdflflag2, msdrcode, msdrrow, msdtext, msdnum1, msdnum2, msdnum3,
+       msdcbillno, msdnum5, msdnum6, msdstr1, msdsyjid, msdinvno, msdmarket,
+       msdmu, msdoper, msddate)
+      SELECT mztransno, mzruleno, mzdpid, SUM(mzcjje),
+             SUM(mzcjje) - SUM(mzyxje), SUM(mzyxje), mzisbx, mzpaymode,
+             mzzpid, mzrulerowno, mzzpname, mzmje, mzzpprice, mzzpcost, '',
+             NULL, p_giftnum, NULL, '', '', mzmkt, mzjygs, p_person,
+             trunc(SYSDATE)
+        FROM mzgiftlist
+       WHERE mztransno = p_transno
+         AND mzruleno = p_prdid
+         AND mzrulerowno = p_prdrow
+         AND mzzpid = p_prdcode
+       GROUP BY mztransno, mzruleno, mzdpid, mzisbx, mzpaymode, mzzpid,
+                mzrulerowno, mzzpname, mzmje, mzzpprice, mzzpcost, mzmkt,
+                mzjygs;
+    /*Select p_transno, tsfdflrule, tsfdpid, tsfdpayje, tsfdflskje,
+           tsfdflyxje, tsfdflflag1, tsfdflflag2, prdrcode, prdrowno,
+           prdtext, prdnum1, prdnum2, prdnum3, '', Null, p_giftnum, Null,
+           '', '', tsfdmarket, tsfdmu, p_person, trunc(Sysdate)
+    From   (Select tsfdflrule, tsfdflflag1, tsfdflflag2, tsfdmarket, tsfdmu,
+                    tsfdpid, Sum(tsfdflskje) tsfdflskje,
+                    Sum(tsfdflyxje) tsfdflyxje, Sum(tsfdpayje) tsfdpayje
+             From   TKTSELLFLDETAIL, mzgifttranslist
+             where  tsfdtransno = mgtljstransno and
+                    mgtltransno = p_transno and
+                    TSFDBILLNO = MGTLBILLNO and
+                    tsfdcrowno > 0
+             Group  By tsfdflrule, tsfdflflag1, tsfdflflag2, tsfdmarket,
+                       tsfdmu, tsfdpid) TKTSELLFLDETAIL, popruledet
+    Where  tsfdflrule = prdid And
+           prdtype = '3' And
+           prdid = p_prdid And
+           prdrowno = p_prdrow And
+           tsfdflyxje >= prdnum1;*/
+    IF SQL%ROWCOUNT = 0 OR SQL%ROWCOUNT IS NULL THEN
+      o_retcode := 1;
+      o_retmsg  := '没有成功插入行';
+      RETURN;
+    END IF;
+    UPDATE mzgiftlist
+       SET mzchoose = 'Y'
+     WHERE mztransno = p_transno
+       AND mzruleno = p_prdid
+       AND mzrulerowno = p_prdrow
+       AND mzzpid = p_prdcode;
+    SELECT * INTO r_zpbm FROM crmzpbm WHERE zpbm = p_prdcode;
+    IF r_zpbm.zpchr1 = '1' THEN
+      v_sl := -1 * p_giftnum;
+    ELSE
+      v_sl := 0;
+    END IF;
+    IF r_zpbm.zpchr1 = '1' THEN
+      /*dbusrvip.*/
+      crmzpjxc.p_init(r_zpjxc);
+      r_zpjxc.czjgdid   := r_zpbm.zpbm; --VARCHAR2(20) N     商品编码
+      r_zpjxc.czjtrans  := 'C'; --CHAR(1)  N     事务
+      r_zpjxc.czjqckcsl := nvl(r_zpbm.zpsl, 0); --NUMBER(16,4)  Y
+      r_zpjxc.czjsl     := v_sl; --NUMBER(16,4) Y
+      r_zpjxc.czjqmkcsl := nvl(r_zpbm.zpsl, 0) + v_sl; -- NUMBER(16,4)  Y
+      r_zpjxc.czjhsjjje := 1 * r_zpbm.zpgmje; --  NUMBER(16,4)  Y
+      r_zpjxc.czjvc1    := to_char(p_transno);
+      r_zpjxc.czjvc2    := p_transno;
+      r_zpjxc.czjvc4    := '【满赠处理】库存数量 ' || to_char(r_zpjxc.czjqckcsl) ||
+                           '=> ' || to_char(r_zpjxc.czjqmkcsl);
+      /*dbusrvip.*/
+      crmzpjxc.p_ins(r_zpjxc);
+    END IF;
+    <<skip>>
+    o_retcode := 0;
+    o_retmsg  := '执行成功';
+  EXCEPTION
+    WHEN OTHERS THEN
+      o_retcode := -1;
+      o_retmsg  := '执行失败,' || to_char(SQLCODE) || ',' || SQLERRM;
+  END;
+
+  PROCEDURE genmzgift
+  (
+    p_transno IN NUMBER,
+    p_person  IN VARCHAR2,
+    o_retcode OUT NUMBER,
+    o_retmsg  OUT VARCHAR2
+  ) IS
+  BEGIN
+    FOR vr IN (SELECT * FROM msgiftchoose WHERE mgctransno = p_transno)
+    LOOP
+      genmzgift(vr.mgctransno, vr.mgcruleid, vr.mgcruleno, vr.mgcgiftid,
+                vr.mgcgiftnum, p_person, o_retcode, o_retmsg);
+      IF o_retcode = -1 THEN
+        RETURN;
+      END IF;
+    END LOOP;
+    UPDATE msgiftchoose SET mgcstatus = 'Y' WHERE mgctransno = p_transno;
+    UPDATE mzgifttranslist
+       SET mgtlstatus = 'Y'
+     WHERE mgtltransno = p_transno;
+    UPDATE mzgiftlist SET mzflag = 'Y' WHERE mztransno = p_transno;
+    COMMIT;
+    o_retcode := 0;
+    o_retmsg  := '执行成功';
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+      o_retcode := -1;
+      o_retmsg  := '执行失败,' || to_char(SQLCODE) || ',' || SQLERRM;
+  END;
+  PROCEDURE calmzlist
+  (
+    p_transno    IN NUMBER,
+    l_yzsnum     IN NUMBER,
+    l_ljye       IN NUMBER,
+    vr_tfdet     IN TKTSELLFLDETAIL%ROWTYPE,
+    vr_rdet      IN popruledet%ROWTYPE,
+    r_mzgiftlist IN OUT mzgiftlist%ROWTYPE
+  ) IS
+    l_djxe NUMBER; --单件限额
+    l_zdxe NUMBER; --整单限额
+    /*  r_mzgiftlist MZGIFTLIST%rowtype;*/
+    l_maxje     NUMBER;
+    l_maxnum    NUMBER;
+    l_bs        NUMBER; --赠送金额倍数
+    l_maxnumdet NUMBER;
+  BEGIN
+    r_mzgiftlist.mztransno := p_transno;
+    r_mzgiftlist.mzjygs    := vr_tfdet.tsfdmu;
+    r_mzgiftlist.mzmkt     := vr_tfdet.tsfdmarket;
+    r_mzgiftlist.mzdpid    := vr_tfdet.tsfdpid;
+
+    r_mzgiftlist.mzruletransno := vr_tfdet.tsfdtransno;
+    r_mzgiftlist.mzbillno      := vr_tfdet.tsfdbillno;
+    r_mzgiftlist.mzbillrowno   := vr_tfdet.tsfdrowno;
+    r_mzgiftlist.mzruleno      := vr_rdet.prdid;
+    r_mzgiftlist.mzrulerowno   := vr_rdet.prdrowno;
+    r_mzgiftlist.mzgdid        := vr_tfdet.tsfdpggdid;
+    /*r_mzgiftlist.mznum       := vr_tfdet.*/
+    SELECT sdsl
+      INTO r_mzgiftlist.mznum
+      FROM selldetail
+     WHERE sdbillno = r_mzgiftlist.mzbillno
+       AND sdrowno = r_mzgiftlist.mzbillrowno;
+    r_mzgiftlist.mzcjje    := vr_tfdet.tsfdcjje;
+    r_mzgiftlist.mzyxje    := vr_tfdet.tsfdflyxje;
+    r_mzgiftlist.mzmje     := vr_rdet.prdnum1;
+    r_mzgiftlist.mzzpid    := vr_rdet.prdrcode;
+    r_mzgiftlist.mzzpname  := vr_rdet.prdtext;
+    r_mzgiftlist.mzzpjs    := vr_rdet.prdnum6;
+    r_mzgiftlist.mzdjxe    := vr_rdet.prdnum4;
+    r_mzgiftlist.mzzdxe    := vr_rdet.prdnum5;
+    r_mzgiftlist.mzisbx    := vr_rdet.prdflag1;
+    r_mzgiftlist.mzpaymode := vr_tfdet.tsfdflflag2;
+    r_mzgiftlist.mzzpprice := vr_rdet.prdnum2;
+    r_mzgiftlist.mzzpcost  := vr_rdet.prdnum3;
+    r_mzgiftlist.mzflag    := 'N';
+    r_mzgiftlist.mzchoose  := 'N';
+    /*没有整单限额,设置一个很大的值*/
+    IF r_mzgiftlist.mzzdxe = 0 OR r_mzgiftlist.mzzdxe IS NULL THEN
+      l_maxnum := 9999999;
+    ELSE
+      l_maxnum := r_mzgiftlist.mzzdxe - l_yzsnum;
+    END IF;
+    /*已赠送数量到整单限额*/
+    IF l_maxnum <= 0 THEN
+      r_mzgiftlist.mzxlyxje := 0;
+      r_mzgiftlist.mzkzsnum := 0;
+      r_mzgiftlist.mzye     := 0;
+      r_mzgiftlist.mzljje   := 0;
+      r_mzgiftlist.mzmemo   := '已达到整单限量';
+      GOTO nextrow;
+    END IF;
+
+    IF r_mzgiftlist.mzdjxe > 0 THEN
+      /*有单件限额*/
+      /*    least(trunc(r_mzgiftlist.mzyxje/ r_mzgiftlist.mzmje ,0) * r_mzgiftlist.mzzpjs ,
+      r_mzgiftlist.mznum * r_mzgiftlist.mzdjxe))*/
+      l_maxnumdet := least(l_maxnum,
+                           r_mzgiftlist.mznum * r_mzgiftlist.mzdjxe);
+      l_bs        := ceil(l_maxnumdet / r_mzgiftlist.mzzpjs);
+      l_maxje     := r_mzgiftlist.mzmje * l_bs;
+      /*    l_djxe := r_mzgiftlist.mznum * r_mzgiftlist.mzdjxe;
+      l_zdnum  :=
+      l_bs := ceil(least(r_mzgiftlist.mznum * r_mzgiftlist.mzdjxe,l_maxnum,trunc()) /
+                        r_mzgiftlist.mzzpjs);*/
+      IF r_mzgiftlist.mzyxje >= l_maxje THEN
+        r_mzgiftlist.mzkzsnum := l_maxnumdet;
+        r_mzgiftlist.mzxlyxje := l_maxje;
+        r_mzgiftlist.mzye     := 0;
+        --r_mzgiftlist.mzljje   := 0;
+      ELSE
+        r_mzgiftlist.mzkzsnum := r_mzgiftlist.mzzpjs *
+                                 trunc((least(r_mzgiftlist.mzyxje + l_ljye,
+                                              l_maxje) /
+                                       r_mzgiftlist.mzmje), 0);
+        r_mzgiftlist.mzkzsnum := least(l_maxnumdet, r_mzgiftlist.mzkzsnum);
+        r_mzgiftlist.mzxlyxje := ceil(r_mzgiftlist.mzkzsnum /
+                                      r_mzgiftlist.mzzpjs) *
+                                 r_mzgiftlist.mzmje;
+        r_mzgiftlist.mzye     := r_mzgiftlist.mzyxje -
+                                 r_mzgiftlist.mzxlyxje;
+        /*    r_mzgiftlist.mzljje   := Greatest(r_mzgiftlist.mzxlyxje -
+        r_mzgiftlist.mzyxje, 0);*/
+      END IF;
+      r_mzgiftlist.mzmemo := '';
+    ELSE
+      r_mzgiftlist.mzkzsnum := trunc((r_mzgiftlist.mzyxje + l_ljye) /
+                                     r_mzgiftlist.mzmje, 0) *
+                               r_mzgiftlist.mzzpjs;
+      r_mzgiftlist.mzkzsnum := least(l_maxnum, r_mzgiftlist.mzkzsnum);
+      r_mzgiftlist.mzxlyxje := ceil(r_mzgiftlist.mzkzsnum /
+                                    r_mzgiftlist.mzzpjs) *
+                               r_mzgiftlist.mzmje;
+      r_mzgiftlist.mzye     := r_mzgiftlist.mzyxje - r_mzgiftlist.mzxlyxje;
+     END IF;
+    <<nextrow>>
+    NULL;
+  END;
+  PROCEDURE calmzlist(p_transno IN NUMBER) IS
+    r_poprule    poprule%ROWTYPE;
+    l_mje        NUMBER; --满金额
+    l_yzsnum     NUMBER; --已赠送数量
+    l_djxe       NUMBER; --单件限额
+    l_zdxe       NUMBER; --整单限额
+    r_mzgiftlist mzgiftlist%ROWTYPE;
+    l_maxje      NUMBER;
+    l_maxnum     NUMBER;
+    l_ljye       NUMBER; --累计余额
+  BEGIN
+    FOR vr IN (SELECT tsfdmfid,tsfdflrule, SUM(tsfdcjje) cjje, SUM(tsfdflyxje) yxje
+                 FROM TKTSELLFLDETAIL, mzgifttranslist
+                WHERE mgtltransno = p_transno
+                  AND mgtljstransno = tsfdtransno
+                  AND mgtlbillno = tsfdbillno
+                  AND tsfdcrowno > 0
+                  AND mgtlstatus = 'N'
+                  AND tsfdflrule IS NOT NULL  --过滤掉 无返礼规则的记录
+                GROUP BY tsfdflrule,tsfdmfid)
+    LOOP
+      BEGIN
+        SELECT * INTO r_poprule FROM poprule WHERE prid = vr.tsfdflrule;
+      EXCEPTION
+        WHEN OTHERS THEN
+          raise_application_error(-20000,
+                                  '执行calmzlist失败,' || to_char(SQLCODE) || ',' ||
+                                   SQLERRM);
+      END;
+      /*同规则累计,按有效金额查找是哪个档，计算每个商品*/
+        SELECT MAX(prdnum1)
+          INTO l_mje
+          FROM popruledet
+         WHERE prdid = vr.tsfdflrule
+           AND prdnum1 <= vr.yxje;
+        IF l_mje = 0 OR l_mje IS NULL THEN
+          GOTO nextrule;
+        END IF;
+        FOR vr_rdet IN (SELECT *
+                          FROM popruledet
+                         WHERE prdid = vr.tsfdflrule
+                           AND prdnum1 = l_mje)
+        LOOP
+          l_yzsnum := 0;
+          l_ljye   := 0;
+          FOR vr_tfdet IN (SELECT TKTSELLFLDETAIL.*
+                             FROM TKTSELLFLDETAIL
+                            WHERE tsfdtransno = p_transno
+                              AND tsfdflrule = vr.tsfdflrule
+                              AND tsfdcrowno > 0
+                              and tsfdmfid = vr.tsfdmfid
+                            ORDER BY tsfdbillno, tsfdrowno)
+          LOOP
+            calmzlist(p_transno, l_yzsnum, l_ljye, vr_tfdet, vr_rdet,
+                      r_mzgiftlist);
+
+            <<nextrow>>
+            l_yzsnum            := l_yzsnum + r_mzgiftlist.mzkzsnum;
+            l_ljye              := l_ljye + r_mzgiftlist.mzye;
+            r_mzgiftlist.mzljje := l_ljye;
+            INSERT INTO mzgiftlist VALUES r_mzgiftlist;
+          END LOOP;
+        END LOOP;
+      <<nextrule>>
+      NULL;
+    END LOOP;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE;
+  END;
+  --赠品换货单
+  Procedure Approve
+  (
+    p_Billno In Char,
+    p_Person In Char,
+    p_Billid In Char,
+    p_Djlb   In Char
+  ) Is
+  Begin
+    bapprove(p_billno, p_person, p_billid, p_djlb);
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+      RAISE;
+  End;
+  Procedure Bapprove
+  (
+    p_Billno In Varchar2,
+    p_Person In Varchar2,
+    p_Billid In Varchar2,
+    p_Djlb   In Varchar2
+  ) Is
+    r_h bchangezphead%rowtype;
+    r_d_old bchangezpdetail%rowtype;
+    r_d_new bchangezpdetail%rowtype;
+    r_zpjxc crmzpjxclist%rowtype;
+    l_transno number;
+    r_zpbm crmzpbm%rowtype;
+  begin
+    begin
+         select * into r_h from bchangezphead where bczhbillno = p_billno for update;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode, p_Billno || '->1 单据不存在');
+    End;
+    If r_h.Bczhdjlb <> '1' Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.1 单据类别不一致');
+    End If;
+    If p_Billid <>'QS7' Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.2 单据编号不一致');
+    End If;
+    If r_H.Bczhflag <>'N' Then
+      Raise_Application_Error(Errcode, p_Billno || '->2.3 单据已审核，不能修改！');
+    End If;
+    If Trim(r_h.bczhpid) Is Null Then
+      Raise_Application_Error(Errcode, p_Billno || '->3 请指定档期！');
+    End If;
+    select SEQ_POPMS.nextval into l_transno from dual ;
+    --增加原库存
+    for v_r_o in (select * from bchangezpdetail where bczdbillno = p_billno and bczdtype='O') loop
+        crmzpjxc.p_init(r_zpjxc);
+        SELECT * INTO r_zpbm FROM crmzpbm WHERE zpbm = v_r_o.bczdgdid;
+        r_zpjxc.czjgdid   := r_zpbm.zpbm; --VARCHAR2(20) N     商品编码
+        r_zpjxc.czjtrans  := 'C'; --CHAR(1)  N     事务
+        r_zpjxc.czjqckcsl := nvl(r_zpbm.zpsl, 0); --NUMBER(16,4)  Y
+        r_zpjxc.czjsl     := v_r_o.bczdsl; --NUMBER(16,4) Y
+        r_zpjxc.czjqmkcsl := nvl(r_zpbm.zpsl, 0) + v_r_o.bczdsl; -- NUMBER(16,4)  Y
+        r_zpjxc.czjhsjjje := 1 * r_zpbm.zpgmje; --  NUMBER(16,4)  Y
+        r_zpjxc.czjvc1    := to_char(l_transno);
+        r_zpjxc.czjvc2    := l_transno;
+        r_zpjxc.czjvc4    := '【满赠换货处理】库存数量 ' || to_char(r_zpjxc.czjqckcsl) ||
+                             '=> ' || to_char(r_zpjxc.czjqmkcsl);
+        /*dbusrvip.*/
+        r_zpjxc.czjvc3    := r_zpbm.zpchr2;
+        r_zpjxc.czjfsmkt  := r_h.bczhmkt;
+        r_zpjxc.czjoperid := p_person;
+        r_zpjxc.czjerptran:= 'D';
+        crmzpjxc.p_ins(r_zpjxc);
+    end loop;
+    --减新库存
+    for v_r_n in (select * from bchangezpdetail where bczdbillno = p_billno and bczdtype='N') loop
+        crmzpjxc.p_init(r_zpjxc);
+        SELECT * INTO r_zpbm FROM crmzpbm WHERE zpbm = v_r_n.bczdgdid;
+        r_zpjxc.czjgdid   := r_zpbm.zpbm; --VARCHAR2(20) N     商品编码
+        r_zpjxc.czjtrans  := 'C'; --CHAR(1)  N     事务
+        r_zpjxc.czjqckcsl := nvl(r_zpbm.zpsl, 0); --NUMBER(16,4)  Y
+        r_zpjxc.czjsl     := -1*v_r_n.bczdsl; --NUMBER(16,4) Y
+        r_zpjxc.czjqmkcsl := nvl(r_zpbm.zpsl, 0) + -1*v_r_n.bczdsl; -- NUMBER(16,4)  Y
+        r_zpjxc.czjhsjjje := 1 * r_zpbm.zpgmje; --  NUMBER(16,4)  Y
+        r_zpjxc.czjvc1    := to_char(l_transno);
+        r_zpjxc.czjvc2    := l_transno;
+        r_zpjxc.czjvc4    := '【满赠换货处理】库存数量 ' || to_char(r_zpjxc.czjqckcsl) ||
+                             '=> ' || to_char(r_zpjxc.czjqmkcsl);
+        /*dbusrvip.*/
+        r_zpjxc.czjvc3    := r_zpbm.zpchr2;
+        r_zpjxc.czjfsmkt  := r_h.bczhmkt;
+        r_zpjxc.czjoperid := p_person;
+        r_zpjxc.czjerptran:= 'A';
+        crmzpjxc.p_ins(r_zpjxc);
+    end loop;
+
+    update bchangezphead set bczhflag='Y',
+    --[[[[ EORV-701 =  =P~ 2017.11.17
+    bczhauditor  =p_Person,
+    bczhauditdate = Sysdate
+    --]]]]---------------------------
+     where bczhbillno = p_billno;
+
+  end;
+
+BEGIN
+  NULL;
+END salepopms_gift;
+

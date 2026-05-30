@@ -1,0 +1,113 @@
+CREATE OR REPLACE Package Body Bprepay Is
+
+  Currentdate    Date; --
+  Currentmkt     Varchar2(20); --
+  Currentmkttype Char(1); --
+  /*得到当前未结算的提成金额(-未付款的预付金额)*/
+  Procedure Sp_Gettcje(v_Contno In Varchar2,
+                       v_Mfid   In Varchar2,
+                       o_Amount Out Number) Is
+    l_Sdate  Date;
+    l_Edate  Date;
+    r_Cont   Contmain%Rowtype;
+    l_Tc     Number;
+    l_Prepay Number;
+  Begin
+    Select * Into r_Cont From Contmain Where Cmcontno = v_Contno;
+    l_Sdate := Nvl(r_Cont.Cmlastsetdate, r_Cont.Cmeffdate);
+    If r_Cont.Cmlapdate < Trunc(Sysdate) Then
+      l_Edate := r_Cont.Cmlapdate;
+    Else
+      l_Edate := Trunc(Sysdate);
+    End If;
+  
+    SELECT sum(-jglhsjjje - jgln15)
+      into l_Tc
+      FROM jxcgoodslist
+     WHERE jgldate <= trunc(sysdate)
+       AND jgldate >= r_Cont.Cmlastsetdate
+       AND jglwmid IN ('2', '3', '4', '5')
+       AND jgltran IN ('E', 'F', 'G', 'H', 'W', 'X')
+       and nvl(fgetcontno(jglsupid, jglwmid, jgldate, jglmfid, jglppcode),
+               '0') = v_Contno
+       and jglmfid = v_Mfid;
+  
+    Select Sum(Pplamount)
+      Into l_Prepay
+      From Prepaylist
+     Where Pplstatus = 'Y'
+       And Pplcontno = v_Contno
+       And Pplmfid = v_Mfid;
+    o_Amount := Nvl(l_Tc, 0) - Nvl(l_Prepay, 0);
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+  Procedure Approve
+  (
+    p_Billno In Char,
+    p_Person In Char,
+    p_Billid In Char,
+    p_Djlb   In Char
+  ) Is
+    b_Hd     Prepaylist%Rowtype;
+    r_Cont   Contmain%Rowtype;
+    Lmsg     Varchar2(30);
+    l_Canpay Number;
+  Begin
+    Begin
+      Select * Into b_Hd From Prepaylist Where Pplbillno = p_Billno;
+    Exception
+      When No_Data_Found Then
+        Raise_Application_Error(Errcode,
+                                '预付款单【' || p_Billno || '】不存在，可能已被删除！');
+    End;
+    If b_Hd.Pplstatus <> 'N' Then
+      Raise_Application_Error(Errcode,
+                              '预付款单【' || p_Billno || '】已审核,不用再次审核!');
+    End If;
+    Select * Into r_Cont From Contmain Where Cmcontno = b_Hd.Pplcontno;
+    If r_Cont.Cmstatus Not In ('Y', 'Q') Then
+      Raise_Application_Error(Errcode,
+                              '合同【' || b_Hd.Pplcontno || '】状态不正确,请检查!');
+    End If;
+    If r_Cont.Cmjsmkt <> Currentmkt Then
+      If r_Cont.Cmjsmkt = '0' Then
+        Lmsg := '总部';
+      Else
+        Lmsg := '门店[' || r_Cont.Cmjsmkt || ']';
+      End If;
+      Raise_Application_Error(Errcode,
+                              '审核地点错误,合同[' || b_Hd.Pplcontno || ']的结算位置是' || Lmsg ||
+                               '需要在结算位置录入并审核!');
+    End If;
+    If Fgetprivatepara('PP') = 'Y' Then
+      Sp_Gettcje(b_Hd.Pplcontno, b_Hd.Pplmfid, l_Canpay);
+      If l_Canpay < b_Hd.Pplamount Then
+        Raise_Application_Error(Errcode,
+                                '合同【' || b_Hd.Pplcontno || '】柜组[' ||
+                                 b_Hd.Pplmfid || ']
+                              当前可预付金额为:' ||
+                                 To_Char(l_Canpay, '0.00') ||
+                                 '小于当前预付金额,不能审核!');
+      End If;
+    End If;
+    Update Prepaylist
+    Set    Pplstatus = 'Y', Auditor = p_Person, Auditdate = Currentdate
+    Where  Pplbillno = b_Hd.Pplbillno;
+    --Supcamana.Lyprepaygen(b_Hd.Pplbillno, 'PAY');
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End;
+
+Begin
+  -- Initialization
+  Currentdate    := Fgeterpdate;
+  Currentmkt     := Fgetsysplace;
+  Currentmkttype := Fgetsystype(Currentmkt);
+End Bprepay;
+

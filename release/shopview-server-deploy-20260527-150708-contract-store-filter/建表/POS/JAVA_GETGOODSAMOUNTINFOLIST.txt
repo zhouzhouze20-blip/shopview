@@ -1,0 +1,20 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETGOODSAMOUNTINFOLIST
+AS
+  -- 返回结果集为
+    -- 商品编码,柜组,规格单位,批量售价,批量会员价,批量数量,开始日期,结束日期
+  PROCEDURE GETGOODSAMOUNTINFOLIST
+    (
+      vpgagdid in varchar2,
+            vpgamfid in varchar2,
+            vpgauid in varchar2,
+
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pgagdid,pgamfid,pgauid,pgasj,pgahyj,pgamount,to_char(ggastadate,'YYYY/MM/DD'),to_char(ggaenddate,'YYYY/MM/DD') from posgoodsamount where pgamfid=vpgamfid and pgagdid=vpgagdid and pgauid=vpgauid;
+  END GETGOODSAMOUNTINFOLIST;
+
+END JAVA_GETGOODSAMOUNTINFOLIST;
+

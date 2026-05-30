@@ -1,0 +1,525 @@
+CREATE OR REPLACE Package Body DB_Monitor Is
+	CurrentUser Varchar2(20);
+	CPU_Count   Number;
+
+	Procedure P___Public Is
+	Begin
+		Null;
+	End;
+	Procedure GetCPUCount Is
+	Begin
+		Select Value Into CPU_Count From V$parameter Where Upper(Name) = 'CPU_COUNT';
+	Exception
+		When Others Then
+			cpu_count := 1;
+	End GetCPUCount;
+
+	Procedure AddMessage
+	(
+		p_msgtype In Char,
+		p_title   In Char,
+		p_what    In Char,
+		p_text    In Char
+	) Is
+		Row_Instance v$Instance%Rowtype;
+	Begin
+		Begin
+			Select * Into Row_Instance From v$instance;
+		Exception
+			When Others Then
+				Null;
+		End;
+		--CRM
+		--Sp_Debug('DB_Monitor', p_MsgType || ',' || p_Title || ',' || p_What || ',' || p_Text);
+		--CRMPPM
+		--CardBase.Debug('DB_Monitor', p_MsgType || ',' || p_Title || ',' || p_What || ',' || p_Text, 'Y');
+		-- 原处理为插入消息表
+		--DBUSRSYS.SYS_WORKFLOW.Notification_SendSubscribe('DBA', p_Title || '[' || Row_Instance.INSTANCE_NAME || ']', p_What || ',' || p_Text, 'ALL', 'DB_MONITOR');
+	End;
+
+	Procedure P___Daily_Operation Is
+	Begin
+		Null;
+	End;
+	Procedure Sp_Sys_Analyze_Object Is
+	Begin
+		/*For Vr In (Select * From Dba_Users Where UserName Like 'DBUSR%')
+		Loop
+         
+			Dbms_Stats.gather_schema_stats(Vr.Username);
+			Commit;
+		End Loop;*/
+      Begin
+         For vr In (Select * From dba_tables Where owner Like 'DBUSR%')
+         Loop
+            DBMS_STATS.unlock_table_stats(VR.OWNER, VR.TABLE_NAME);
+            DBMS_STATS.gather_table_stats(VR.OWNER, VR.TABLE_NAME, estimate_percent => 20, degree => CPU_Count);
+         End Loop;
+      End;
+      Commit;
+      
+   End Sp_Sys_Analyze_Object;
+
+	Procedure Sp_Sys_Check_TableSpace Is
+		l_Message Varchar2(255);
+	Begin
+		For Vr In (Select Ta.Tablespace_Name,
+								Ta.Define_Size,
+								Tb.Free_Size,
+								Round(Tb.Free_Size / Ta.Define_Size, 4) * 100 Free_Percent,
+								Round((Ta.Define_Size - Tb.Free_Size) / Ta.Define_Size, 4) * 100 used_Percent
+						 From (Select Tablespace_Name,
+										  Sum(Bytes) Define_Size
+									From Dba_Data_Files
+								  Where TableSpace_Name Like '%_SPC'
+								  Group By (Tablespace_Name)) Ta,
+								(Select Tablespace_Name,
+										  Sum(Bytes) Free_Size
+									From Dba_Free_Space
+								  Where TableSpace_Name Like '%_SPC'
+								  Group By (Tablespace_Name)) Tb
+						Where Ta.Tablespace_Name = Tb.Tablespace_Name)
+		Loop
+			If vr.Free_Percent <= PARA_TS_PERCENT Or vr.Free_Size <= PARA_TS_LEAVE Then
+				l_Message := vr.tablespace_name || '->剩余空间:' || Trim(To_Char(vr.Free_Size / 1048576, 'B9,999,990.999')) || 'M,剩余比例:' || Trim(To_Char(vr.Free_Percent, 'B990.99')) || '%';
+				AddMessage(MSGTYPE_HINT, '表空间预警', Vr.Tablespace_Name, l_Message);
+			End If;
+		End Loop;
+		Commit;
+	
+		For Vr In (Select s.Tablespace_Name,
+								Round(100 * f.Hole_Count / (f.Hole_Count + s.Seg_Count)) Pct_Fragmented,
+								s.Seg_Count Segments,
+								f.Hole_Count Holes
+						 From (Select Tablespace_Name,
+										  Count(*) Seg_Count
+									From Dba_Segments
+								  Group By Tablespace_Name) s,
+								(Select Tablespace_Name,
+										  Count(*) Hole_Count
+									From Dba_Free_Space
+								  Group By Tablespace_Name) f
+						Where s.Tablespace_Name = f.Tablespace_Name And
+								s.Tablespace_Name In (Select Tablespace_Name
+																From Dba_Tablespaces
+															  Where Contents = 'PERMANENT' And
+																	  TableSpace_Name Like '%_SPC') And
+								100 * f.Hole_Count / (f.Hole_Count + s.Seg_Count) > 30 And
+								s.Seg_Count > 50)
+		Loop
+			If True Then
+				l_Message := vr.tablespace_name || '->段数:' || To_Char(vr.Segments) || ',空洞:' || To_Char(vr.Holes) || ',碎片比率:' || to_Char(vr.Pct_Fragmented) || '%';
+				AddMessage(MSGTYPE_HINT, '碎片预警', Vr.Tablespace_Name, l_Message);
+			End If;
+		End Loop;
+		Commit;
+	
+		For vr In (Select Owner,
+								Segment_Type,
+								Segment_Name,
+								Sum(Extents) Ext_Used,
+								Avg(Max_Extents) Ext_Max,
+								Sum(Bytes) Ext_Size,
+								Avg(Initial_Extent) Init_Size
+						 From Dba_Segments
+						Where owner In (User, 'DBUSRPUB')
+						Group By Owner,
+									Segment_Type,
+									Segment_Name)
+		Loop
+			If vr.Ext_Used / vr.Ext_Max > 0.9 Then
+				l_Message := vr.Owner || '.' || vr.Segment_Name || '->最大扩展:' || Trim(To_Char(vr.Ext_Max, 'B9,999,990.999')) || ',已用扩展:' || Trim(To_Char(vr.Ext_Used, 'B9,999,990.999'));
+				AddMessage(MSGTYPE_HINT, '扩展段预警', vr.Segment_Type, l_Message);
+			End If;
+			If vr.Ext_Used > 100 Then
+				l_Message := vr.Owner || '.' || vr.Segment_Name || '->已用扩展:' || Trim(To_Char(vr.Ext_Used, 'B9,999,990.999')) || ',初始空间:' || Trim(To_Char(vr.Init_Size, 'B9,999,990.999')) || ',分配大小:' ||
+								 Trim(To_Char(vr.Ext_Size, 'B9,999,990.999'));
+				AddMessage(MSGTYPE_HINT, '扩展数过大', vr.Segment_Type, l_Message);
+			End If;
+		End Loop;
+		Commit;
+	Exception
+		When Others Then
+			Rollback;
+			Raise;
+	End Sp_sys_Check_TableSpace;
+
+	Procedure Sp_Sys_Check_Tables Is
+	Begin
+		Null;
+	End Sp_Sys_Check_Tables;
+
+	Procedure Sp_Sys_Check_Jobs Is
+		l_Message Varchar2(255);
+	Begin
+		For vr In (Select Job,
+								Last_Date,
+								This_Date,
+								Broken,
+								Schema_User,
+								What
+						 From Dba_Jobs
+						Where Broken = 'Y' Or
+								Next_Date < Sysdate - 0.2 Or
+								(This_Date Is Not Null And This_Date < Sysdate - 60 / 1440))
+		Loop
+			l_Message := 'JOB:' || to_char(vr.job) || '->' || vr.Schema_User || '->' || vr.what || '; Broken:' || vr.Broken || '; This_Date:' || to_Char(vr.This_Date, 'YYYY-MM-DD HH24:MI:SS') ||
+							 '; Last_Date:' || to_Char(vr.Last_Date, 'YYYY-MM-DD HH24:MI:SS');
+			AddMessage(MsgType_ERROR, 'JOB失效', to_char(vr.job), l_Message);
+		End Loop;
+		Commit;
+	Exception
+		When Others Then
+			Rollback;
+			Raise;
+	End;
+
+	Procedure CompileInvalidObjects
+	(
+		in_User In Varchar2 Default User,
+		in_Type In Varchar2 Default '%',
+		in_Name In Varchar2 Default '%'
+	) Is
+		l_Sql Varchar2(255);
+	Begin
+		--Dbms_Utility.compile_schema(in_User);
+		For r_Obj In (Select *
+							 From all_Objects
+							Where owner = in_User And
+									object_type Like in_type And
+									object_name Like in_name And
+									status = 'INVALID')
+		Loop
+			If r_Obj.Object_Type = 'PACKAGE BODY' Then
+				l_Sql := 'ALTER PACKAGE ' || r_Obj.Owner || '.' || r_Obj.Object_Name || ' COMPILE BODY';
+			Elsif r_Obj.Object_Type = 'TYPE BODY' Then
+				l_Sql := 'ALTER TYPE ' || r_Obj.Owner || '.' || r_Obj.Object_Name || ' COMPILE BODY';
+			Else
+				l_Sql := 'ALTER ' || r_Obj.Object_Type || ' ' || r_Obj.Owner || '.' || r_Obj.Object_Name || ' COMPILE';
+			End If;
+			Begin
+				Execute Immediate l_Sql;
+				DBMS_OUTPUT.PUT_LINE(r_Obj.Object_Type || ' ' || r_Obj.Owner || '.' || r_Obj.Object_Name || ' Compiled!');
+			Exception
+				When Others Then
+					AddMessage(MSGTYPE_ERROR, '编译对象', r_Obj.Object_Type || ' ' || r_Obj.Owner || '.' || r_Obj.Object_Name, ' Compile Error!');
+			End;
+			Commit;
+		End Loop;
+		Commit;
+	Exception
+		When Others Then
+			Rollback;
+			Raise;
+	End CompileInvalidObjects;
+
+	Procedure CompileAllInvalidObjects Is
+	Begin
+		For r In (Select UserName From all_Users Where UserName Not In ('SYS', 'SYSTEM'))
+		Loop
+			Begin
+				CompileInvalidObjects(r.UserName);
+			Exception
+				When Others Then
+					Rollback;
+			End;
+		End Loop;
+	End CompileAllInvalidObjects;
+
+	Procedure P___Partitions Is
+	Begin
+		Null;
+	End;
+	Function GetPartitionKeyColumn
+	(
+		in_TableName      In Varchar2,
+		in_IsSubPartition In Char
+	) Return Varchar2 Is
+		Result Varchar2(30);
+	Begin
+		If in_IsSubPartition = 'N' Then
+			Select Column_Name
+			  Into Result
+			  From Dba_Part_Key_Columns
+			 Where Name = in_TableName And
+					 COLUMN_POSITION = 1;
+		Else
+			Select Column_Name
+			  Into Result
+			  From Dba_SubPart_Key_Columns
+			 Where Name = in_TableName And
+					 COLUMN_POSITION = 1;
+		End If;
+		Return Result;
+	Exception
+		When Others Then
+			Return Null;
+	End GetPartitionKeyColumn;
+
+	Function GetTablePartitionType(in_TableName In Varchar2) Return Varchar2 Is
+		l_Type    Varchar2(7);
+		l_SubType Varchar2(7);
+	Begin
+		Select PARTITIONING_TYPE,
+				 SUBPARTITIONING_TYPE
+		  Into l_Type,
+				 l_SubType
+		  From DBA_Part_Tables
+		 Where Table_Name = in_TableName;
+		If l_SubType <> 'NONE' Then
+			l_Type := 'COMP';
+		End If;
+		Return l_Type;
+	Exception
+		When Others Then
+			Raise;
+	End GetTablePartitionType;
+
+	Function GetSubPartitionTemplate(in_TableName In Varchar2) Return Varchar2 Is
+		l_List Varchar2(1000) := '';
+	Begin
+		For vr In (Select subpartition_name sName From Dba_Subpartition_Templates Where Table_name = in_TableName)
+		Loop
+			l_List := l_List || 'SUBPARTITION ' || vr.sName || ' VALUES (''' || substr(vr.sName, 2) || '''),';
+		End Loop;
+		Return l_List;
+	End GetSubPartitionTemplate;
+  
+  --检查补建缺失的分区表
+	Procedure Check_Partition(p_Date In Date Default Sysdate) Is
+		Cursor Cur_Par_Tables Is
+			Select *
+			  From SYS_TAB_PAR_PROP
+			 Where Owner Like 'DBUSR%' /*And
+					 Instr(vType, Range_Type) > 0*/;
+		Row_Tables  Cur_Par_Tables%Rowtype;
+		l_Type      Varchar2(10);
+		l_Count     Number;
+		l_ParName   Varchar2(30);
+		l_HighValue Date;
+		l_SQL       Varchar2(1000);
+	Begin
+	--检查本期本该已经创建的分区表是否存在，不存在则重新创建。
+  --适用于job被停后重新运行，或数据库服务被长期关闭后重新启动。
+		Open Cur_Par_Tables;
+		Loop
+			Fetch Cur_Par_Tables
+				Into Row_Tables;
+			Exit When Cur_Par_Tables%Notfound Or Cur_Par_Tables%Notfound Is Null;
+			Begin
+				If Row_Tables.Range_Type = 'D' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(p_Date, 'YYYY_MM_DD');
+					l_HighValue := Trunc(p_Date + 1);
+				Elsif Row_Tables.Range_Type = 'M' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(p_Date, 'YYYY_MM');
+					l_HighValue := Trunc(Add_Months(p_Date, 1), 'MM');
+				Elsif Row_Tables.Range_Type = 'Q' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(p_Date, 'YYYY') || '_Q' || To_Char(p_Date, 'Q');
+					l_HighValue := Trunc(Add_Months(p_Date, 3), 'Q');
+				Elsif Row_Tables.Range_Type = 'Y' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(p_Date, 'YYYY');
+					l_HighValue := Trunc(Add_Months(p_Date, 12), 'YYYY');
+				Else
+					Null;
+				End If;
+				Select Count(*)
+				  Into l_Count
+				  From All_Tab_Partitions
+				 Where Table_Name = Row_Tables.TableName And
+						 Table_Owner = Row_Tables.Owner And
+						 Partition_Name = l_ParName;
+			Exception
+				When Others Then
+					l_Count := 0;
+			End;
+			If l_Count <= 0 And l_ParName Is Not Null Then
+				l_SQL := 'Alter Table ' || Row_Tables.Owner || '.' || Row_Tables.TableName || Enter;
+				l_SQL := l_SQL || ' Add Partition ' || l_ParName || Enter;
+				l_SQL := l_SQL || '  Values Less Than (To_Date(''' || To_Char(l_HighValue, 'YYYY-MM-DD') || ''',''YYYY-MM-DD''))' || Enter;
+				l_SQL := l_SQL || ' TableSpace ' || Row_Tables.Tablespace_Name || Enter;
+				l_SQL := l_SQL || '  Storage  ' || Enter;
+				l_SQL := l_SQL || '   ( ' || Enter;
+				l_SQL := l_SQL || '     initial ' || Row_Tables.Initial_Extent || Enter;
+				l_SQL := l_SQL || '     Next ' || Row_Tables.Initial_Extent || Enter;
+				l_SQL := l_SQL || '     minextents 1 ' || Enter;
+				l_SQL := l_SQL || '     maxextents unlimited ' || Enter;
+				l_SQL := l_SQL || '   )';
+				Begin
+					Execute Immediate l_SQL;
+				Exception
+					When Others Then
+						AddMessage(p_msgtype => MSGTYPE_ERROR, p_title => '创建表分区', p_what => Row_Tables.Tablename, p_text => Sqlerrm);
+				End;
+			End If;
+		End Loop;
+		Close Cur_Par_Tables;
+	Exception
+		When Others Then
+			If Cur_Par_Tables%Isopen Then
+				Close Cur_Par_Tables;
+			End If;
+			Raise;
+	End Check_Partition;
+  
+  Procedure Schedule_Partition(p_Date In Date Default Sysdate) Is
+		Cursor Cur_Par_Tables(vType In Char) Is
+			Select *
+			  From SYS_TAB_PAR_PROP
+			 Where Owner Like 'DBUSR%' And
+					 Instr(vType, Range_Type) > 0;
+		Row_Tables  Cur_Par_Tables%Rowtype;
+		l_Type      Varchar2(10);
+		l_Count     Number;
+		l_ParName   Varchar2(30);
+		l_HighValue Date;
+		l_SQL       Varchar2(1000);
+	Begin
+		l_Type := 'D';
+		If To_Char(p_Date + 5, 'YYYY-MM') <> To_Char(p_Date, 'YYYY-MM') Then
+			l_Type := l_Type || 'M';
+		End If;
+		If To_Char(p_Date + 5, 'YYYY-Q') <> To_Char(p_Date, 'YYYY-Q') Then
+			l_Type := l_Type || 'Q';
+		End If;
+		If To_Char(p_Date + 5, 'YYYY') <> To_Char(p_Date, 'YYYY') Then
+			l_Type := l_Type || 'Y';
+		End If;
+	
+		Open Cur_Par_Tables(l_Type);
+		Loop
+			Fetch Cur_Par_Tables
+				Into Row_Tables;
+			Exit When Cur_Par_Tables%Notfound Or Cur_Par_Tables%Notfound Is Null;
+			Begin
+				If Row_Tables.Range_Type = 'D' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(p_Date + 1, 'YYYY_MM_DD');
+					l_HighValue := Trunc(p_Date + 2);
+				Elsif Row_Tables.Range_Type = 'M' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(Add_Months(p_Date, 1), 'YYYY_MM');
+					l_HighValue := Trunc(Add_Months(p_Date, 2), 'MM');
+				Elsif Row_Tables.Range_Type = 'Q' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(Add_Months(p_Date, 3), 'YYYY') || '_Q' || To_Char(Add_Months(p_Date, 3), 'Q');
+					l_HighValue := Trunc(Add_Months(p_Date, 6), 'Q');
+				Elsif Row_Tables.Range_Type = 'Y' Then
+					l_ParName   := Row_Tables.TableName || '_' || To_Char(Add_Months(p_Date, 12), 'YYYY');
+					l_HighValue := Trunc(Add_Months(p_Date, 24), 'YYYY');
+				Else
+					Null;
+				End If;
+				Select Count(*)
+				  Into l_Count
+				  From All_Tab_Partitions
+				 Where Table_Name = Row_Tables.TableName And
+						 Table_Owner = Row_Tables.Owner And
+						 Partition_Name = l_ParName;
+			Exception
+				When Others Then
+					l_Count := 0;
+			End;
+			If l_Count <= 0 And l_ParName Is Not Null Then
+				l_SQL := 'Alter Table ' || Row_Tables.Owner || '.' || Row_Tables.TableName || Enter;
+				l_SQL := l_SQL || ' Add Partition ' || l_ParName || Enter;
+				l_SQL := l_SQL || '  Values Less Than (To_Date(''' || To_Char(l_HighValue, 'YYYY-MM-DD') || ''',''YYYY-MM-DD''))' || Enter;
+				l_SQL := l_SQL || ' TableSpace ' || Row_Tables.Tablespace_Name || Enter;
+				l_SQL := l_SQL || '  Storage  ' || Enter;
+				l_SQL := l_SQL || '   ( ' || Enter;
+				l_SQL := l_SQL || '     initial ' || Row_Tables.Initial_Extent || Enter;
+				l_SQL := l_SQL || '     Next ' || Row_Tables.Initial_Extent || Enter;
+				l_SQL := l_SQL || '     minextents 1 ' || Enter;
+				l_SQL := l_SQL || '     maxextents unlimited ' || Enter;
+				l_SQL := l_SQL || '   )';
+				Begin
+					Execute Immediate l_SQL;
+				Exception
+					When Others Then
+						AddMessage(p_msgtype => MSGTYPE_ERROR, p_title => '创建表分区', p_what => Row_Tables.Tablename, p_text => Sqlerrm);
+				End;
+			End If;
+		End Loop;
+		Close Cur_Par_Tables;
+	Exception
+		When Others Then
+			If Cur_Par_Tables%Isopen Then
+				Close Cur_Par_Tables;
+			End If;
+			Raise;
+	End Schedule_Partition;
+
+	Procedure sp_SaveSpaceLog(Vdate Date) Is
+	Begin
+		Delete From gatherspacelog Where GAHTERDATE = VDATE;
+		Insert Into gatherspacelog
+			Select Vdate,
+					 df.tablespace_name tablespace_name,
+					 totalspace,
+					 freespace,
+					 round((1 - freespace / totalspace) * 100, 4) rate
+			  From (Select tablespace_name,
+								round(Sum(bytes) / 1024 / 1024, 2) totalspace
+						 From dba_data_files
+						Group By tablespace_name) df,
+					 (Select tablespace_name,
+								round(Sum(bytes) / 1024 / 1024, 2) freespace
+						 From dba_free_space
+						Group By tablespace_name) fs
+			 Where df.tablespace_name = fs.tablespace_name
+			Union All
+			Select Vdate,
+					 df.tablespace_name tablespace_name,
+					 totalspace,
+					 totalspace - usedspace freespace,
+					 round((usedspace / totalspace) * 100, 4) rate
+			  From (Select tablespace_name,
+								round(Sum(bytes) / 1024 / 1024, 2) totalspace
+						 From dba_temp_files
+						Group By tablespace_name) df,
+					 (Select tablespace_name,
+								round(Sum(bytes_cached) / 1024 / 1024, 2) usedspace
+						 From v$temp_extent_pool
+						Group By tablespace_name) fs
+			 Where df.tablespace_name = fs.tablespace_name;
+		Commit;
+	Exception
+		When Others Then
+			Rollback;
+			AddMessage(p_msgtype => MSGTYPE_ERROR, p_title => '生成表空间使用情况', p_what => '', p_text => Sqlerrm);
+	End sp_SaveSpaceLog;
+
+	Procedure P___Interface Is
+	Begin
+		Null;
+	End;
+	Procedure Submit Is
+	Begin
+		--每周日晚上自动分析
+		If To_Char(Sysdate, 'day') = 'monday' Then
+			Sp_Sys_Analyze_Object;
+		End If;
+		--编译失效对象
+		CompileAllInvalidObjects;
+		--检查剩余表空间
+		Sp_Sys_Check_TableSpace;
+		--检查JOB状态
+		Sp_Sys_Check_Jobs;
+		--检查补建缺失的分区表
+		Check_Partition;
+		--自动生成新的表分区
+		Schedule_Partition;
+	   --保存表空间使用情况
+		SP_SaveSpaceLog(trunc(Sysdate) - 1);
+	End Submit;
+   
+   Procedure Job_Submit(i_time In Number Default 1) As
+		jobid  Binary_Integer;
+		l_time Number;
+	Begin
+		l_time := 1 + ROUND(i_time / 24, 3);
+		dbms_job.submit(job => jobid, what => 'DB_Monitor.Submit;', next_date => TRUNC(Sysdate) + l_time, Interval => 'TRUNC(SYSDATE) + ' || to_char(l_time), no_parse => Null);
+		Commit;
+		dbms_output.put_line('JobID = ' || jobid);
+	End job_submit;
+   
+Begin
+	CurrentUser := User;
+	GetCPUCount();
+End DB_Monitor;

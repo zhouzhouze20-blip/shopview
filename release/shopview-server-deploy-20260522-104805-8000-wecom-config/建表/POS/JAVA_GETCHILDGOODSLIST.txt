@@ -1,0 +1,19 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETCHILDGOODSLIST
+AS
+  -- 返回结果集为
+    -- 商品条码,商品中文名
+  PROCEDURE GETCHILDGOODSLIST
+    (
+            vfxm in VARCHAR2,
+            vgz in VARCHAR2,
+            vtype in char,
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select pgbarcode,pgcname from posgoods where pganalcode=vfxm and pgmfid=vgz and pgtype=vtype;
+  END GETCHILDGOODSLIST;
+
+END JAVA_GETCHILDGOODSLIST;
+

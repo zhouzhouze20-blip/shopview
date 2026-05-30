@@ -1,0 +1,73 @@
+CREATE OR REPLACE Package Body TestTools_Settle Is
+
+
+
+  Procedure P____ERPData____ Is
+  Begin
+    Null;
+  End;
+  Procedure Sp_Reset_SettleData
+  (
+    p_Supid     In Varchar2,
+    p_Wmid      In Char,
+    p_ResetDate In Date,
+    o_RetMsg    Out Varchar2
+  ) Is
+      l_Count     Number;
+  Begin
+      l_Count     := 0;
+    For vr In (Select *
+             From SupSettleHead
+            Where SshSupId = p_Supid And
+                SshWMid = p_WMid And
+                        SshThisDate >= p_ResetDate
+                  Order By SshThisDate Desc)
+    Loop
+      Delete From SupSettleHead Where sshbillno = vr.sshbillno;
+      Delete From SupSettleDet Where ssdbillno = vr.sshbillno;
+      Delete From SupSettleDet_Ex Where ssdbillno = vr.sshbillno;
+      Delete From SupSetCharge
+       Where sscjsno = vr.sshbillno And
+           ssctype = '0' And
+           sscflag <> 'Y';
+      Update SupSetCharge
+        Set sscjsno = Null,
+           sscflag = 'S'
+       Where sscjsno = vr.sshbillno And
+           ssctype = '1';
+      Delete From SaleCostDay_Supset
+       Where scdsjsflag = 'N' And
+           scdsjsbillno = vr.sshbillno;
+      Delete From JxcGoodsListSeq Where jglssupjsdh = vr.sshbillno;
+      Update SettleSupBatch
+        Set ssbjsbillno = Null,
+           ssbjsdjbh   = Null
+       Where ssbjsbillno = vr.sshbillno;
+      /*UPDATE supsetyfk
+            SET ssyjsbz = 'N',
+                ssyjsdh = null
+          Where ssyjsdh = p_billno;*/
+
+         If Vr.Sshdjlb = '4' Then
+            Update ContMain Set CmLastQsDate = Vr.Sshlastdate Where CmContno = Vr.Sshcontno;
+         Else
+            Update ContMain Set CmLastSetDate = Vr.Sshlastdate Where CmContno = Vr.Sshcontno;
+         End If;
+
+         --删除应收应付明细
+      --bhdd.R2008
+      --settleaccpayday.delpaydet(vr.sshbillno);
+         --End
+
+         l_Count := l_Count + 1;
+    End Loop;
+      o_RetMsg := 'OK';
+  Exception
+    When Others Then
+      Raise;
+  End;
+
+Begin
+  Null;
+End TestTools_Settle;
+

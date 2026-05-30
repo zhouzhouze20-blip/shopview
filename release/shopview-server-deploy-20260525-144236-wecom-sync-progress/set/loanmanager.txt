@@ -1,0 +1,449 @@
+CREATE OR REPLACE Package Body loanmanager Is
+
+  Procedure Sp_gen_outlayorrepay(p_gentype In Char,
+                                 p_mkt     In Char,
+                                 p_gh      In Char,
+                                 p_gys     In Char,
+                                 p_seq     In Number) Is
+    r_gentemp    SUPGENREPAY_TEMP%Rowtype;
+    r_gentemp1   SUPGENREPAY_TEMP%Rowtype;
+    lcount       Number;
+    lseq         Varchar2(20);
+    i            Number;
+    lcontno      Varchar2(20);
+    lmfid        Varchar2(20);
+    loutlayid    Varchar2(20);
+    loutlaymoney Number;
+    lwmid        Char(1);
+    loutlayname  Varchar2(40);
+    ldjbh        Varchar2(20);
+    lbalance     Number;
+    l_tax        SUPSETCHARGE.Sscnum2%Type; --税率 =  =P~ 2017.01.24
+    l_notaxmoney SUPSETCHARGE.Sscnum3%Type; --不含税金额 =  =P~ 2017.01.24
+    Cursor cur_temp(l_seq In Number) Is
+      Select repayid,
+             repayrow,
+             repaymoney,
+             repaycontno,
+             outlayid,
+             repaymfid,
+             seq
+        From supgenrepay_temp
+       Where seq = l_seq
+       Order By repayid;
+
+  Begin
+    Select Count(*) Into lcount From supgenrepay_temp Where seq = p_seq;
+    If lcount <= 0 Then
+      raise_application_error(-20007, '临时表错误,无记录');
+    End If;
+    If p_gentype = '1' Then
+      --还款单
+      sp_billseq('J09', lseq, 'Y');
+      i := 0;
+      Open cur_temp(p_seq);
+      Loop
+        Fetch cur_temp
+          Into r_gentemp;
+        Exit When cur_temp%Notfound Or cur_temp%Notfound Is Null;
+        i          := i + 1;
+        r_gentemp1 := r_gentemp;
+        Insert Into suploanmanagerdetail
+          (slmdbillno,
+           slmdrowno,
+           slmddate,
+           slmdisrepay,
+           slmdmoney,
+           slmdchr1,
+           slmdchr2)
+        Values
+          (lseq,
+           i,
+           Sysdate,
+           'N',
+           r_gentemp.repaymoney,
+           r_gentemp.repayid,
+           r_gentemp.repayrow);
+      End Loop;
+      Close cur_temp;
+
+      Insert Into suploanmanagerhead
+        (slmhbillno,
+         slmhdjbh,
+         slmhtype,
+         slmhflag,
+         slmhsupid,
+         inputor,
+         inputdate,
+         slmhmarket,
+         slmhloandate)
+      Values
+        (lseq, lseq, '2', 'N', p_gys, p_gh, Sysdate, p_mkt, Sysdate);
+      Select Count(Distinct ta.repayid)
+        Into lcount
+        From supgenrepay_temp ta where seq=p_seq;
+      If lcount = 1 Then
+        Update suploanmanagerhead ta
+           Set slmhsource = r_gentemp1.repayid
+         Where ta.slmhbillno = lseq;
+      End If;
+      Update suploanmanagerhead ta
+         Set slmhloanmoney =
+             (Select Sum(slmdmoney)
+                From suploanmanagerdetail
+               Where slmdbillno = lseq)
+       Where ta.slmhbillno = lseq;
+      Delete From supgenrepay_temp Where seq = p_seq;
+    Elsif p_gentype = '2' Then
+      --费用单
+      if fGetPrivatePara('1N')='HQ' then
+        fterp_oper.Set_Oper_Market('0');
+      end if;
+      If FGetSysType(p_mkt) = Stock.MF_HQ And fgetsysplace <> Stock.MF_HQ Then
+        --总部费用单处理
+        cmdsend.sp_cmdsend_target('LOANMANAGEROUTLAY',
+                                  fgetsysplace,
+                                  p_mkt,
+                                  '''2'',''' || p_mkt || ''',''' || p_gh ||
+                                  ''',''' || p_gys || ''',' ||
+                                  to_char(p_seq),
+                                  Null);
+      Else
+        --本门店费用单
+        sp_billseq('G01', lseq, 'Y');
+        Select ta.repaycontno, ta.outlayid, ta.repaymfid
+          Into lcontno, loutlayid, lmfid
+          From SUPGENREPAY_TEMP ta
+         Where rownum = 1 and seq=p_seq;
+        Select Sum(ta.repaymoney)
+          Into loutlaymoney
+          From SUPGENREPAY_TEMP ta where seq=p_seq;
+        Select cmwmid Into lwmid From contmain Where cmcontno = lcontno;
+        Select ta.ccname
+          Into loutlayname
+          From CODECHARGE ta
+         Where ta.cccode = loutlayid;
+         --[[[[税率,不含税金额 =  =P~ 2017.01.24
+         Begin
+           Select ccnum5,round(loutlaymoney/(1+ccnum5),2) Into L_tax,l_notaxmoney From CodeCharge Where cccode=loutlayid;
+           Exception
+             When Others Then
+               Null;
+           End;
+           --]]]]--------------------
+        Insert Into SUPSETCHARGE
+          (SSCBILLNO,
+           SSCROWNO,
+           SSCDJBH,
+           SSCTYPE,
+           SSCFLAG,
+           SSCSUPID,
+           SSCWMID,
+           SSCMARKET,
+           SSCMFID,
+           SSCDATE,
+           SSCFSDATE,
+           SSCFSMON,
+           SSCID,
+           SSCNAME,
+           SSCMONEY,
+           SSCJSNO,
+           SSCCONTNO,
+           INPUTOR,
+           INPUTDATE,
+           AUDITOR,
+           AUDITDATE,
+           PERSON1,
+           PERSON2,
+           PERSON3,
+           PERSON4,
+           PERSON5,
+           SSCMEMO,
+           SSCSETPL,
+           SSCGDMONEY,
+           SSCMONEYUPPER,
+           SSCRET,
+           SSCRETDATE,
+           SSCRETSTATUS,
+           SSCRETMONEY,
+           SSCRECRETDATE,
+           SSCYRETBILLNO,
+           SSCRETTYPE,--37
+           sscnum2, --税率 =  =P~ 2017.01.24
+           sscnum3) --不含税金额 =  =P~ 2017.01.24
+         Select lseq,
+                 1,
+                 lseq,
+                 1,
+                 'S',
+                 p_gys,
+                 lwmid,
+                 fgetmframefcode(lmfid),
+                 lmfid,
+                 Sysdate,
+                 Sysdate,
+                 to_char(Sysdate, 'yyyymm'),
+                 loutlayid,
+                 loutlayname,
+                 loutlaymoney,
+                 Null,
+                 lcontno,
+                 p_gh,
+                 Sysdate,
+                 p_gh,
+                 Sysdate,
+                 'N',
+                 'N',
+                 Null,
+                 Null,
+                 Null,
+                 '借款单生成',
+                 p_mkt,
+                 0,
+                 fmoney2chn(loutlaymoney),
+                 'N',
+                 Null,
+                 'N',
+                 Null,
+                 Null,
+                 Null,
+                 1,--37
+                 L_tax, --税率 =  =P~ 2017.01.24
+                 l_notaxmoney --不含税金额 =  =P~ 2017.01.24
+            From dual;
+        i := 0;
+
+        -------------------------------------------
+        Open cur_temp(p_seq);
+        Loop
+          Fetch cur_temp
+            Into r_gentemp;
+          Exit When cur_temp%Notfound Or cur_temp%Notfound Is Null;
+          i := i + 1;
+          If i = 1 Then
+            ldjbh := r_gentemp.repayid;
+          Elsif ldjbh <> r_gentemp.repayid Then
+            --处理借款单标志
+            Select Count(*)
+              Into lcount
+              From SUPLOANMANAGERDETAIL
+             Where slmdbillno = ldjbh
+               And slmdrepaybalance > 0;
+            If lcount = 0 Then
+              Update SUPLOANMANAGERhead ta
+                 Set ta.slmhflag = 'P'
+               Where ta.slmhbillno = ldjbh;
+            End If;
+          End If;
+          ldjbh := r_gentemp.repayid;
+          --扣减借款单金额
+          Select slmdrepaybalance
+            Into lbalance
+            From SUPLOANMANAGERDETAIL
+           Where slmdbillno = r_gentemp.repayid
+             And slmdrowno = r_gentemp.repayrow;
+          If lbalance < r_gentemp.repaymoney Then
+            raise_application_error(-20007,
+                                    '借款单:' || r_gentemp.repayid || ' ' ||
+                                    r_gentemp.repayrow || ' 余额不足!');
+          End If;
+          Update SUPLOANMANAGERDETAIL ta
+             Set ta.slmdlastmoney    = r_gentemp.repaymoney,
+                 ta.slmdrepaymoney   = ta.slmdrepaymoney +
+                                       r_gentemp.repaymoney,
+                 ta.slmdrepaybalance = ta.slmdrepaybalance -
+                                       r_gentemp.repaymoney
+           Where slmdbillno = r_gentemp.repayid
+             And slmdrowno = r_gentemp.repayrow;
+        End Loop;
+        Close cur_temp;
+        --处理借款单标志
+        Select Count(*)
+          Into lcount
+          From SUPLOANMANAGERDETAIL
+         Where slmdbillno = ldjbh
+           And slmdrepaybalance > 0;
+        If lcount = 0 Then
+          Update SUPLOANMANAGERhead ta
+             Set ta.slmhflag = 'P'
+           Where ta.slmhbillno = ldjbh;
+        End If;
+
+        Delete From supgenrepay_temp Where seq = p_seq;
+      End If;
+    Else
+      raise_application_error(-20007, '参数错误');
+    End If;
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End Sp_gen_outlayorrepay;
+
+  Procedure sp_suprepay(p_billno In Char,
+                        p_person In Char,
+                        p_billid In Char,
+                        p_djlb   In Char) Is
+    bh             SUPLOANMANAGERHEAD%Rowtype;
+    CurrentMkt     ManaFrame.mfcode%Type;
+    CurrentMktType Char(1);
+    lcnt           Number;
+    ldjbh          Varchar2(20);
+    i              Number;
+    lbalance       Number;
+    Cursor cur_repay Is
+      Select slmdbillno,
+             slmdrowno,
+             slmddate,
+             slmdisrepay,
+             slmdmoney,
+             slmdchr1,
+             slmdchr2
+        From SUPLOANMANAGERDETAIL
+       Where slmdbillno = p_billno
+       Order By slmdchr1;
+    r_cur cur_repay%Rowtype;
+
+  Begin
+    CurrentMkt     := fGetSysPlace;
+    CurrentMktType := FGetSysType(CurrentMkt);
+    /*if CurrentMktType not in (MF_Mkt) then
+      raise_application_error(errcode,p_billno||'->0 操作地点错误！');
+    end if;*/
+
+    Begin
+      Select *
+        Into bh
+        From SUPLOANMANAGERHEAD
+       Where slmhbillno = p_billno
+         For Update;
+    Exception
+      When no_data_found Then
+        raise_application_error(-20007, p_billno || '->1 单据不存在！');
+    End;
+    If bh.slmhtype <> p_djlb Then
+      raise_application_error(-20007, p_billno || '->2 单据类别不一致！');
+    End If;
+    If bh.slmhFlag In ('Y', 'P') Then
+      raise_application_error(-20007, p_billno || '->3 单据已经审核！');
+    End If;
+    i := 0;
+    Open cur_repay;
+    Loop
+      Fetch cur_repay
+        Into r_cur;
+      Exit When cur_repay%Notfound Or cur_repay%Notfound Is Null;
+      i := i + 1;
+      If i = 1 Then
+        ldjbh := r_cur.slmdchr1;
+      Elsif ldjbh <> r_cur.slmdchr1 Then
+        --处理借款单标志
+        Select Count(*)
+          Into lcnt
+          From SUPLOANMANAGERDETAIL
+         Where slmdbillno = ldjbh
+           And slmdrepaybalance > 0;
+        If lcnt = 0 Then
+          Update SUPLOANMANAGERhead ta
+             Set ta.slmhflag = 'P'
+           Where ta.slmhbillno = ldjbh;
+        End If;
+      End If;
+      ldjbh := r_cur.slmdchr1;
+      --扣减借款单金额
+      Select slmdrepaybalance
+        Into lbalance
+        From SUPLOANMANAGERDETAIL
+       Where slmdbillno = r_cur.slmdchr1
+         And slmdrowno = r_cur.slmdchr2;
+      If lbalance < r_cur.slmdmoney Then
+        raise_application_error(-20007,
+                                p_billno || '借款单:' || r_cur.slmdchr1 || ' ' ||
+                                r_cur.slmdchr2 || ' 余额不足!');
+      End If;
+      Update SUPLOANMANAGERDETAIL ta
+         Set ta.slmdlastmoney    = r_cur.slmdmoney,
+             ta.slmdrepaymoney   = ta.slmdrepaymoney + r_cur.slmdmoney,
+             ta.slmdrepaybalance = ta.slmdrepaybalance - r_cur.slmdmoney
+       Where slmdbillno = r_cur.slmdchr1
+         And slmdrowno = r_cur.slmdchr2;
+    End Loop;
+    Close cur_repay;
+    --处理借款单标志
+    Select Count(*)
+      Into lcnt
+      From SUPLOANMANAGERDETAIL
+     Where slmdbillno = ldjbh
+       And slmdrepaybalance > 0;
+    If lcnt = 0 Then
+      Update SUPLOANMANAGERhead ta
+         Set ta.slmhflag = 'P'
+       Where ta.slmhbillno = ldjbh;
+    End If;
+
+    Update SUPLOANMANAGERHEAD
+       Set slmhFlag = 'Y', auditor = p_person, auditdate = Sysdate
+     Where slmhBillno = p_billno;
+
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+
+  End sp_suprepay;
+
+  Procedure sp_loanmanager(p_billno In Char,
+                           p_person In Char,
+                           p_billid In Char,
+                           p_djlb   In Char) Is
+    bh             SUPLOANMANAGERHEAD%Rowtype;
+    bd             SUPLOANMANAGERDETAIL%Rowtype;
+    CurrentMkt     ManaFrame.mfcode%Type;
+    CurrentMktType Char(1);
+    lcnt           Number;
+  Begin
+    CurrentMkt     := fGetSysPlace;
+    CurrentMktType := FGetSysType(CurrentMkt);
+    /*if CurrentMktType not in (MF_Mkt) then
+      raise_application_error(errcode,p_billno||'->0 操作地点错误！');
+    end if;*/
+
+    Begin
+      Select *
+        Into bh
+        From SUPLOANMANAGERHEAD
+       Where slmhbillno = p_billno
+         For Update;
+    Exception
+      When no_data_found Then
+        raise_application_error(-20007, p_billno || '->1 单据不存在！');
+    End;
+    If bh.slmhtype <> p_djlb Then
+      raise_application_error(-20007, p_billno || '->2 单据类别不一致！');
+    End If;
+    If bh.slmhFlag In ('Y', 'P') Then
+      raise_application_error(-20007, p_billno || '->3 单据已经审核！');
+    End If;
+
+    /*If p_djlb In (Typesupsetcharge, Typemallsetcharge) Then
+      /*and CurrentMktType = MF_Mkt
+      Null;
+    Else
+      raise_application_error(errcode, p_billno || '->6 参数错误！');
+    End If;*/
+
+    Update SUPLOANMANAGERHEAD
+       Set slmhFlag = 'Y', auditor = p_person, auditdate = Sysdate
+     Where slmhBillno = p_billno;
+
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+
+  End sp_loanmanager;
+End;
+

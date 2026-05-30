@@ -1,0 +1,17 @@
+CREATE OR REPLACE PACKAGE BODY JAVA_GETSYJRANGE
+AS
+  -- 返回结果集为
+    -- 柜组号
+  PROCEDURE GETSYJRANGE
+    (
+            vsyjh in VARCHAR2,
+      rc OUT RETCURSOR
+    )
+  AS
+  BEGIN
+    OPEN rc FOR
+      select sgrmfid from syjgrange where sgrcode = (select syjgroup from syjmain where syjid=vsyjh and syjists <> 'Y');
+  END GETSYJRANGE;
+
+END JAVA_GETSYJRANGE;
+

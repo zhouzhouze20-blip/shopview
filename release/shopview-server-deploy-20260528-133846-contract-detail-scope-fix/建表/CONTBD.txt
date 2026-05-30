@@ -1,0 +1,156 @@
+-- Create table
+create table DBUSRPUB.CONTBD
+(
+  cbcontno     VARCHAR2(20) not null,
+  cbseqno      NUMBER not null,
+  cbmkt        VARCHAR2(20) not null,
+  cbmfid       VARCHAR2(20) not null,
+  cbeffdate    DATE not null,
+  cblapdate    DATE not null,
+  cbflag       CHAR(1) not null,
+  cbsum        NUMBER(14,2),
+  cbrate       NUMBER(5,4),
+  cbsum1       NUMBER(14,2),
+  cbrate1      NUMBER(5,4),
+  cbsum2       NUMBER(14,2),
+  cbrate2      NUMBER(5,4),
+  cbsum3       NUMBER(14,2),
+  cbrate3      NUMBER(5,4),
+  cbsum4       NUMBER(14,2),
+  cbrate4      NUMBER(5,4),
+  cbsum5       NUMBER(14,2),
+  cbrate5      NUMBER(5,4),
+  cbsum6       NUMBER(14,2),
+  cbrate6      NUMBER(5,4),
+  cbprofit     NUMBER(14,2),
+  cbisrunbd    CHAR(1),
+  cbisrunqs    CHAR(1),
+  cbisbd       CHAR(1),
+  cbisqs       CHAR(1),
+  cbsettype    VARCHAR2(10),
+  cbrentunit   VARCHAR2(3),
+  cbmanaunit   VARCHAR2(3),
+  cbpopunit    VARCHAR2(3),
+  cbrentprice  NUMBER,
+  cbnamaprice  NUMBER,
+  cbpopprice   NUMBER,
+  cbiscalcrent CHAR(1),
+  cbmode1      CHAR(1),
+  cbmode2      CHAR(1),
+  cbmode3      CHAR(1),
+  cbmode4      CHAR(1),
+  cbmode5      CHAR(1),
+  cbmode6      CHAR(1),
+  cbsalekh     NUMBER(14,2),
+  cbsalerate   NUMBER(5,4)
+)
+tablespace DATA_SPC
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );
+-- Add comments to the table 
+comment on table DBUSRPUB.CONTBD
+  is '合同保底超额';
+-- Add comments to the columns 
+comment on column DBUSRPUB.CONTBD.cbcontno
+  is '合同单号';
+comment on column DBUSRPUB.CONTBD.cbseqno
+  is '序号';
+comment on column DBUSRPUB.CONTBD.cbmkt
+  is '门店';
+comment on column DBUSRPUB.CONTBD.cbmfid
+  is '柜组';
+comment on column DBUSRPUB.CONTBD.cbeffdate
+  is '生效日期';
+comment on column DBUSRPUB.CONTBD.cblapdate
+  is '失效日期';
+comment on column DBUSRPUB.CONTBD.cbsum
+  is '保底额';
+comment on column DBUSRPUB.CONTBD.cbrate
+  is '比率';
+comment on column DBUSRPUB.CONTBD.cbsum1
+  is '超额1';
+comment on column DBUSRPUB.CONTBD.cbrate1
+  is '比率1';
+comment on column DBUSRPUB.CONTBD.cbsum2
+  is '超额2';
+comment on column DBUSRPUB.CONTBD.cbrate2
+  is '比率2';
+comment on column DBUSRPUB.CONTBD.cbsum3
+  is '超额3';
+comment on column DBUSRPUB.CONTBD.cbrate3
+  is '比率3';
+comment on column DBUSRPUB.CONTBD.cbsum4
+  is '超额4';
+comment on column DBUSRPUB.CONTBD.cbrate4
+  is '比率4';
+comment on column DBUSRPUB.CONTBD.cbsum5
+  is '超额5';
+comment on column DBUSRPUB.CONTBD.cbrate5
+  is '比率5';
+comment on column DBUSRPUB.CONTBD.cbsum6
+  is '特卖超额';
+comment on column DBUSRPUB.CONTBD.cbrate6
+  is '特卖比率';
+comment on column DBUSRPUB.CONTBD.cbprofit
+  is '保底毛利';
+comment on column DBUSRPUB.CONTBD.cbisrunbd
+  is '是否计算保底';
+comment on column DBUSRPUB.CONTBD.cbisrunqs
+  is '是否计算清算';
+comment on column DBUSRPUB.CONTBD.cbisbd
+  is '是否计算过保底';
+comment on column DBUSRPUB.CONTBD.cbisqs
+  is '是否计算过清算';
+comment on column DBUSRPUB.CONTBD.cbsettype
+  is '结算方式(购物中心)';
+comment on column DBUSRPUB.CONTBD.cbrentunit
+  is '租金单位';
+comment on column DBUSRPUB.CONTBD.cbmanaunit
+  is '管理费单位';
+comment on column DBUSRPUB.CONTBD.cbpopunit
+  is '推广费岗位';
+comment on column DBUSRPUB.CONTBD.cbrentprice
+  is '租金单价';
+comment on column DBUSRPUB.CONTBD.cbnamaprice
+  is '管理费单价';
+comment on column DBUSRPUB.CONTBD.cbpopprice
+  is '推广费单价';
+comment on column DBUSRPUB.CONTBD.cbiscalcrent
+  is '是否计算租金';
+comment on column DBUSRPUB.CONTBD.cbmode1
+  is '超额方式1,1:全额2:差额';
+comment on column DBUSRPUB.CONTBD.cbmode2
+  is '超额方式2';
+comment on column DBUSRPUB.CONTBD.cbmode3
+  is '超额方式3';
+comment on column DBUSRPUB.CONTBD.cbmode4
+  is '超额方式4';
+comment on column DBUSRPUB.CONTBD.cbmode5
+  is '超额方式5';
+comment on column DBUSRPUB.CONTBD.cbmode6
+  is '超额方式6';
+comment on column DBUSRPUB.CONTBD.cbsalekh
+  is '销售考核指标';
+-- Create/Recreate primary, unique and foreign key constraints 
+alter table DBUSRPUB.CONTBD
+  add constraint PK_CONTBD primary key (CBCONTNO, CBSEQNO)
+  using index 
+  tablespace INDX_SPC
+  pctfree 5
+  initrans 2
+  maxtrans 255
+  storage
+  (
+    initial 1M
+    next 1M
+    minextents 1
+    maxextents unlimited
+  );

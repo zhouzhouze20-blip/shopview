@@ -1,0 +1,183 @@
+CREATE OR REPLACE PACKAGE BODY BSUPSETCHARGESET Is
+  vbdate       Varchar(20);
+  vedate       Varchar(20);
+  CurrentPlace Varchar2(20) := fGetPrivatePara('1N');
+  --审核
+  Procedure Approve(p_billno In Char,
+                    p_person In Char,
+                    p_billid In Char,
+                    p_djlb   In Char) Is
+    bh             SUPSETCHARGEHEAD%Rowtype;
+    bd             SUPSETCHARGEDETAIL%Rowtype;
+    l_ssc          supsetcharge%Rowtype;
+    CurrentMkt     ManaFrame.mfcode%Type;
+    CurrentMktType Char(1);
+    lcnt           Number;
+    lmsg           Varchar2(4000);
+    row_cont       ContMain%Rowtype;
+    v_trans_error_msg VARCHAR2(512);
+
+  Begin
+    CurrentMkt     := fGetSysPlace;
+    CurrentMktType := FGetSysType(CurrentMkt);
+    /*if CurrentMktType not in (MF_Mkt) then
+      raise_application_error(errcode,p_billno||'->0 操作地点错误！');
+    end if;*/
+  
+    Begin
+      Select * Into bh From SUPSETCHARGEHEAD Where sschbillno = p_billno For Update;
+    Exception
+      When no_data_found Then
+        raise_application_error(errcode, p_billno || '->1 单据不存在！');
+    End;
+    If bh.sschtype <> p_djlb Then
+      raise_application_error(errcode, p_billno || '->2 单据类别不一致！');
+    End If;
+    If bh.sschFlag In (FlagApproved, FlagCanceled) Then
+      raise_application_error(errcode, p_billno || '->3 单据已经审核！');
+    End If;
+  
+    If p_djlb In (Typesupsetcharge, Typemallsetcharge)  Then /*and CurrentMktType = MF_Mkt*/
+      Null;
+    Else
+      raise_application_error(errcode, p_billno || '->6 参数错误！');
+    End If;
+    lmsg:='';
+    For vr In (Select * From supsetchargedetail Where sscdbillno = p_billno) Loop
+    
+      Begin
+        Select * Into row_cont From ContMain Where CmContNo = vr.sscdcontno;
+      Exception
+        When Others Then
+          lmsg:=lmsg ||'--' ||p_billno || '->C1 找不到对应的合同【' || vr.sscdcontno || '】！';
+           goto next; 
+          --raise_application_error(errcode,
+                                 -- p_billno || '->C1 找不到对应的合同【' || vr.sscdcontno || '】！');
+      End;
+      If Row_Cont.CmjsMkt = '0' Then
+        If Not fCurrentPlaceIshq Then
+          lmsg:=lmsg ||'--' ||p_billno || '->C2 操作地点错误，合同【' || vr.sscdcontno || '】结算位置在业务中心！';
+          goto next; 
+         --Raise_application_error(errcode, p_billno || '->C2 操作地点错误，合同【'|| vr.sscdcontno ||'】结算位置在业务中心！');
+        End If;
+      Else
+        If fCurrentPlaceishq Or Not fCurrentPlaceIsMkt(Row_Cont.CmjsMkt) Or CurrentMkt <> Row_Cont.CmjsMkt Then
+          lmsg:=lmsg ||'--' ||p_billno || '->C2 操作地点错误，合同【' || vr.sscdcontno || '】结算位置在【'||Row_Cont.CmjsMkt||'】门店！';
+          goto next; 
+         --Raise_application_error(errcode, p_billno || '->C2 操作地点错误，合同【'|| vr.sscdcontno ||'】结算位置在【'||Row_Cont.CmjsMkt||'】门店！');
+        End If;
+      End If;
+    
+      sp_billseq('G01', l_ssc.sscbillno, 'N');
+      l_ssc.sscrowno  := 1;
+      l_ssc.sscdjbh   := l_ssc.sscbillno;
+      l_ssc.ssctype   := '1';
+      l_ssc.sscflag   := 'N';
+      l_ssc.sscsupid  := vr.sscdsupid;
+      l_ssc.sscwmid   := vr.sscdwmid;
+      l_ssc.sscmarket := fgetmframefcode(vr.sscdmfid);
+      l_ssc.sscmfid   := vr.sscdmfid;
+      l_ssc.sscdate   := fgeterpdate;
+      l_ssc.sscfsdate := vr.sscdfsdate;
+      l_ssc.sscfsmon  := to_char(vr.sscdfsdate, 'YYYYMM');
+      l_ssc.sscid     := vr.sscdid;
+      l_ssc.sscname   := vr.sscdchr1;
+      l_ssc.sscmoney  := vr.sscdmoney;
+      l_ssc.sscjsno   := '';
+      l_ssc.ssccontno := vr.sscdcontno;
+      l_ssc.inputor   := p_person;
+      l_ssc.inputdate := Sysdate;
+      -- 记录是否在 结算中扣除
+      l_ssc.person1 := vr.sscdiszk;
+      --记录返还日期 --add by niexc 2009-08-19
+      l_ssc.SSCRETDATE := vr.sscdfhdate;
+      --根据明细费用项目确定是否返回 add liulei 2009-10-12
+      l_ssc.sscret := nvl(vr.sscdchr3, bh.person3);
+      l_ssc.SSCRETTYPE := '1'; --给默认值
+      -- l_ssc.sscret  :=  bh.person3;
+      --END BY LIULEI
+      --end by niexc 
+      /*If vr.sscdiszk = 'Y' Then
+        l_ssc.sscmemo := '帐扣费用';
+      Else
+        l_ssc.sscmemo := '非帐扣费用';
+      End If;*/
+      l_ssc.sscmemo       := bh.sschmemo;
+      l_ssc.person2       := vr.sscdchr2;
+      l_ssc.sscsetpl      := fgetmframefcode(vr.sscdmfid);
+      l_ssc.sscgdmoney    := 0;
+      l_ssc.sscmoneyupper := fmoney2chn(vr.sscdmoney);
+      l_ssc.sscvc3        := p_BillNo;
+      If NVL(Vr.Sscdmoney,0) <> 0 Then --批量费用单明细允许输入金额为0的资料,但费用为0的资料不生成费用单 =  =P~ 2015.08.10
+        begin
+        Insert Into Supsetcharge Values L_Ssc;
+        Settlesup.Auditsupcharge(L_Ssc.Sscbillno, L_Ssc.Sscrowno, P_Person);
+        Exception
+        When Others Then
+        -- Rollback;
+        v_trans_error_msg:=SUBSTR(SQLERRM,1,512);
+         lmsg:=lmsg||'--'||v_trans_error_msg;
+        end;
+       End If;
+      <<next>> 
+       null; 
+    End Loop;
+    
+    Update SUPSETCHARGEHEAD
+       Set sschFlag = FlagApproved, auditor = p_person, auditdate = Sysdate
+     Where sschBillno = p_billno;
+    if lmsg is not null then
+       Raise_application_error(errcode,lmsg);
+    end if;
+    Commit;
+  Exception
+    When Others Then
+      Rollback;
+      Raise;
+  End Approve;
+
+/*procedure Cancel(p_billno in char,p_person in char,p_billid in char,p_djlb in char) is
+    bh BSUPSETCHARGEHEAD%rowtype;
+    bd BSUPSETCHARGEDETAIL%rowtype;
+    CurrentDate    date;
+    CurrentMkt     ManaFrame.mfcode%type;
+    CurrentMktType char(1);
+
+  begin
+
+    CurrentDate    := fGetErpDate;
+    CurrentMkt     := fGetSysPlace;
+    CurrentMktType := FGetSysType(CurrentMkt);
+ \*   begin
+      select * into bh
+      from BSUPSETCHARGEHEAD where sihbillno=p_billno
+      for update;
+    exception when no_data_found then
+      raise_application_error(errcode,p_billno||'->14 单据不存在！');
+    end;
+    if bh.sihdjlb<>p_djlb then
+      raise_application_error(errcode,p_billno||'->15 单据类别不一致！');
+    end if;
+    if bh.sihFlag <> FlagApproved then
+      raise_application_error(errcode,p_billno||'->17 只有已认证的单据才允许取消！');
+    end if;
+    if bh.sihFlag in (FlagCanceled) then
+      raise_application_error(errcode,p_billno||'->18 单据已取消！');
+    end if;
+    commit;*\
+  exception when others then
+    rollback;
+    raise;
+  end Cancel;*/
+-- +-----------------------------------------------+
+-- |                   通知取消                    |
+-- +-----------------------------------------------+
+/*procedure CmdCancel(p_billno in char,p_person in char) is
+  begin
+   NULL;
+    \*Update BSUPSETCHARGEHEAD
+    set sihFlag = FlagCanceled
+    where sihBillno = p_billno and sihFlag in (FlagApproved);*\
+  end CmdCancel;*/
+
+End BSUPSETCHARGESET;

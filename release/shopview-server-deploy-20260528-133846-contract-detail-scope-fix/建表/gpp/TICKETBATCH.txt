@@ -1,0 +1,271 @@
+create or replace package body TICKETBATCH is
+  ib_isfouceseqno boolean;
+  function IsNull(p_str in char) return boolean is
+  begin
+    if ltrim(rtrim(p_str)) is null or ltrim(rtrim(p_str))='' then
+      return true;
+    else
+      return false;
+    end if;
+  End; 
+   
+  --记录程序轨迹
+  procedure Trace (vsub in varchar2,ex in ex_type) is
+  Begin
+    null;
+  End;
+  
+  --清空参数
+  procedure Flush(p_ex in out ex_interface) is
+  begin
+      p_ex.efbvipno  := null; 
+      p_ex.efbopertype  := null;  
+      p_ex.efbfaqje  := 0;  
+      p_ex.efbfbqje  := 0;  
+      p_ex.efbflqje  := 0;  
+      p_ex.efbstartdate  := null;  
+      p_ex.efbenddate  := null;  
+      p_ex.efbmemo  := null;  
+      p_ex.efbzpno  := null;  
+      p_ex.efbtpid  := null;  
+      p_ex.efbtransno  := null;  
+      p_ex.efbtype  := null;  
+      p_ex.efbmz  := null;  
+      p_ex.efbareatype  := null;  
+      p_ex.efbjygs  := null;  
+      p_ex.efbfqmkt  := null;  
+      p_ex.efbfqrule  := null;  
+      p_ex.efbrulepj  := null;  
+      p_ex.efbsource  := null;  
+      p_ex.efbseqno  := null;  
+      p_ex.efbcardzy  := null;  
+      p_ex.efbmkt  := null;  
+      p_ex.efboper  := null;  
+      p_ex.efbsyjid  := null;  
+      p_ex.efbinvno  := null;  
+      p_ex.efbsyjtrace  := null;  
+      p_ex.efblqchg  := null; 
+  End;
+  --初始化接口集
+  --raise_application_error
+  Procedure init(ex in out ex_type) is
+    row_fq tktcardfqtotal%rowtype;
+  Begin
+    ib_isfouceseqno := FALSE;
+    If isnull(ex.efbvipno) or isnull(ex.EFBOPERTYPE) or isnull(ex.EFBCARDZY)
+       or isnull(ex.efbmkt) Then
+       raise_application_error(errcode,ex.efbvipno||'接口参数必须完整！');
+    End If;
+    If ex.efbopertype not in (OT_ADD,OT_ADJ,OT_DEC) Then
+       raise_application_error(errcode,ex.efbvipno||'不支持的处理类型！');
+    End If;
+    If isnull(ex.efbseqno) Then ex.efbseqno := 0; End If; --券批次
+    --指定券批次
+    If ex.efbseqno > 0 Then --指定券批次号 ,以券批次信息为准
+       ib_isfouceseqno := TRUE;
+       select * into row_fq from tktcardfqtotal  where tcftseqno = ex.efbseqno;
+       If ex.efbvipno <> row_fq.tcftvipno Then
+          raise_application_error(errcode,ex.efbvipno||'卡号与批次卡号不符！');
+          
+       End If;
+       ex.efbstartdate := row_fq.tcftstartdate;
+       If ex.efbopertype = OT_ADJ Then
+          ex.efbfaqje     := nvl(row_fq.tcftfqje,0);
+          --efbmemo 外部传入
+       Else
+           --efbfqje  外部传入
+           ex.efbenddate := row_fq.tcftenddate;
+           ex.efbmemo := row_fq.tcftmemo;
+       End If; 
+       ex.efbzpno := row_fq.tcftzpno;
+       ex.efbtpid := row_fq.tcftfstpid;
+       ex.efbtransno  := row_fq.tcftransno;
+       ex.efbtype     := row_fq.tcfttype;
+       ex.efbmz       := row_fq.tcfttype;
+       ex.efbareatype := row_fq.tcftmkt;
+       ex.efbjygs     := row_fq.tcftjygs;
+       ex.efbfqmkt    := row_fq.tcftfqmkt;
+       ex.efbfqrule   := row_fq.tcftfqrule;    
+       ex.efbrulepj   := row_fq.tcftrulepj;
+       ex.efbsource   := row_fq.tcftsource;
+       --ex.efbcardzy 外部传入
+       --efbmkt  外部传入
+       --efboper 外部传入
+       --efbsyjid  外部传入
+       --efbinvno 外部传入
+       --efbsyjtrace 外部传入
+       --efblqchg 外部传入
+    Else  --不指定券批次号，以接口信息为准
+      null;
+    End If;
+    If isnull(ex.efbfaqje) Then ex.efbfaqje := 0; End If;
+    If isnull(ex.efbfbqje) Then ex.efbfaqje := 0; End If;
+    If isnull(ex.efbflqje) Then ex.efbfaqje := 0; End If;
+    If ex.efbfaqje = 0 and ex.efbfbqje = 0 and ex.efbflqje = 0 and ex.efbopertype <> OT_ADJ Then
+       raise_application_error(errcode,ex.efbvipno||'券金额为0！');
+    End If;
+      
+  End;
+  procedure inslog(p_log in tktcardfqlog%rowtype) is
+  Begin
+     insert into tktcardfqlog (tcflseqno, --序号 
+                  tcflvipno, --vip卡号 
+                  tcflstartdate, --返券有效期 
+                  tcflenddate, --返券有效期 
+                  tcfldate, --发生日期 
+                  tcflzy, --摘要 
+                  tcflpopid, --返券促销活动编码 
+                  tcflpoprule, --返券规则  
+                  tcflmoney, --发生金额 
+                  tcflye, --余额 
+                  tcfloper, --操作员 
+                  tcflsyjid, --收银机号 
+                  tcflinvno, --小票号 
+                  tcflmemo, --备注(冲正日期) 
+                  tcflsyjtrace,  --收银机消费序号 
+                  tcfljetype, --金额类型('1'-a券,'2'-b券,'3'-返利券)
+                  tcflvipseq,  --vip序号(tktcardfqtotal.tcftseqno) 
+                  tcflmkt, --发生门店号
+                  tcfljygs,  --经营公司 
+                  tcflsource, --券来源1:销售返券 2:买券 3:银行追送
+                  tcfltransno, --事务号 
+                  tcfltype, --1:vip电子券,2:手工券 
+                  tcflqchg, --手工券号是否已指定 
+                  tcflchr1, --返券门店 
+                  tcflchr2, --电子卡会员类型 
+                  tcflchr3, --备注
+                  tcflnum1, --备注
+                  tcflnum2, --备注
+                  tcflnum3  --备注
+                  )
+                 values
+                 (seq_tktcardfqlog.NEXTVAL, --序号 
+                  p_log.tcflvipno, --vip卡号 
+                  p_log.tcflstartdate, --返券有效期 
+                  p_log.tcflenddate, --返券有效期 
+                  p_log.tcfldate, --发生日期 
+                  p_log.tcflzy, --摘要 
+                  p_log.tcflpopid, --返券促销活动编码 
+                  p_log.tcflpoprule, --返券规则  
+                  p_log.tcflmoney, --发生金额 
+                  p_log.tcflye, --余额 
+                  p_log.tcfloper, --操作员 
+                  p_log.tcflsyjid, --收银机号 
+                  p_log.tcflinvno, --小票号 
+                  p_log.tcflmemo, --备注(冲正日期) 
+                  p_log.tcflsyjtrace,  --收银机消费序号 
+                  p_log.tcfljetype, --券种(A～Z券)
+                  p_log.tcflvipseq,  --vip序号(tktcardfqtotal.tcftseqno) 
+                  p_log.tcflmkt, --发生门店号
+                  p_log.tcfljygs,  --经营公司 
+                  p_log.tcflsource, --券来源1:销售返券 2:买券 3:银行追送
+                  p_log.tcfltransno, --事务号 
+                  p_log.tcfltype, --1:vip电子券,2:手工券 
+                  p_log.tcflqchg, --手工券号是否已指定 
+                  p_log.tcflchr1, --返券门店 
+                  p_log.tcflchr2, --电子卡会员类型 
+                  p_log.tcflchr3, --备注
+                  p_log.tcflnum1, --备注
+                  p_log.tcflnum2, --备注
+                  p_log.tcflnum3  --备注
+                  );
+  End;
+  
+ --  +----------------------------------------+
+ --  |            指定批次减少库存            |
+ --  +----------------------------------------+
+  procedure DecreaseBatch(p_ex in out ex_type) is
+  Begin
+     trace('DecreaseBatch',p_ex);
+     null;
+  End;
+ --  +----------------------------------------+
+ --  |            指定批次减少库存            |
+ --  +----------------------------------------+
+  procedure IncreaseBatch(p_ex in out ex_type) is
+  Begin
+     trace('IncreaseBatch',p_ex);
+     null;
+  End;
+  procedure AdjBatch(p_ex in out ex_type) is
+     p_log tktcardfqlog%rowtype;
+  Begin
+     trace('AdjBatch',p_ex);
+     UPDATE tktcardfqtotal SET tcftenddate = p_ex.efbenddate WHERE tcftseqno = p_ex.efbseqno;
+
+      p_log.tcflvipno := p_ex.efbvipno; --vip卡号 
+      p_log.tcflstartdate := p_ex.efbstartdate; --返券有效期 
+      p_log.tcflenddate := p_ex.efbenddate; --返券有效期 
+      p_log.tcfldate := sysdate; --发生日期 
+      p_log.tcflzy  := p_ex.efbcardzy; --摘要 
+      p_log.tcflpopid := p_ex.efbtpid; --返券促销活动编码 
+      p_log.tcflpoprule := p_ex.efbfqrule; --返券规则  
+      p_log.tcfloper := p_ex.efboper; --操作员 
+      p_log.tcflsyjid := p_ex.efbsyjid; --收银机号 
+      p_log.tcflinvno := p_ex.efbinvno; --小票号 
+      p_log.tcflmemo  := p_ex.efbmemo; --备注(冲正日期) 
+      p_log.tcflsyjtrace := p_ex.efbsyjtrace;  --收银机消费序号 
+      p_log.tcflvipseq := p_ex.efbseqno;  --vip序号(tktcardfqtotal.tcftseqno) 
+      p_log.tcflmkt := p_ex.efbmkt; --发生门店号
+      p_log.tcfljygs := p_ex.efbjygs;  --经营公司 
+      p_log.tcflsource := p_ex.efbsource; --券来源1:销售返券 2:买券 3:银行追送
+      p_log.tcfltransno := p_ex.efbtransno; --事务号 
+      p_log.tcfltype := p_ex.efbtype; --1:vip电子券,2:手工券 
+      p_log.tcflqchg := p_ex.efblqchg; --手工券号是否已指定 
+      p_log.tcflchr1 := p_ex.efbfqmkt; --返券门店 
+      p_log.tcflchr2 := '';--电子卡会员类型 --暂无用
+      
+      If p_ex.efbfaqje <> 0 Then
+         p_log.tcflmoney := p_ex.efbfaqje;
+         p_log.tcflye    := p_ex.efbfaqje;
+         --p_log.tcfljetype := '1';
+         p_log.tcfljetype := p_ex.EFBQTYPE;
+         inslog(p_log);
+      End If; 
+--Comment By Lzhao 2009.04.07
+/*      If p_ex.efbfbqje <> 0 Then
+         p_log.tcflmoney := p_ex.efbfbqje;
+         p_log.tcflye    := p_ex.efbfbqje;
+         p_log.tcfljetype := '2';
+         inslog(p_log);
+      End If; 
+      If p_ex.efbflqje <> 0 Then
+         p_log.tcflmoney := p_ex.efbflqje;
+         p_log.tcflye    := p_ex.efbflqje;
+         p_log.tcfljetype := '3';
+         inslog(p_log);
+      End If; */
+  End;
+  
+  procedure NewBatch(p_ex in out ex_type) is
+  Begin
+     trace('NewBatch',p_ex);
+     null;
+  End;
+   
+  Procedure submit(p_row in out ex_interface) is
+  ex  ex_type;
+  Begin
+     ex := p_row;
+     trace('submit',ex);
+     init(ex);       
+     If ib_isfouceseqno = True  Then --指定批次增加
+        If ex.efbopertype = OT_DEC Then
+           DecreaseBatch(ex);
+        ElsIf ex.efbopertype = OT_ADD THEN
+           IncreaseBatch(ex);
+        ElSIF ex.efbopertype = OT_ADJ THEN
+           AdjBatch(ex);
+        END IF;
+        RETURN;
+     End If;
+     
+     p_row := ex;
+  Exception When Others Then
+     Rollback;
+     raise;     
+  End;  
+begin
+  -- Initialization
+  null;
+end TICKETBATCH;
