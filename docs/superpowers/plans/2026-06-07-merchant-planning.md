@@ -409,9 +409,10 @@ def preview_calculation(
 
 - [ ] **Step 3: Verify helper manually**
 
-Run:
+Run from `python_app` so the existing absolute imports resolve:
 
 ```bash
+cd python_app
 python3 - <<'PY'
 from decimal import Decimal
 from schemas.schemas import MerchantCalculationInput
