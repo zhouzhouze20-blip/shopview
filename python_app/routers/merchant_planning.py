@@ -16,7 +16,7 @@ from models.models import (
     User,
 )
 from routers.auth import get_current_user
-from routers.authz import require_permission
+from routers.authz import load_business_scope, require_permission, scope_allows_business
 from schemas.schemas import (
     MerchantCalculationInput,
     MerchantCalculationResult,
@@ -108,7 +108,68 @@ def _model_dump(model, **kwargs) -> dict:
     return model.dict(**kwargs)
 
 
-def _apply_calculation(db: Session, opportunity: MerchantOpportunity, payload: MerchantCalculationInput) -> None:
+def _table_exists(db: Session, table_name: str) -> bool:
+    return bool(db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table_name}).scalar())
+
+
+def _candidate_sql(has_revenue_summary: bool) -> str:
+    revenue_cte = """
+        revenue_summary AS (
+            SELECT
+              unit_id,
+              COALESCE(SUM(total_amount), 0) AS period_revenue
+            FROM unit_daily_revenue_summary
+            GROUP BY unit_id
+        ),
+    """ if has_revenue_summary else ""
+    revenue_join = "LEFT JOIN revenue_summary rs ON rs.unit_id = bu.id" if has_revenue_summary else ""
+    period_revenue = "COALESCE(rs.period_revenue, 0)" if has_revenue_summary else "0::numeric"
+    return f"""
+        WITH
+        {revenue_cte}
+        active_binding AS (
+            SELECT *
+            FROM (
+                SELECT
+                  bub.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY bub.shop_unit_id
+                    ORDER BY bub.is_primary DESC, bub.end_date DESC NULLS LAST, bub.id DESC
+                  ) AS rn
+                FROM business_unit_binding bub
+                WHERE bub.status = 'ACTIVE'
+            ) ranked
+            WHERE rn = 1
+        )
+        SELECT
+          bu.id AS unit_id,
+          bu.unit_code,
+          bu.floor_id,
+          f.store_code AS store_id,
+          bu.manual_area AS unit_area,
+          {period_revenue} AS period_revenue,
+          ab.contract_id AS current_contract_id,
+          ab.brand_id AS current_brand,
+          ab.supplier_id AS current_supplier,
+          ab.counter_group_id AS current_group_id,
+          ab.end_date AS contract_end_date
+        FROM business_units bu
+        LEFT JOIN floors f ON f.id = bu.floor_id
+        {revenue_join}
+        LEFT JOIN active_binding ab ON ab.shop_unit_id = bu.id
+        WHERE (:store_id IS NULL OR f.store_code = :store_id)
+          AND (:floor_id IS NULL OR bu.floor_id = :floor_id)
+        ORDER BY bu.floor_id, bu.unit_code
+        LIMIT 500
+    """
+
+
+def _apply_calculation(
+    db: Session,
+    opportunity: MerchantOpportunity,
+    payload: MerchantCalculationInput,
+    created_by: int | None,
+) -> None:
     calculation_data = _model_dump(payload)
     calculation_data["current_annual_revenue"] = opportunity.current_annual_revenue
     calculation_data["unit_area"] = calculation_data.get("unit_area") or opportunity.unit_area
@@ -134,7 +195,7 @@ def _apply_calculation(db: Session, opportunity: MerchantOpportunity, payload: M
             estimated_annual_revenue=result.estimated_annual_revenue,
             estimated_lift_amount=result.estimated_lift_amount,
             calculation_snapshot=result.snapshot,
-            created_by=getattr(opportunity, "created_by", None),
+            created_by=created_by,
         )
     )
 
@@ -182,7 +243,7 @@ def create_opportunity(
     db.add(opportunity)
     db.flush()
     if payload.calculation:
-        _apply_calculation(db, opportunity, payload.calculation)
+        _apply_calculation(db, opportunity, payload.calculation, current_user.user_id)
     db.commit()
     db.refresh(opportunity)
     return opportunity
@@ -203,7 +264,7 @@ def update_opportunity(
     for key, value in data.items():
         setattr(opportunity, key, value)
     if payload.calculation:
-        _apply_calculation(db, opportunity, payload.calculation)
+        _apply_calculation(db, opportunity, payload.calculation, current_user.user_id)
     db.commit()
     db.refresh(opportunity)
     return opportunity
@@ -235,6 +296,15 @@ def create_project(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "merchant_planning.manage")
+    opportunities = []
+    if payload.opportunity_ids:
+        requested_ids = set(payload.opportunity_ids)
+        opportunities = db.query(MerchantOpportunity).filter(MerchantOpportunity.id.in_(requested_ids)).all()
+        found_ids = {opportunity.id for opportunity in opportunities}
+        if len(found_ids) != len(requested_ids):
+            missing_ids = sorted(requested_ids - found_ids)
+            raise HTTPException(status_code=404, detail=f"Opportunity not found: {missing_ids}")
+
     project = MerchantPlanningProject(
         name=payload.name,
         store_id=payload.store_id,
@@ -246,10 +316,8 @@ def create_project(
     )
     db.add(project)
     db.flush()
-    if payload.opportunity_ids:
-        opportunities = db.query(MerchantOpportunity).filter(MerchantOpportunity.id.in_(payload.opportunity_ids)).all()
-        for opportunity in opportunities:
-            opportunity.project_id = project.id
+    for opportunity in opportunities:
+        opportunity.project_id = project.id
     db.commit()
     return {"id": project.id, "message": "created"}
 
@@ -296,33 +364,20 @@ def list_candidates(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "merchant_planning.view")
-    sql = """
-        SELECT
-          bu.id AS unit_id,
-          bu.unit_code,
-          bu.floor_id,
-          f.store_code AS store_id,
-          bu.manual_area AS unit_area,
-          COALESCE(SUM(uds.total_amount), 0) AS period_revenue,
-          MAX(bub.contract_id) AS current_contract_id,
-          MAX(bub.brand_id) AS current_brand,
-          MAX(bub.end_date) AS contract_end_date
-        FROM business_units bu
-        LEFT JOIN floors f ON f.id = bu.floor_id
-        LEFT JOIN unit_daily_revenue_summary uds ON uds.unit_id = bu.id
-        LEFT JOIN business_unit_binding bub
-          ON bub.shop_unit_id = bu.id
-         AND bub.status = 'ACTIVE'
-        WHERE (:store_id IS NULL OR f.store_code = :store_id)
-          AND (:floor_id IS NULL OR bu.floor_id = :floor_id)
-        GROUP BY bu.id, bu.unit_code, bu.floor_id, f.store_code, bu.manual_area
-        ORDER BY bu.floor_id, bu.unit_code
-        LIMIT 500
-    """
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    sql = _candidate_sql(_table_exists(db, "unit_daily_revenue_summary"))
     rows = db.execute(text(sql), {"store_id": store_id, "floor_id": floor_id}).mappings().all()
     result = []
     for row in rows:
         item = dict(row)
+        if not scope_allows_business(
+            scope,
+            store_id=item["store_id"],
+            group_code=item["current_group_id"],
+            supplier_code=item["current_supplier"],
+            brand_code=item["current_brand"],
+        ):
+            continue
         tag = "VACANT" if item["current_contract_id"] is None else "NORMAL"
         if candidate_type and candidate_type != "ALL" and tag != candidate_type:
             continue
