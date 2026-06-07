@@ -57,6 +57,8 @@ CORE_PERMISSION_DEFINITIONS = [
     ("activity_analysis.view", "查看活动分析", "activity_analysis", "view"),
     ("activity_analysis.star_diamond.view", "查看中心星钻会员", "activity_analysis", "star_diamond_view"),
     ("settlement.view", "查看结算单", "settlement", "view"),
+    ("merchant_planning.view", "查看招商规划", "merchant_planning", "view"),
+    ("merchant_planning.manage", "管理招商规划", "merchant_planning", "manage"),
     ("system.audit_log.view", "查看审计日志", "system", "audit_log_view"),
 ]
 

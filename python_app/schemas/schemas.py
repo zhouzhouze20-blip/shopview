@@ -1105,5 +1105,81 @@ class MerchantCalculationResult(BaseModel):
     snapshot: dict
 
 
+class MerchantOpportunityCreate(BaseModel):
+    project_id: Optional[int] = None
+    source_type: str = "MANUAL"
+    store_id: Optional[str] = None
+    floor_id: Optional[int] = None
+    unit_id: Optional[int] = None
+    unit_code: Optional[str] = None
+    unit_area: Optional[Decimal] = None
+    current_brand: Optional[str] = None
+    current_contract_id: Optional[str] = None
+    current_annual_revenue: Decimal = Decimal("0")
+    target_category: Optional[str] = None
+    target_brand: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    expected_sign_date: Optional[date] = None
+    priority: str = "P2"
+    remark: Optional[str] = None
+    calculation: Optional[MerchantCalculationInput] = None
+
+
+class MerchantOpportunityUpdate(BaseModel):
+    target_category: Optional[str] = None
+    target_brand: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    status: Optional[str] = None
+    expected_sign_date: Optional[date] = None
+    priority: Optional[str] = None
+    remark: Optional[str] = None
+    calculation: Optional[MerchantCalculationInput] = None
+
+
+class MerchantFollowUpCreate(BaseModel):
+    follow_up_type: Optional[str] = None
+    content: str
+    next_action: Optional[str] = None
+    next_follow_up_at: Optional[datetime] = None
+
+
+class MerchantPlanningProjectCreate(BaseModel):
+    name: str
+    store_id: Optional[str] = None
+    floor_ids: list[int] = []
+    scope_type: str = "FLOOR"
+    target_description: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    opportunity_ids: list[int] = []
+
+
+class MerchantOpportunityOut(BaseModel):
+    id: int
+    project_id: Optional[int] = None
+    source_type: str
+    store_id: Optional[str] = None
+    floor_id: Optional[int] = None
+    unit_id: Optional[int] = None
+    unit_code: Optional[str] = None
+    unit_area: Optional[Decimal] = None
+    current_brand: Optional[str] = None
+    current_contract_id: Optional[str] = None
+    current_annual_revenue: Decimal
+    target_category: Optional[str] = None
+    target_brand: Optional[str] = None
+    owner_user_id: Optional[int] = None
+    status: str
+    expected_sign_date: Optional[date] = None
+    priority: str
+    estimated_annual_revenue: Decimal
+    estimated_lift_amount: Decimal
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # 更新 Order 模型以包含 order_items
 Order.model_rebuild()

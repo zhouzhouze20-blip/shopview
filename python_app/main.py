@@ -40,6 +40,7 @@ from routers import (
     floor_area_report,
     contracts,
     sales,
+    merchant_planning,
     activity_analysis,
     manaframe,
     suppliers,
@@ -96,6 +97,7 @@ app.include_router(business_units.router)
 app.include_router(floor_area_report.router)
 app.include_router(contracts.router)
 app.include_router(sales.router)
+app.include_router(merchant_planning.router)
 app.include_router(activity_analysis.router)
 app.include_router(manaframe.router)
 app.include_router(suppliers.router)
