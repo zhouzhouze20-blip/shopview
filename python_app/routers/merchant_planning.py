@@ -19,7 +19,29 @@ router = APIRouter(prefix="/api/merchant-planning", tags=["merchant-planning"])
 def _money(value: Decimal | int | float | None) -> Decimal:
     if value is None:
         return Decimal("0.00")
-    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return _decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _decimal(value: Decimal | int | float | None) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return Decimal(str(value))
+
+
+def _require_non_negative(value: Decimal | int | float | None, field_name: str) -> Decimal:
+    if value is None:
+        raise HTTPException(status_code=400, detail=f"{field_name} is required")
+    decimal_value = _decimal(value)
+    if decimal_value < 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be non-negative")
+    return decimal_value
+
+
+def _require_positive(value: Decimal | int | float | None, field_name: str) -> Decimal:
+    decimal_value = _require_non_negative(value, field_name)
+    if decimal_value <= 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be positive")
+    return decimal_value
 
 
 def calculate_merchant_revenue(input: MerchantCalculationInput) -> MerchantCalculationResult:
@@ -29,14 +51,20 @@ def calculate_merchant_revenue(input: MerchantCalculationInput) -> MerchantCalcu
     mode = (input.cooperation_mode or "").upper()
 
     if mode == "LEASE":
-        monthly = input.monthly_rent
-        if monthly is None:
-            monthly = _money(input.rent_unit_price) * _money(input.unit_area)
+        if input.monthly_rent is not None:
+            monthly = _require_positive(input.monthly_rent, "monthly_rent")
+        else:
+            rent_unit_price = _require_positive(input.rent_unit_price, "rent_unit_price")
+            unit_area = _require_positive(input.unit_area, "unit_area")
+            monthly = rent_unit_price * unit_area
     elif mode == "JOINT_OPERATION":
-        sales_share = _money(input.expected_monthly_sales) * _money(input.commission_rate)
-        monthly = max(sales_share, _money(input.guaranteed_amount))
+        expected_monthly_sales = _require_non_negative(input.expected_monthly_sales, "expected_monthly_sales")
+        commission_rate = _require_non_negative(input.commission_rate, "commission_rate")
+        guaranteed_amount = _require_non_negative(input.guaranteed_amount, "guaranteed_amount")
+        sales_share = expected_monthly_sales * commission_rate
+        monthly = max(sales_share, guaranteed_amount)
     elif mode == "OTHER":
-        monthly = input.manual_monthly_revenue
+        monthly = _require_non_negative(input.manual_monthly_revenue, "manual_monthly_revenue")
     else:
         raise HTTPException(status_code=400, detail="Unsupported cooperation_mode")
 
