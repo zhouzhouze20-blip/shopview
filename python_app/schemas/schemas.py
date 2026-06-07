@@ -1081,5 +1081,29 @@ class RevenueBreakdown(BaseModel):
     sales_breakdown: List[dict] = []
 
 
+class MerchantCalculationInput(BaseModel):
+    cooperation_mode: str
+    unit_area: Optional[Decimal] = None
+    current_annual_revenue: Optional[Decimal] = Decimal("0")
+    monthly_rent: Optional[Decimal] = None
+    rent_unit_price: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
+    guaranteed_amount: Optional[Decimal] = None
+    expected_monthly_sales: Optional[Decimal] = None
+    manual_monthly_revenue: Optional[Decimal] = None
+    decoration_days: int = 0
+    vacancy_days: int = 0
+    contract_start_date: Optional[date] = None
+    contract_end_date: Optional[date] = None
+
+
+class MerchantCalculationResult(BaseModel):
+    effective_months: int
+    estimated_monthly_revenue: Decimal
+    estimated_annual_revenue: Decimal
+    estimated_lift_amount: Decimal
+    snapshot: dict
+
+
 # 更新 Order 模型以包含 order_items
 Order.model_rebuild()
