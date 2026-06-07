@@ -2,7 +2,7 @@
 百货柜位管理系统 - 数据模型
 Department Store Counter Management System - Database Models
 """
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, Text, Numeric, ForeignKey, Date, JSON, PrimaryKeyConstraint, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Boolean, Text, Numeric, ForeignKey, Date, JSON, PrimaryKeyConstraint, UniqueConstraint, CheckConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -651,3 +651,121 @@ class OdsSaleGoodsList(Base):
     # 创建时间戳
     created_at = Column(DateTime, default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
+
+
+class MerchantPlanningProject(Base):
+    __tablename__ = "merchant_planning_projects"
+    __table_args__ = (
+        CheckConstraint("scope_type IN ('FLOOR','MULTI_FLOOR','AREA')", name="ck_mpp_scope_type"),
+        CheckConstraint("status IN ('DRAFT','ACTIVE','COMPLETED','CANCELLED')", name="ck_mpp_status"),
+        Index("idx_mpp_store_status", "store_id", "status"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    store_id = Column(String(20), nullable=True)
+    floor_ids = Column(JSON, nullable=False, default=list)
+    scope_type = Column(String(30), nullable=False, default="FLOOR")
+    target_description = Column(Text, nullable=True)
+    owner_user_id = Column(BigInteger, nullable=True)
+    status = Column(String(30), nullable=False, default="DRAFT")
+    current_annual_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_annual_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_lift_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_lift_rate = Column(Numeric(8, 4), nullable=True)
+    total_area = Column(Numeric(12, 2), nullable=True)
+    created_by = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    opportunities = relationship("MerchantOpportunity", back_populates="project")
+
+
+class MerchantOpportunity(Base):
+    __tablename__ = "merchant_opportunities"
+    __table_args__ = (
+        CheckConstraint("source_type IN ('REVENUE_MAP','MANUAL','PROJECT')", name="ck_mo_source_type"),
+        CheckConstraint("status IN ('TODO','NEGOTIATING','SIGNED','ABANDONED')", name="ck_mo_status"),
+        CheckConstraint("priority IN ('P0','P1','P2')", name="ck_mo_priority"),
+        Index("idx_mo_project", "project_id"),
+        Index("idx_mo_unit", "unit_id"),
+        Index("idx_mo_store_floor_status", "store_id", "floor_id", "status"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    project_id = Column(BigInteger, ForeignKey("merchant_planning_projects.id", ondelete="SET NULL"), nullable=True)
+    source_type = Column(String(30), nullable=False, default="MANUAL")
+    store_id = Column(String(20), nullable=True)
+    floor_id = Column(BigInteger, nullable=True)
+    unit_id = Column(BigInteger, nullable=True)
+    unit_code = Column(String(100), nullable=True)
+    unit_area = Column(Numeric(12, 2), nullable=True)
+    current_brand = Column(String(200), nullable=True)
+    current_contract_id = Column(String(100), nullable=True)
+    current_annual_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    target_category = Column(String(100), nullable=True)
+    target_brand = Column(String(200), nullable=True)
+    owner_user_id = Column(BigInteger, nullable=True)
+    status = Column(String(30), nullable=False, default="TODO")
+    expected_sign_date = Column(Date, nullable=True)
+    priority = Column(String(10), nullable=False, default="P2")
+    estimated_annual_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_lift_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    remark = Column(Text, nullable=True)
+    created_by = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    project = relationship("MerchantPlanningProject", back_populates="opportunities")
+    scenarios = relationship("MerchantCalculationScenario", back_populates="opportunity", cascade="all, delete-orphan")
+    follow_ups = relationship("MerchantFollowUp", back_populates="opportunity", cascade="all, delete-orphan")
+
+
+class MerchantCalculationScenario(Base):
+    __tablename__ = "merchant_calculation_scenarios"
+    __table_args__ = (
+        CheckConstraint("cooperation_mode IN ('LEASE','JOINT_OPERATION','OTHER')", name="ck_mcs_cooperation_mode"),
+        Index("idx_mcs_opportunity", "opportunity_id"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    opportunity_id = Column(BigInteger, ForeignKey("merchant_opportunities.id", ondelete="CASCADE"), nullable=False)
+    cooperation_mode = Column(String(30), nullable=False)
+    monthly_rent = Column(Numeric(14, 2), nullable=True)
+    rent_unit_price = Column(Numeric(14, 2), nullable=True)
+    commission_rate = Column(Numeric(8, 4), nullable=True)
+    guaranteed_amount = Column(Numeric(14, 2), nullable=True)
+    expected_monthly_sales = Column(Numeric(14, 2), nullable=True)
+    manual_monthly_revenue = Column(Numeric(14, 2), nullable=True)
+    decoration_days = Column(Integer, nullable=False, default=0)
+    vacancy_days = Column(Integer, nullable=False, default=0)
+    contract_start_date = Column(Date, nullable=True)
+    contract_end_date = Column(Date, nullable=True)
+    estimated_monthly_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_annual_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    estimated_lift_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    calculation_snapshot = Column(JSON, nullable=False, default=dict)
+    created_by = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    opportunity = relationship("MerchantOpportunity", back_populates="scenarios")
+
+
+class MerchantFollowUp(Base):
+    __tablename__ = "merchant_follow_ups"
+    __table_args__ = (
+        Index("idx_mfu_opportunity", "opportunity_id"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    opportunity_id = Column(BigInteger, ForeignKey("merchant_opportunities.id", ondelete="CASCADE"), nullable=False)
+    follow_up_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    follow_up_type = Column(String(50), nullable=True)
+    content = Column(Text, nullable=False)
+    next_action = Column(Text, nullable=True)
+    next_follow_up_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    opportunity = relationship("MerchantOpportunity", back_populates="follow_ups")
