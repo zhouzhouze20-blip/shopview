@@ -1,6 +1,7 @@
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 const APP_ASSET_PREFIXES = ["/uploads/", "/static/", "/assets/"];
 const DEFAULT_API_PORT = import.meta.env.VITE_API_PORT?.trim() || "8000";
+const ADMIN_VIEW_STORAGE_KEY = "shopview_admin_view_user_id";
 const getBackendOrigin = () => {
   const { hostname, protocol } = window.location;
   return `${protocol}//${hostname}:${DEFAULT_API_PORT}`;
@@ -79,6 +80,9 @@ export const apiRequest = async (
     credentials: "include",
     headers: {
       'Content-Type': 'application/json',
+      ...(window.localStorage.getItem(ADMIN_VIEW_STORAGE_KEY)
+        ? { "X-ShopView-Admin-View-User-Id": window.localStorage.getItem(ADMIN_VIEW_STORAGE_KEY)! }
+        : {}),
       ...options.headers,
     },
     ...options,

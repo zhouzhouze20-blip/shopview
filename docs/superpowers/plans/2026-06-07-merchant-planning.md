@@ -21,7 +21,7 @@
 - Create `python_app/routers/merchant_planning.py`
   - Owns calculation helpers and `/api/merchant-planning` endpoints.
 - Modify `python_app/main.py`
-  - Includes the new router.
+  - Includes the new router. In the clean committed baseline this follows `sales.router`; when the local revenue-map router is present in the working tree, keep `merchant_planning.router` after `revenue.router`.
 - Modify `python_app/routers/authz.py`
   - Registers `merchant_planning.view` and `merchant_planning.manage`.
 - Create `client/src/hooks/useMerchantPlanning.ts`
@@ -462,7 +462,7 @@ In `python_app/routers/authz.py`, add to `CORE_PERMISSION_DEFINITIONS` near the 
 
 - [ ] **Step 2: Include router**
 
-In `python_app/main.py`, add `merchant_planning` to the routers import list and include it after `revenue.router`:
+In `python_app/main.py`, add `merchant_planning` to the routers import list. In the clean committed baseline, include it after `sales.router`; if the local revenue-map router is present in the working tree, keep it after `revenue.router`:
 
 ```python
 app.include_router(revenue.router)
@@ -768,7 +768,7 @@ def list_candidates(
           bu.floor_id,
           f.store_code AS store_id,
           bu.manual_area AS unit_area,
-          COALESCE(SUM(uds.total_revenue), 0) AS period_revenue,
+          COALESCE(SUM(uds.total_amount), 0) AS period_revenue,
           MAX(bub.contract_id) AS current_contract_id,
           MAX(bub.brand_id) AS current_brand,
           MAX(bub.end_date) AS contract_end_date

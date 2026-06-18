@@ -116,8 +116,8 @@ function SimpleTable({
 }
 
 export default function StarDiamondAnalysisPage() {
-  const { user } = useAuth();
-  const canViewStarDiamond = canAccessModule(user, "star-diamond-analysis");
+  const { menuUser } = useAuth();
+  const canViewStarDiamond = canAccessModule(menuUser, "star-diamond-analysis");
   const defaults = useMemo(defaultDateRange, []);
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);

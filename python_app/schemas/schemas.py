@@ -487,8 +487,8 @@ class DataPolicyBase(BaseModel):
     effect: str = "ALLOW"
     priority: int = 100
     is_active: bool = True
-    source_type: str = "MANUAL"
-    source_system: str = "shopview"
+    source_type: str = "WECOM"
+    source_system: str = "wecom"
     external_scope_id: Optional[str] = None
     external_scope_name: Optional[str] = None
     synced_at: Optional[datetime] = None

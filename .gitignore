@@ -4,6 +4,7 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+*.zip
 .git.backup.*
 .env
 .env.python
@@ -17,3 +18,10 @@ attached_assets/
 client/dist/
 static/assets/
 uploads/
+
+# Local/generated artifacts
+release/
+outputs/
+.superpowers/
+.understand-anything/
+.codex-pet-runs/

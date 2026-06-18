@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#09203f"/><stop offset="1" stop-color="#123c69"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.96"/><stop offset="1" stop-color="#eaf7ff" stop-opacity="0.94"/></linearGradient>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei",Arial,sans-serif}
+      .title{font-size:54px;font-weight:800;fill:#fff}.sub{font-size:25px;fill:#cce7ff}.card{fill:url(#card);stroke:#7bdff2;stroke-width:2;rx:26}.num{font-size:42px;font-weight:800;fill:#0b3954}.h{font-size:31px;font-weight:800;fill:#102a43}.p{font-size:23px;fill:#334e68}.small{font-size:20px;fill:#486581}.arrow{stroke:#ffb703;stroke-width:10;fill:none;marker-end:url(#arrow)}.tag{fill:#ffb703;rx:18}.tagtext{font-size:20px;font-weight:700;fill:#102a43}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#ffb703"/></marker>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1320" cy="120" r="240" fill="#2ec4b6" opacity="0.12"/><circle cx="190" cy="770" r="310" fill="#ffb703" opacity="0.11"/>
+  <text x="80" y="95" class="title">信息部 AI 协作转型路线</text>
+  <text x="82" y="138" class="sub">目标：把日常排查、系统知识、业务口径和经验教训沉淀成可复用能力</text>
+  <rect x="80" y="215" width="300" height="420" class="card"/><text x="112" y="275" class="num">01</text><text x="112" y="330" class="h">Codex 辅助排查</text><text x="112" y="385" class="p">业务问题、服务器、数据库、</text><text x="112" y="421" class="p">代码、日志、文档联查。</text><text x="112" y="492" class="small">产出：问题记录、排查步骤、</text><text x="112" y="523" class="small">SQL 模板、处理结论。</text>
+  <rect x="450" y="215" width="300" height="420" class="card"/><text x="482" y="275" class="num">02</text><text x="482" y="330" class="h">知识库与语义层</text><text x="482" y="385" class="p">整理 ERP、POS、ShopView、</text><text x="482" y="421" class="p">财务、外卖平台的数据口径。</text><text x="482" y="492" class="small">产出：数据字典、指标定义、</text><text x="482" y="523" class="small">血缘图、业务流程说明。</text>
+  <rect x="820" y="215" width="300" height="420" class="card"/><text x="852" y="275" class="num">03</text><text x="852" y="330" class="h">诊断流程沉淀</text><text x="852" y="385" class="p">把高频问题变成固定流程，</text><text x="852" y="421" class="p">不是每次从头排查。</text><text x="852" y="492" class="small">产出：诊断规则、历史案例、</text><text x="852" y="523" class="small">可审计输出模板。</text>
+  <rect x="1190" y="215" width="300" height="420" class="card"/><text x="1222" y="275" class="num">04</text><text x="1222" y="330" class="h">预警与 Agent</text><text x="1222" y="385" class="p">系统主动发现异常，AI 解释</text><text x="1222" y="421" class="p">原因并推动处理闭环。</text><text x="1222" y="492" class="small">产出：预警中心、待办中心、</text><text x="1222" y="523" class="small">财务/运维/招商场景助手。</text>
+  <path d="M390 425 C415 425 425 425 440 425" class="arrow"/><path d="M760 425 C785 425 795 425 810 425" class="arrow"/><path d="M1130 425 C1155 425 1165 425 1180 425" class="arrow"/>
+  <rect x="405" y="690" width="790" height="70" class="tag"/><text x="440" y="736" class="tagtext">核心原则：人负责规则、边界、例外和责任；AI 负责检索、执行流程、生成解释和发现重复问题</text>
+</svg>

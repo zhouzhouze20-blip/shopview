@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -16,6 +16,14 @@ from routers.auth import get_current_user
 
 
 ADMIN_ROLE_CODES = {"super_admin", "system_admin"}
+DEFAULT_VIEW_ONLY_ROLE_CODES = {
+    "store_admin",
+    "dept_manager",
+    "group_manager",
+    "finance",
+    "viewer",
+    "contract_viewer",
+}
 
 CORE_PERMISSION_DEFINITIONS = [
     ("dashboard.view", "查看驾驶舱", "dashboard", "view"),
@@ -53,10 +61,17 @@ CORE_PERMISSION_DEFINITIONS = [
     ("unit_map_version.edit", "编辑柜位图版本", "unit_map_version", "edit"),
     ("unit_map_version.delete", "删除柜位图版本", "unit_map_version", "delete"),
     ("contract.view", "查看合同", "contract", "view"),
+    ("contract.edit", "维护合同", "contract", "edit"),
     ("sales.view", "查看销售", "sales", "view"),
     ("activity_analysis.view", "查看活动分析", "activity_analysis", "view"),
     ("activity_analysis.star_diamond.view", "查看中心星钻会员", "activity_analysis", "star_diamond_view"),
     ("settlement.view", "查看结算单", "settlement", "view"),
+    ("revenue.view", "查看收益", "revenue", "view"),
+    ("revenue.recalculate", "重算收益汇总", "revenue", "recalculate"),
+    ("revenue.extra.create", "创建收益补录", "revenue", "extra_create"),
+    ("revenue.extra.edit", "编辑收益补录", "revenue", "extra_edit"),
+    ("revenue.extra.confirm", "确认收益补录", "revenue", "extra_confirm"),
+    ("revenue.extra.void", "作废收益补录", "revenue", "extra_void"),
     ("merchant_planning.view", "查看招商规划", "merchant_planning", "view"),
     ("merchant_planning.manage", "管理招商规划", "merchant_planning", "manage"),
     ("system.audit_log.view", "查看审计日志", "system", "audit_log_view"),
@@ -84,6 +99,10 @@ def _add_value(target: dict[str, set[str]], dimension: str, value: object) -> No
     target.setdefault(dimension, set()).add(normalized)
 
 
+def is_view_permission_code(permission_code: str) -> bool:
+    return str(permission_code or "").strip().endswith(".view")
+
+
 def get_role_codes(db: Session, user_id: int) -> set[str]:
     rows = (
         db.query(Role.role_code)
@@ -102,8 +121,31 @@ def is_admin(db: Session, user: User) -> bool:
     return bool(get_role_codes(db, user.user_id) & ADMIN_ROLE_CODES)
 
 
+def get_authz_subject(db: Session, user: User) -> User:
+    """Return the user whose permissions/data scope should be evaluated.
+
+    In admin view mode the login identity remains the administrator, but module
+    permissions and data ranges are evaluated as the selected target user.
+    """
+    target_user_id = getattr(user, "admin_view_user_id", None)
+    if not target_user_id or not is_admin(db, user):
+        return user
+
+    target = (
+        db.query(User)
+        .filter(
+            User.user_id == target_user_id,
+            User.is_active == True,
+            or_(User.status.is_(None), User.status.notin_(["DISABLED", "LOCKED"])),
+        )
+        .first()
+    )
+    return target or user
+
+
 def require_permission(db: Session, user: User, permission_code: str) -> None:
-    if is_admin(db, user):
+    authz_user = get_authz_subject(db, user)
+    if is_admin(db, authz_user):
         return
 
     exists = (
@@ -112,7 +154,7 @@ def require_permission(db: Session, user: User, permission_code: str) -> None:
         .join(UserRole, UserRole.role_id == RolePermission.role_id)
         .join(Role, Role.id == UserRole.role_id)
         .filter(
-            UserRole.user_id == user.user_id,
+            UserRole.user_id == authz_user.user_id,
             Role.is_active == True,
             Permission.permission_code == permission_code,
             or_(UserRole.expires_at.is_(None), UserRole.expires_at > func.now()),
@@ -162,11 +204,43 @@ def ensure_core_permissions() -> None:
         db.close()
 
 
+def ensure_default_roles_are_view_only() -> None:
+    """Remove operation permissions from default business roles.
+
+    New module view permissions remain selectable in role management because this
+    only removes non-*.view permissions from the built-in business/viewer roles.
+    """
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                """
+                DELETE FROM role_permissions rp
+                USING roles r, permissions p
+                WHERE rp.role_id = r.id
+                  AND rp.permission_id = p.id
+                  AND r.role_code = ANY(:role_codes)
+                  AND p.permission_code NOT LIKE '%.view'
+                """
+            ),
+            {"role_codes": sorted(DEFAULT_VIEW_ONLY_ROLE_CODES)},
+        )
+        db.commit()
+    except ProgrammingError:
+        db.rollback()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def load_data_scope(db: Session, user: User, resource_code: str, action_code: str) -> DataScope:
-    if is_admin(db, user):
+    authz_user = get_authz_subject(db, user)
+    if is_admin(db, authz_user):
         return DataScope(all_access=True)
 
-    return _load_scope_from_policies(db, user, resource_code, action_code)
+    return _load_scope_from_policies(db, authz_user, resource_code, action_code)
 
 
 def _load_scope_from_policies(
@@ -236,26 +310,20 @@ def _load_scope_from_policies(
 
 
 def load_business_scope(db: Session, user: User, *, fallback_resource_code: str | None = None) -> DataScope:
-    """Load the unified business data scope used by contracts, sales, settlements and revenue."""
-    if is_admin(db, user):
+    """Load the WeCom business data scope used by contracts, sales, settlements and revenue."""
+    authz_user = get_authz_subject(db, user)
+    if is_admin(db, authz_user):
         return DataScope(all_access=True)
 
-    manual_scope = _load_scope_from_policies(
+    return _load_scope_from_policies(
         db,
-        user,
+        authz_user,
         "business_scope",
         "view",
-        source_type="MANUAL",
-        source_system="shopview",
+        source_type="WECOM",
+        source_system="wecom",
         user_only=True,
     )
-    if manual_scope.has_any_allow():
-        return manual_scope
-
-    scope = load_data_scope(db, user, "business_scope", "view")
-    if scope.has_any_allow() or not fallback_resource_code:
-        return scope
-    return load_data_scope(db, user, fallback_resource_code, "view")
 
 
 def _matches(values: Iterable[object], allowed: set[str]) -> bool:

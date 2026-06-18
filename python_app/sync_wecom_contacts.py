@@ -39,15 +39,14 @@ from models.models import (
     WeComRoleScopeRule,
 )
 from routers.auth import DEFAULT_ADMIN_PASSWORD, _hash_password
-from routers.system_management import _ensure_contract_viewer_role
-
-
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
 DEFAULT_TIMEOUT_SECONDS = 12
 WECOM_SOURCE_TYPE = "WECOM"
 WECOM_SOURCE_SYSTEM = "wecom"
 BUSINESS_SCOPE_RESOURCE = "business_scope"
 BUSINESS_SCOPE_ACTION = "view"
+DEFAULT_SYNC_ROLE_CODE = "dept_manager"
+DEFAULT_ALLOWED_DEPARTMENT_KEYWORDS = ["百货条线", "集团总裁办"]
 DEFAULT_ROLE_SCOPE_RULES = [
     {
         "position_keywords": ["店长", "总经理", "门店管理员"],
@@ -56,7 +55,7 @@ DEFAULT_ROLE_SCOPE_RULES = [
         "scope_dimensions": {"store": ["$store_id"]},
     },
     {
-        "position_keywords": ["部门主管", "部门经理", "主管", "经理"],
+        "position_keywords": ["部门主管", "部门经理", "主管", "经理", "副经理"],
         "role_codes": ["dept_manager"],
         "scope_mode": "CUSTOM",
         "scope_dimensions": {"department": ["$department"]},
@@ -132,6 +131,7 @@ def list_departments(access_token: str) -> tuple[list[int], dict[int, str]]:
     _log("fetching Enterprise WeChat departments...")
     payload = _request_json(f"{WECOM_API_BASE}/department/list", {"access_token": access_token})
     department_names: dict[int, str] = {}
+    parent_ids: dict[int, int] = {}
     ids: list[int] = []
     for item in payload.get("department", []):
         if item.get("id") is None:
@@ -139,8 +139,28 @@ def list_departments(access_token: str) -> tuple[list[int], dict[int, str]]:
         department_id = int(item["id"])
         ids.append(department_id)
         department_names[department_id] = str(item.get("name") or item.get("name_en") or department_id).strip()
+        if item.get("parentid") is not None:
+            parent_ids[department_id] = int(item.get("parentid") or 0)
+
+    def department_path(department_id: int) -> str:
+        path: list[str] = []
+        seen: set[int] = set()
+        current_id = department_id
+        while current_id and current_id not in seen:
+            seen.add(current_id)
+            name = department_names.get(current_id, "").strip()
+            if name:
+                path.append(name)
+            current_id = parent_ids.get(current_id, 0)
+        path.reverse()
+        return "/".join(path)
+
+    department_paths = {
+        department_id: department_path(department_id) or department_names.get(department_id, str(department_id))
+        for department_id in ids
+    }
     _log(f"departments fetched: {len(ids or [1])}")
-    return ids or [1], department_names
+    return ids or [1], department_paths
 
 
 def list_department_ids(access_token: str) -> list[int]:
@@ -363,8 +383,54 @@ def _department_leaf_names(department_path: str) -> list[str]:
     return names
 
 
+def _department_scope_values(department_path: str) -> list[str]:
+    values: list[str] = []
+    paths = [
+        path.strip()
+        for path in department_path.replace("；", ";").replace("，", ";").replace(",", ";").split(";")
+        if path.strip()
+    ]
+    for path in paths:
+        for part in path.replace("\\", "/").split("/"):
+            value = part.strip()
+            if value and value not in values:
+                values.append(value)
+    return values
+
+
 def _norm_text(value: object) -> str:
     return str(value or "").strip().lower()
+
+
+def _parse_keyword_list(raw: str) -> list[str]:
+    return [
+        item.strip()
+        for item in raw.replace("；", ",").replace(";", ",").split(",")
+        if item.strip()
+    ]
+
+
+def _allowed_department_keywords(argument_value: str = "") -> list[str]:
+    raw = argument_value.strip() or _get_env("WECOM_ALLOWED_DEPARTMENT_KEYWORDS")
+    if not raw:
+        return DEFAULT_ALLOWED_DEPARTMENT_KEYWORDS[:]
+    if raw.strip() in {"*", "ALL", "all"}:
+        return []
+    return _parse_keyword_list(raw)
+
+
+def _filter_members_by_departments(
+    members: list[WeComMember],
+    allowed_department_keywords: list[str],
+) -> tuple[list[WeComMember], int]:
+    if not allowed_department_keywords:
+        return members, 0
+    filtered = [
+        member
+        for member in members
+        if any(keyword in member.department for keyword in allowed_department_keywords)
+    ]
+    return filtered, len(members) - len(filtered)
 
 
 def _rule_record_to_dict(rule: WeComRoleScopeRule) -> dict[str, Any]:
@@ -474,12 +540,14 @@ def _resolve_role_scope(
                         if value not in scope_dimensions[dimension_type]:
                             scope_dimensions[dimension_type].append(value)
 
+    department_scope_values = _department_scope_values(member.department)
+
     if not role_codes and use_default_rules:
-        role_codes.append("contract_viewer")
-        department_names = _department_leaf_names(member.department)
-        if department_names:
-            scope_mode = "CUSTOM"
-            scope_dimensions["department"] = department_names
+        role_codes.append(DEFAULT_SYNC_ROLE_CODE)
+
+    if department_scope_values and scope_mode != "ALL":
+        scope_mode = "CUSTOM"
+        scope_dimensions = {"department": department_scope_values}
 
     return role_codes, scope_mode, scope_dimensions
 
@@ -569,7 +637,9 @@ def _sync_user_department(db, user: User, member: WeComMember) -> bool:
 
 
 def _ensure_viewer_role(db, user_id: int) -> bool:
-    role = _ensure_contract_viewer_role(db)
+    role = db.query(Role).filter(Role.role_code == DEFAULT_SYNC_ROLE_CODE, Role.is_active == True).first()
+    if not role:
+        raise WeComSyncError(f"默认同步角色不存在或未启用: {DEFAULT_SYNC_ROLE_CODE}")
     exists = db.query(UserRole).filter(UserRole.user_id == user_id, UserRole.role_id == role.id).first()
     if exists:
         return False
@@ -579,7 +649,7 @@ def _ensure_viewer_role(db, user_id: int) -> bool:
 
 def _ensure_user_role(db, user_id: int, role_code: str) -> bool:
     if role_code == "contract_viewer":
-        return _ensure_viewer_role(db, user_id)
+        role_code = DEFAULT_SYNC_ROLE_CODE
     role = db.query(Role).filter(Role.role_code == role_code, Role.is_active == True).first()
     if not role:
         raise WeComSyncError(f"自动分配角色失败：角色不存在或未启用 {role_code}")
@@ -752,6 +822,7 @@ def sync_wecom_contacts(
     grant_viewer_role: bool,
     auto_role_scope: bool,
     role_scope_rules: str,
+    allowed_departments: str,
     default_password: str,
 ) -> int:
     corp_id = _get_env("WECOM_CORP_ID")
@@ -770,6 +841,9 @@ def sync_wecom_contacts(
         _log("access token fetched")
         department_ids, department_names = list_departments(access_token)
         members = list_members(access_token, department_ids, department_names)
+    members_seen_before_filter = len(members)
+    allowed_department_keywords = _allowed_department_keywords(allowed_departments)
+    members, filtered_out_count = _filter_members_by_departments(members, allowed_department_keywords)
     active_userids = {member.userid for member in members if _is_active_status(member.status)}
     db = SessionLocal()
     stats = Counter()
@@ -777,7 +851,8 @@ def sync_wecom_contacts(
         rules = _load_role_scope_rules(role_scope_rules, db=db)
         db_rule_count = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.is_active == True).count()
         stats["departments_seen"] = len(department_ids)
-        stats["members_seen"] = len(members)
+        stats["members_seen"] = members_seen_before_filter
+        stats["members_filtered_out"] = filtered_out_count
         stats["members_active"] = len(active_userids)
         stats["role_scope_rules"] = len(rules)
 
@@ -810,7 +885,7 @@ def sync_wecom_contacts(
                 stats["viewer_roles_added"] += 1
             if _sync_user_department(db, user, member):
                 stats["user_departments_created"] += 1
-            if auto_role_scope or rules:
+            if auto_role_scope or rules or member.department:
                 stats.update(
                     _sync_role_scope_for_member(
                         db,
@@ -851,6 +926,7 @@ def sync_wecom_contacts(
         print(f"disable_missing_wecom_users: {disable_missing_wecom_users}")
         print(f"grant_viewer_role: {grant_viewer_role}")
         print(f"auto_role_scope: {auto_role_scope}")
+        print(f"allowed_departments: {', '.join(allowed_department_keywords) if allowed_department_keywords else 'ALL'}")
         print(f"role_scope_rules: {'DB:wecom_role_scope_rules' if db_rule_count else role_scope_rules or ('ENV:WECOM_ROLE_SCOPE_RULES' if rules else '-')}")
         print("stats: " + (", ".join(f"{key}={value}" for key, value in sorted(stats.items())) or "none"))
         if not apply:
@@ -873,6 +949,7 @@ def main() -> int:
     parser.add_argument("--grant-viewer-role", action="store_true", help="Grant the contract viewer role to synced users.")
     parser.add_argument("--auto-role-scope", action="store_true", help="Automatically assign roles and WECOM business scope from department and position.")
     parser.add_argument("--role-scope-rules", default="", help="JSON file for Enterprise WeChat role/scope rules. If omitted, WECOM_ROLE_SCOPE_RULES env can be used.")
+    parser.add_argument("--allowed-departments", default="", help="Comma-separated department keywords to sync. Defaults to WECOM_ALLOWED_DEPARTMENT_KEYWORDS or 百货条线,集团总裁办. Use * for all.")
     parser.add_argument("--default-password", default=DEFAULT_ADMIN_PASSWORD, help="Initial password for newly-created users.")
     args = parser.parse_args()
 
@@ -886,6 +963,7 @@ def main() -> int:
             grant_viewer_role=args.grant_viewer_role,
             auto_role_scope=args.auto_role_scope,
             role_scope_rules=args.role_scope_rules,
+            allowed_departments=args.allowed_departments,
             default_password=args.default_password,
         )
     except WeComSyncError as exc:

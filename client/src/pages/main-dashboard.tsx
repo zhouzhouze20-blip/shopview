@@ -10,11 +10,14 @@ import TenantsPage from "./tenants";
 import CountersPage from "./counters";
 import FloorsPage from "./floors";
 import ContractsPage from "./contracts";
+import ContractUnitBindingsPage from "./contract-unit-bindings";
 import SalesDashboardPage from "./sales-dashboard";
 import ActivityAnalysisPage from "./activity-analysis";
 import VoucherMatchPage from "./activity-analysis/voucher-match";
 import StarDiamondAnalysisPage from "./activity-analysis/star-diamond";
 import CommoditySalesDetailReportPage from "./sales-reports/commodity-sales-detail";
+import MerchantPlanningPage from "./merchant-planning";
+import RevenueMapPage from "./revenue-map";
 import JointSettlementStatementsPage from "./joint-settlement-statements";
 import ManaframePage from "./manaframe";
 import SuppliersPage from "./suppliers";
@@ -59,6 +62,7 @@ import {
   ChevronRight,
   Loader2,
   Menu,
+  X,
 } from "lucide-react";
 
 // 内容区错误边界：捕获切换时的 removeChild 等错误，避免整页白屏
@@ -131,11 +135,14 @@ const MODULE_LABELS: Record<string, string> = {
   manaframe: "柜位定义",
   suppliers: "供应商管理",
   contracts: "合同台账",
+  "contract-unit-bindings": "合同柜位绑定",
   "sales-dashboard": "销售看板",
   "activity-analysis": "活动分析",
   "voucher-match": "凭证匹配",
   "star-diamond-analysis": "中心星钻会员分析",
   "commodity-sales-detail": "商品销售明细",
+  "merchant-planning": "招商规划",
+  "revenue-map": "收益地图",
   "joint-settlement": "联营结算单管理",
   floors: "楼层定义",
   "base-maps": "底图管理",
@@ -149,6 +156,13 @@ const MODULE_LABELS: Record<string, string> = {
   "contract-permissions": "业务范围",
   "wecom-rules": "企微授权规则",
   "audit-logs": "日志查询",
+};
+
+const MAX_WORKSPACE_TABS = 8;
+
+type WorkspaceTab = {
+  moduleId: string;
+  title: string;
 };
 
 const recordModuleAccess = (moduleId: string) => {
@@ -521,16 +535,35 @@ function SystemOverview({
 
 export default function MainDashboard() {
   const [activeModule, setActiveModule] = useState("dashboard");
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([
+    { moduleId: "dashboard", title: MODULE_LABELS.dashboard },
+  ]);
   const [location] = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const hasSyncedUrlRef = useRef(false);
   /** 从经营概览等处跳入合同时传入，由 ContractsPage 消费后清空 */
   const [contractsInitialContractNo, setContractsInitialContractNo] = useState<string | null>(null);
-  const { user, logout } = useAuth();
+  const { user, menuUser, adminViewUser, logout } = useAuth();
   const isMobile = useIsMobile();
-  const firstAccessibleModule = useMemo(() => findFirstAccessibleModule(navigationItems, user), [user]);
-  const canOpenModule = useCallback((moduleId: string) => canAccessModule(user, moduleId), [user]);
+  const firstAccessibleModule = useMemo(() => findFirstAccessibleModule(navigationItems, menuUser), [menuUser]);
+  const canOpenModule = useCallback((moduleId: string) => canAccessModule(menuUser, moduleId), [menuUser]);
+
+  const openWorkspaceTab = useCallback((moduleId: string) => {
+    const title = MODULE_LABELS[moduleId] || moduleId;
+    setWorkspaceTabs((prev) => {
+      if (prev.some((tab) => tab.moduleId === moduleId)) return prev;
+      const next = [...prev, { moduleId, title }];
+      if (next.length <= MAX_WORKSPACE_TABS) return next;
+      const removeIndex = next.findIndex((tab) => tab.moduleId !== "dashboard" && tab.moduleId !== moduleId);
+      if (removeIndex >= 0) {
+        next.splice(removeIndex, 1);
+      } else {
+        next.shift();
+      }
+      return next;
+    });
+  }, []);
 
   const handleContractsJumpConsumed = useCallback(() => {
     setContractsInitialContractNo(null);
@@ -546,17 +579,32 @@ export default function MainDashboard() {
     const params = new URLSearchParams(window.location.search);
     const viewParam = params.get('view');
     if (viewParam) {
-      setActiveModule(canOpenModule(viewParam) ? viewParam : firstAccessibleModule ?? "dashboard");
+      const nextModule = canOpenModule(viewParam) ? viewParam : firstAccessibleModule ?? "dashboard";
+      setActiveModule(nextModule);
+      openWorkspaceTab(nextModule);
     } else if (!canOpenModule(activeModule)) {
-      setActiveModule(firstAccessibleModule ?? "dashboard");
+      const nextModule = firstAccessibleModule ?? "dashboard";
+      setActiveModule(nextModule);
+      openWorkspaceTab(nextModule);
     }
-  }, [activeModule, canOpenModule, firstAccessibleModule]);
+  }, [activeModule, canOpenModule, firstAccessibleModule, openWorkspaceTab]);
 
   useEffect(() => {
     if (!canOpenModule(activeModule)) {
-      setActiveModule(firstAccessibleModule ?? "dashboard");
+      const nextModule = firstAccessibleModule ?? "dashboard";
+      setActiveModule(nextModule);
+      openWorkspaceTab(nextModule);
     }
-  }, [activeModule, canOpenModule, firstAccessibleModule]);
+  }, [activeModule, canOpenModule, firstAccessibleModule, openWorkspaceTab]);
+
+  useEffect(() => {
+    setWorkspaceTabs((prev) => {
+      const accessibleTabs = prev.filter((tab) => canOpenModule(tab.moduleId));
+      if (accessibleTabs.length) return accessibleTabs;
+      const fallback = firstAccessibleModule ?? "dashboard";
+      return [{ moduleId: fallback, title: MODULE_LABELS[fallback] || fallback }];
+    });
+  }, [canOpenModule, firstAccessibleModule]);
 
   useEffect(() => {
     if (!isMobile && mobileMenuOpen) {
@@ -564,20 +612,20 @@ export default function MainDashboard() {
     }
   }, [isMobile, mobileMenuOpen]);
 
-  const renderContent = () => {
-    if (!canOpenModule(activeModule)) {
+  const renderContent = (moduleId: string) => {
+    if (!canOpenModule(moduleId)) {
       return (
         <div className="p-6">
           <Card>
             <CardContent className="py-8 text-sm text-muted-foreground">
-              当前账号没有访问「{MODULE_LABELS[activeModule] || activeModule}」的模块权限，请联系管理员调整角色权限。
+              当前账号没有访问「{MODULE_LABELS[moduleId] || moduleId}」的模块权限，请联系管理员调整角色权限。
             </CardContent>
           </Card>
         </div>
       );
     }
 
-    switch (activeModule) {
+    switch (moduleId) {
       case "dashboard":
         return (
           <SystemOverview
@@ -618,6 +666,8 @@ export default function MainDashboard() {
             onOpenContractNoConsumed={handleContractsJumpConsumed}
           />
         );
+      case "contract-unit-bindings":
+        return <ContractUnitBindingsPage />;
       case "sales-dashboard":
         return <SalesDashboardPage />;
       case "activity-analysis":
@@ -628,6 +678,10 @@ export default function MainDashboard() {
         return <StarDiamondAnalysisPage />;
       case "commodity-sales-detail":
         return <CommoditySalesDetailReportPage />;
+      case "merchant-planning":
+        return <MerchantPlanningPage />;
+      case "revenue-map":
+        return <RevenueMapPage />;
       case "decorations":
         return <DecorationsPage initialTab="projects" />;
       case "decorations-todos":
@@ -727,12 +781,36 @@ export default function MainDashboard() {
       }
     }
     recordModuleAccess(moduleId);
+    openWorkspaceTab(moduleId);
     setActiveModule(moduleId);
   };
 
   const handleMobileModuleChange = async (moduleId: string) => {
     await handleModuleChange(moduleId);
     setMobileMenuOpen(false);
+  };
+
+  const handleWorkspaceTabClick = (moduleId: string) => {
+    if (!canOpenModule(moduleId)) return;
+    recordModuleAccess(moduleId);
+    setActiveModule(moduleId);
+  };
+
+  const handleCloseWorkspaceTab = (moduleId: string) => {
+    setWorkspaceTabs((prev) => {
+      if (prev.length <= 1) return prev;
+      const index = prev.findIndex((tab) => tab.moduleId === moduleId);
+      if (index < 0) return prev;
+      const next = prev.filter((tab) => tab.moduleId !== moduleId);
+      if (activeModule === moduleId) {
+        const fallback = next[Math.max(0, index - 1)] ?? next[0];
+        if (fallback) {
+          setActiveModule(fallback.moduleId);
+          recordModuleAccess(fallback.moduleId);
+        }
+      }
+      return next;
+    });
   };
 
   return (
@@ -775,13 +853,21 @@ export default function MainDashboard() {
             </Button>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-slate-900">百货柜位管理系统</div>
-              <div className="truncate text-xs text-muted-foreground">{MODULE_LABELS[activeModule] || activeModule}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {MODULE_LABELS[activeModule] || activeModule}
+                {adminViewUser ? ` · 代看 ${adminViewUser.real_name || adminViewUser.username}` : ""}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="min-w-0 text-right">
               <div className="max-w-[5rem] truncate text-sm font-medium text-slate-900 sm:max-w-none">{user?.real_name || user?.username}</div>
               <div className="hidden text-xs text-muted-foreground sm:block">{user?.role_names?.join(" / ") || "已登录"}</div>
+              {adminViewUser ? (
+                <div className="hidden text-xs font-medium text-amber-700 sm:block">
+                  代看菜单: {adminViewUser.real_name || adminViewUser.username}
+                </div>
+              ) : null}
             </div>
             <Button variant="outline" size="sm" onClick={() => logout()}>
               退出登录
@@ -789,12 +875,58 @@ export default function MainDashboard() {
           </div>
         </div>
 
-        {/* key 强制按模块完整卸载再挂载；错误边界兜底 removeChild 等异常 */}
-        <ContentErrorBoundary activeModule={activeModule}>
-          <div key={activeModule} className="min-h-0 flex-1">
-            {renderContent()}
+        <div className="sticky top-[65px] z-20 border-b bg-white px-3 py-2 md:top-[73px] md:px-6">
+          <div className="flex gap-2 overflow-x-auto">
+            {workspaceTabs.map((tab) => {
+              const active = tab.moduleId === activeModule;
+              const Icon = navigationItems
+                .flatMap((item) => item.subItems ? [item, ...item.subItems] : [item])
+                .flatMap((item) => item.subItems ? [item, ...item.subItems] : [item])
+                .find((item) => item.id === tab.moduleId)?.icon;
+              return (
+                <div
+                  key={tab.moduleId}
+                  className={cn(
+                    "flex h-9 shrink-0 items-center rounded-md border text-sm transition-colors",
+                    active
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white",
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="flex h-full items-center gap-2 px-3"
+                    onClick={() => handleWorkspaceTabClick(tab.moduleId)}
+                  >
+                    {Icon ? <Icon className="h-4 w-4" /> : null}
+                    <span className="whitespace-nowrap">{tab.title}</span>
+                  </button>
+                  {workspaceTabs.length > 1 ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        "mr-1 flex h-6 w-6 items-center justify-center rounded-sm",
+                        active ? "hover:bg-white/15" : "hover:bg-slate-200",
+                      )}
+                      onClick={() => handleCloseWorkspaceTab(tab.moduleId)}
+                      aria-label={`关闭${tab.title}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
-        </ContentErrorBoundary>
+        </div>
+
+        {workspaceTabs.map((tab) => (
+          <ContentErrorBoundary key={tab.moduleId} activeModule={tab.moduleId}>
+            <div className={cn("min-h-0 flex-1", tab.moduleId !== activeModule && "hidden")}>
+              {renderContent(tab.moduleId)}
+            </div>
+          </ContentErrorBoundary>
+        ))}
       </main>
     </div>
   );

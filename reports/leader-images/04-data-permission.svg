@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <text x="800" y="108" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="52" font-weight="700" fill="#0f172a">数据集成与权限保障</text>
+  <text x="800" y="156" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="24" fill="#64748b">ERP/POS 数据进入本地业务库，再按角色和数据范围提供给各业务模块</text>
+
+  <defs>
+    <marker id="arrow2" markerWidth="18" markerHeight="18" refX="14" refY="6" orient="auto">
+      <path d="M2,2 L14,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <g>
+      <rect x="95" y="255" width="320" height="330" rx="26" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+      <text x="255" y="315" text-anchor="middle" font-size="32" font-weight="700" fill="#1d4ed8">外部数据源</text>
+      <text x="140" y="385" font-size="25" fill="#334155">ERP 合同</text>
+      <text x="140" y="440" font-size="25" fill="#334155">供应商主数据</text>
+      <text x="140" y="495" font-size="25" fill="#334155">POS 销售流水</text>
+      <text x="140" y="550" font-size="25" fill="#334155">联营结算单</text>
+    </g>
+
+    <path d="M430 420 H575" stroke="#64748b" stroke-width="6" marker-end="url(#arrow2)" fill="none"/>
+    <text x="505" y="390" text-anchor="middle" font-size="22" fill="#64748b">ETL / 同步 / 导入</text>
+
+    <g>
+      <rect x="585" y="235" width="430" height="370" rx="26" fill="#ffffff" stroke="#dbe4ee" stroke-width="2"/>
+      <text x="800" y="295" text-anchor="middle" font-size="32" font-weight="700" fill="#0f172a">柜位系统业务库</text>
+      <ellipse cx="800" cy="360" rx="120" ry="34" fill="#0f766e"/>
+      <rect x="680" y="360" width="240" height="120" fill="#14b8a6"/>
+      <ellipse cx="800" cy="480" rx="120" ry="34" fill="#0f766e"/>
+      <text x="800" y="415" text-anchor="middle" font-size="28" font-weight="700" fill="#ffffff">PostgreSQL</text>
+      <text x="800" y="555" text-anchor="middle" font-size="22" fill="#475569">合同 / 销售 / 图纸 / 权限 / 日志</text>
+    </g>
+
+    <path d="M1030 420 H1175" stroke="#64748b" stroke-width="6" marker-end="url(#arrow2)" fill="none"/>
+    <text x="1105" y="390" text-anchor="middle" font-size="22" fill="#64748b">统一 API 服务</text>
+
+    <g>
+      <rect x="1185" y="255" width="320" height="330" rx="26" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="1345" y="315" text-anchor="middle" font-size="32" font-weight="700" fill="#15803d">业务应用</text>
+      <text x="1230" y="385" font-size="25" fill="#334155">销售看板</text>
+      <text x="1230" y="440" font-size="25" fill="#334155">合同台账</text>
+      <text x="1230" y="495" font-size="25" fill="#334155">收益地图</text>
+      <text x="1230" y="550" font-size="25" fill="#334155">装修流程</text>
+    </g>
+
+    <rect x="250" y="675" width="1100" height="110" rx="28" fill="#0f172a"/>
+    <text x="800" y="724" text-anchor="middle" font-size="30" font-weight="700" fill="#ffffff">权限保障：用户角色 + 企微授权规则 + 数据范围 + 登录/操作审计</text>
+    <text x="800" y="765" text-anchor="middle" font-size="23" fill="#cbd5e1">确保不同部门、门店、岗位只能看到授权范围内的数据</text>
+  </g>
+</svg>

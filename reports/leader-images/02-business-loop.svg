@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <text x="800" y="110" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="52" font-weight="700" fill="#0f172a">从柜位到经营分析的业务闭环</text>
+  <text x="800" y="158" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="24" fill="#64748b">先建空间，再接合同，再取经营数据，最终形成收益地图和管理看板</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="18" markerHeight="18" refX="14" refY="6" orient="auto">
+      <path d="M2,2 L14,6 L2,10 Z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <g stroke="#94a3b8" stroke-width="5" marker-end="url(#arrow)" fill="none">
+      <path d="M285 440 H395"/>
+      <path d="M535 440 H645"/>
+      <path d="M785 440 H895"/>
+      <path d="M1035 440 H1145"/>
+      <path d="M1285 440 H1395"/>
+    </g>
+
+    <g>
+      <rect x="95" y="300" width="190" height="280" rx="22" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+      <text x="190" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#0369a1">楼层底图</text>
+      <path d="M135 405 H245 M135 445 H245 M135 485 H245 M170 390 V525 M215 390 V525" stroke="#0284c7" stroke-width="4"/>
+      <text x="190" y="548" text-anchor="middle" font-size="19" fill="#475569">门店 / 楼层 / SVG底图</text>
+    </g>
+    <g>
+      <rect x="345" y="300" width="190" height="280" rx="22" fill="#ccfbf1" stroke="#5eead4" stroke-width="2"/>
+      <text x="440" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#0f766e">经营单元</text>
+      <rect x="392" y="405" width="96" height="74" rx="10" fill="#14b8a6" opacity=".85"/>
+      <text x="440" y="452" text-anchor="middle" font-size="28" font-weight="700" fill="#ffffff">A101</text>
+      <text x="440" y="548" text-anchor="middle" font-size="19" fill="#475569">柜位编码 / 面积 / 状态</text>
+    </g>
+    <g>
+      <rect x="595" y="300" width="190" height="280" rx="22" fill="#dcfce7" stroke="#86efac" stroke-width="2"/>
+      <text x="690" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#15803d">合同绑定</text>
+      <rect x="646" y="397" width="88" height="118" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="4"/>
+      <line x1="665" y1="428" x2="715" y2="428" stroke="#16a34a" stroke-width="4"/>
+      <line x1="665" y1="458" x2="715" y2="458" stroke="#16a34a" stroke-width="4"/>
+      <text x="690" y="548" text-anchor="middle" font-size="19" fill="#475569">合同 / 供应商 / 柜组</text>
+    </g>
+    <g>
+      <rect x="845" y="300" width="190" height="280" rx="22" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+      <text x="940" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#c2410c">销售取数</text>
+      <rect x="885" y="500" width="24" height="-65" fill="#fb923c"/>
+      <rect x="925" y="500" width="24" height="-100" fill="#f97316"/>
+      <rect x="965" y="500" width="24" height="-42" fill="#ea580c"/>
+      <line x1="875" y1="505" x2="1005" y2="505" stroke="#9a3412" stroke-width="4"/>
+      <text x="940" y="548" text-anchor="middle" font-size="19" fill="#475569">销售 / 小票 / 结算</text>
+    </g>
+    <g>
+      <rect x="1095" y="300" width="190" height="280" rx="22" fill="#fef9c3" stroke="#fde047" stroke-width="2"/>
+      <text x="1190" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#a16207">收益汇总</text>
+      <circle cx="1190" cy="450" r="54" fill="#eab308" opacity=".85"/>
+      <text x="1190" y="464" text-anchor="middle" font-size="44" font-weight="700" fill="#ffffff">¥</text>
+      <text x="1190" y="548" text-anchor="middle" font-size="19" fill="#475569">销售毛利 + 收费 + 其他收益</text>
+    </g>
+    <g>
+      <rect x="1345" y="300" width="190" height="280" rx="22" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="2"/>
+      <text x="1440" y="360" text-anchor="middle" font-size="28" font-weight="700" fill="#6d28d9">地图看板</text>
+      <rect x="1385" y="400" width="48" height="48" fill="#22c55e"/>
+      <rect x="1437" y="400" width="48" height="48" fill="#f59e0b"/>
+      <rect x="1385" y="452" width="48" height="48" fill="#ef4444"/>
+      <rect x="1437" y="452" width="48" height="48" fill="#38bdf8"/>
+      <text x="1440" y="548" text-anchor="middle" font-size="19" fill="#475569">图上染色 / 明细钻取</text>
+    </g>
+
+    <rect x="240" y="685" width="1120" height="82" rx="20" fill="#0f172a"/>
+    <text x="800" y="737" text-anchor="middle" font-size="28" font-weight="700" fill="#ffffff">底层支撑：权限范围 / 审计日志 / ERP数据同步 / 统一数据口径</text>
+  </g>
+</svg>

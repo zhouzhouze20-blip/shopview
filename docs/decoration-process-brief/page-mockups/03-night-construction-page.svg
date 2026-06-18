@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+
+  <style>
+    svg { background: #eef2f7; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #182033; }
+    .app { fill: #f4f7fb; }
+    .top { fill: #111827; }
+    .side { fill: #ffffff; stroke: #dbe2ee; }
+    .main { fill: #f6f8fb; }
+    .panel { fill: #ffffff; stroke: #d9e1ef; stroke-width: 1; rx: 10; }
+    .soft { fill: #f8fafc; stroke: #e2e8f0; rx: 8; }
+    .blue { fill: #e8f1ff; stroke: #79a8f7; rx: 8; }
+    .green { fill: #e8f7ef; stroke: #64bd84; rx: 8; }
+    .amber { fill: #fff5df; stroke: #e4b551; rx: 8; }
+    .red { fill: #fff0ef; stroke: #e27468; rx: 8; }
+    .purple { fill: #f1edff; stroke: #9279e6; rx: 8; }
+    .muted { fill: #687386; }
+    .white { fill: #ffffff; }
+    .title { font-size: 28px; font-weight: 800; }
+    .h2 { font-size: 20px; font-weight: 800; }
+    .h3 { font-size: 17px; font-weight: 800; }
+    .body { font-size: 15px; fill: #364154; }
+    .small { font-size: 13px; fill: #647084; }
+    .tiny { font-size: 12px; fill: #7b8495; }
+    .nav { font-size: 15px; fill: #334155; }
+    .nav-on { font-size: 15px; font-weight: 800; fill: #1d4ed8; }
+    .btn { fill: #2563eb; rx: 7; }
+    .btn2 { fill: #ffffff; stroke: #cfd8e8; rx: 7; }
+    .btnText { font-size: 14px; font-weight: 700; fill: #ffffff; }
+    .btnText2 { font-size: 14px; font-weight: 700; fill: #334155; }
+    .tag { rx: 13; }
+    .tagText { font-size: 12px; font-weight: 700; }
+    .line { stroke: #d8dfeb; stroke-width: 1; }
+    .th { font-size: 13px; font-weight: 800; fill: #475569; }
+    .td { font-size: 13px; fill: #334155; }
+  </style>
+
+    <rect class="app" x="0" y="0" width="1600" height="1000"/>
+    <rect class="top" x="0" y="0" width="1600" height="64"/>
+    <text class="white" x="32" y="40" font-size="22" font-weight="800">ShopView</text>
+    <text class="white" x="1350" y="39" font-size="14">装修流程迁移原型</text>
+    <rect class="side" x="0" y="64" width="230" height="936"/>
+    <text class="nav" x="32" y="118">合同台账</text>
+    <rect x="20" y="145" width="190" height="42" fill="#e8f1ff" rx="8"/>
+    <text class="nav-on" x="32" y="172">装修管理</text>
+    <text class="nav" x="32" y="224">夜间施工</text>
+    <text class="nav" x="32" y="270">费用退款</text>
+    <text class="nav" x="32" y="316">开柜流转</text>
+    <text class="nav" x="32" y="362">ERP 修改记录</text>
+    <rect class="main" x="230" y="64" width="1370" height="936"/>
+    <text class="title" x="270" y="120">夜间施工报备</text>
+    <text class="small" x="270" y="148">业务填报后自动进入物业汇总，安保按当日汇总表核验进出场</text>
+  
+<rect class="btn" x="1400" y="100" width="98" height="34"/><text class="btnText" text-anchor="middle" x="1449" y="122">提交报备</text><rect class="btn2" x="1270" y="100" width="112" height="34"/><text class="btnText2" text-anchor="middle" x="1326" y="122">生成汇总表</text>
+<rect class="panel" x="270" y="180" width="820" height="250"/><text class="h2" x="292" y="216">报备信息</text>
+
+    <text class="tiny" x="292" y="238">施工日期</text>
+    <rect class="soft" x="292" y="248" width="160" height="38"/>
+    <text class="body" x="304" y="273">2026-06-08</text>
+  
+
+    <text class="tiny" x="482" y="238">品牌/铺位</text>
+    <rect class="soft" x="482" y="248" width="220" height="38"/>
+    <text class="body" x="494" y="273">爱慕 / 6F 厅房</text>
+  
+
+    <text class="tiny" x="732" y="238">施工方名称</text>
+    <rect class="soft" x="732" y="248" width="260" height="38"/>
+    <text class="body" x="744" y="273">某某装饰工程有限公司</text>
+  
+
+    <text class="tiny" x="292" y="305">现场负责人</text>
+    <rect class="soft" x="292" y="315" width="140" height="38"/>
+    <text class="body" x="304" y="340">陈伟</text>
+  
+
+    <text class="tiny" x="462" y="305">联系方式</text>
+    <rect class="soft" x="462" y="315" width="180" height="38"/>
+    <text class="body" x="474" y="340">180****5718</text>
+  
+
+    <text class="tiny" x="682" y="305">人数</text>
+    <rect class="soft" x="682" y="315" width="110" height="38"/>
+    <text class="body" x="694" y="340">7 人</text>
+  
+
+    <text class="tiny" x="292" y="372">施工事项</text>
+    <rect class="soft" x="292" y="382" width="220" height="38"/>
+    <text class="body" x="304" y="407">6F 厅房装修</text>
+  
+
+    <text class="tiny" x="542" y="372">施工周期</text>
+    <rect class="soft" x="542" y="382" width="180" height="38"/>
+    <text class="body" x="554" y="407">6.08 - 6.20</text>
+  
+
+    <text class="tiny" x="762" y="372">影响区域/措施</text>
+    <rect class="soft" x="762" y="382" width="220" height="38"/>
+    <text class="body" x="774" y="407">周边区域 / 遮盖</text>
+  
+<rect class="panel" x="1120" y="180" width="410" height="250"/><text class="h2" x="1142" y="216">安保控制</text>
+<rect class="blue tag" x="1145" y="240" width="86" height="26"/><text class="tagText" fill="#1d4ed8" text-anchor="middle" x="1188" y="258">准入规则</text><text class="body" x="1248" y="259">必须在当日汇总表内</text>
+<rect class="amber tag" x="1145" y="295" width="86" height="26"/><text class="tagText" fill="#8a5a10" text-anchor="middle" x="1188" y="313">现场依据</text><text class="body" x="1248" y="314">施工证 + 纸质签到</text>
+<rect class="green tag" x="1145" y="350" width="86" height="26"/><text class="tagText" fill="#166534" text-anchor="middle" x="1188" y="368">归档要求</text><text class="body" x="1248" y="369">签到表上传系统</text>
+<rect class="panel" x="270" y="460" width="1260" height="360"/><text class="h2" x="292" y="496">当日夜间施工人员汇总表</text>
+<rect class="soft" x="292" y="515" width="1370" height="208"/><text class="th" x="306" y="541">序号</text><text class="th" x="376" y="541">部门/品牌</text><line class="line" x1="362" y1="515" x2="362" y2="723"/><text class="th" x="526" y="541">装修地点</text><line class="line" x1="512" y1="515" x2="512" y2="723"/><text class="th" x="676" y="541">负责人</text><line class="line" x1="662" y1="515" x2="662" y2="723"/><text class="th" x="796" y="541">联系方式</text><line class="line" x1="782" y1="515" x2="782" y2="723"/><text class="th" x="956" y="541">装修事项</text><line class="line" x1="942" y1="515" x2="942" y2="723"/><text class="th" x="1146" y="541">人数</text><line class="line" x1="1132" y1="515" x2="1132" y2="723"/><text class="th" x="1226" y="541">影响区域</text><line class="line" x1="1212" y1="515" x2="1212" y2="723"/><text class="th" x="1366" y="541">采取措施</text><line class="line" x1="1352" y1="515" x2="1352" y2="723"/><text class="th" x="1506" y="541">安保结果</text><line class="line" x1="1492" y1="515" x2="1492" y2="723"/><line class="line" x1="292" y1="555" x2="1662" y2="555"/><text class="td" x="306" y="582">1</text><text class="td" x="376" y="582">中心七部</text><text class="td" x="526" y="582">6F 厅房</text><text class="td" x="676" y="582">陈伟</text><text class="td" x="796" y="582">180****5718</text><text class="td" x="956" y="582">6F 厅房装修</text><text class="td" x="1146" y="582">7</text><text class="td" x="1226" y="582">周边</text><text class="td" x="1366" y="582">遮盖</text><text class="td" x="1506" y="582">待核验</text><line class="line" x1="292" y1="597" x2="1662" y2="597"/><text class="td" x="306" y="624">2</text><text class="td" x="376" y="624">企划部</text><text class="td" x="526" y="624">1F-6F</text><text class="td" x="676" y="624">朱美亚</text><text class="td" x="796" y="624">138****0356</text><text class="td" x="956" y="624">物料安装</text><text class="td" x="1146" y="624">5</text><text class="td" x="1226" y="624">无</text><text class="td" x="1366" y="624">无</text><text class="td" x="1506" y="624">待核验</text><line class="line" x1="292" y1="639" x2="1662" y2="639"/><text class="td" x="306" y="666">3</text><text class="td" x="376" y="666">物业工程</text><text class="td" x="526" y="666">BF-6F</text><text class="td" x="676" y="666">吴浩</text><text class="td" x="796" y="666">158****0035</text><text class="td" x="956" y="666">绿植养护</text><text class="td" x="1146" y="666">1</text><text class="td" x="1226" y="666">无</text><text class="td" x="1366" y="666">无</text><text class="td" x="1506" y="666">待核验</text><line class="line" x1="292" y1="681" x2="1662" y2="681"/><text class="td" x="306" y="708">4</text><text class="td" x="376" y="708">品类一部</text><text class="td" x="526" y="708">兰蔻</text><text class="td" x="676" y="708">顾婷</text><text class="td" x="796" y="708">158****4556</text><text class="td" x="956" y="708">更换陈列</text><text class="td" x="1146" y="708">2</text><text class="td" x="1226" y="708">无</text><text class="td" x="1366" y="708">无</text><text class="td" x="1506" y="708">待核验</text>
+<rect class="amber" x="292" y="845" width="1210" height="42"/><text class="body" x="315" y="872">提示：物业确认汇总后同步安保；未报备人员默认不允许夜间进场。</text>
+</svg>

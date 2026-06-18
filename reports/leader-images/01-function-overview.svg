@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <rect x="80" y="70" width="1440" height="760" rx="28" fill="#ffffff" stroke="#dbe4ee" stroke-width="2"/>
+  <text x="800" y="142" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="52" font-weight="700" fill="#0f172a">百货柜位管理系统功能全景</text>
+  <text x="800" y="190" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="24" fill="#64748b">以柜位空间为底座，连接合同、销售、收益、流程和权限</text>
+
+  <g transform="translate(650 345)">
+    <circle cx="150" cy="105" r="118" fill="#0f766e"/>
+    <circle cx="150" cy="105" r="92" fill="#14b8a6" opacity=".35"/>
+    <text x="150" y="92" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="30" font-weight="700" fill="#ffffff">经营空间</text>
+    <text x="150" y="132" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="30" font-weight="700" fill="#ffffff">数字化平台</text>
+  </g>
+
+  <g stroke="#cbd5e1" stroke-width="4" stroke-linecap="round">
+    <line x1="700" y1="450" x2="455" y2="300"/>
+    <line x1="800" y1="345" x2="800" y2="255"/>
+    <line x1="900" y1="450" x2="1145" y2="300"/>
+    <line x1="700" y1="555" x2="455" y2="705"/>
+    <line x1="800" y1="555" x2="800" y2="650"/>
+    <line x1="900" y1="555" x2="1145" y2="705"/>
+  </g>
+
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0f172a" flood-opacity=".10"/>
+    </filter>
+  </defs>
+
+  <g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" filter="url(#shadow)">
+    <g transform="translate(190 225)">
+      <rect width="360" height="150" rx="18" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#1d4ed8">空间图纸管理</text>
+      <text x="36" y="100" font-size="22" fill="#475569">门店、楼层、底图、柜位图版本</text>
+    </g>
+    <g transform="translate(620 205)">
+      <rect width="360" height="150" rx="18" fill="#ecfeff" stroke="#a5f3fc"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#0e7490">经营单元设置</text>
+      <text x="36" y="100" font-size="22" fill="#475569">柜位编码、面积、状态、图形绑定</text>
+    </g>
+    <g transform="translate(1050 225)">
+      <rect width="360" height="150" rx="18" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#15803d">合同与供应商</text>
+      <text x="36" y="100" font-size="22" fill="#475569">合同台账、费用条款、柜位绑定</text>
+    </g>
+    <g transform="translate(190 630)">
+      <rect width="360" height="150" rx="18" fill="#fff7ed" stroke="#fed7aa"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#c2410c">销售与活动分析</text>
+      <text x="36" y="100" font-size="22" fill="#475569">销售看板、活动复盘、凭证匹配</text>
+    </g>
+    <g transform="translate(620 650)">
+      <rect width="360" height="150" rx="18" fill="#fefce8" stroke="#fde68a"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#a16207">收益地图与结算</text>
+      <text x="36" y="100" font-size="22" fill="#475569">铺位收益、联营结算、图上分析</text>
+    </g>
+    <g transform="translate(1050 630)">
+      <rect width="360" height="150" rx="18" fill="#f5f3ff" stroke="#ddd6fe"/>
+      <text x="36" y="58" font-size="30" font-weight="700" fill="#6d28d9">流程权限与审计</text>
+      <text x="36" y="100" font-size="22" fill="#475569">装修流程、角色范围、日志查询</text>
+    </g>
+  </g>
+</svg>

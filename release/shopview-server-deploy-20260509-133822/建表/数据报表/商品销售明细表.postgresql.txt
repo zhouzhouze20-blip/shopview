@@ -1,7 +1,0 @@
--- 商品销售明细报表（ERP 633）本地汇总表
--- 与 python_app/alembic/versions/a7b8c9d0e1f2_create_rpt_goods_sales_detail.py 一致
--- 业务口径参考同目录：商品销售明细报表条件窗口.txt（Oracle 查询）
-
--- 表名：rpt_goods_sales_detail
--- 主要维度：统计区间 + 楼层/库区/柜组/供应商/商品编码/条码/品名
--- 度量：扣率类（存小数比例）、金额与数量类（与 ERP sum 列对应）

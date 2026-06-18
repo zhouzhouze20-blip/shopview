@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <text x="800" y="104" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="52" font-weight="700" fill="#0f172a">空间图纸与收益地图</text>
+  <text x="800" y="152" text-anchor="middle" font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="24" fill="#64748b">把楼层平面图转成可查询、可染色、可钻取的经营分析地图</text>
+
+  <g font-family="Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+    <rect x="90" y="210" width="940" height="610" rx="24" fill="#ffffff" stroke="#dbe4ee" stroke-width="2"/>
+    <text x="130" y="270" font-size="30" font-weight="700" fill="#0f172a">一楼经营单元示意图</text>
+    <text x="130" y="305" font-size="20" fill="#64748b">颜色代表收益表现，可点击查看合同、销售和结算明细</text>
+
+    <g transform="translate(150 350)" stroke="#ffffff" stroke-width="6">
+      <rect x="0" y="0" width="140" height="110" rx="10" fill="#22c55e"/>
+      <rect x="150" y="0" width="180" height="110" rx="10" fill="#84cc16"/>
+      <rect x="340" y="0" width="140" height="110" rx="10" fill="#f59e0b"/>
+      <rect x="490" y="0" width="220" height="110" rx="10" fill="#ef4444"/>
+      <rect x="720" y="0" width="100" height="230" rx="10" fill="#38bdf8"/>
+      <rect x="0" y="120" width="220" height="110" rx="10" fill="#f59e0b"/>
+      <rect x="230" y="120" width="250" height="110" rx="10" fill="#22c55e"/>
+      <rect x="490" y="120" width="220" height="110" rx="10" fill="#94a3b8"/>
+      <rect x="0" y="240" width="150" height="150" rx="10" fill="#ef4444"/>
+      <rect x="160" y="240" width="180" height="150" rx="10" fill="#84cc16"/>
+      <rect x="350" y="240" width="180" height="150" rx="10" fill="#f59e0b"/>
+      <rect x="540" y="240" width="280" height="150" rx="10" fill="#22c55e"/>
+    </g>
+
+    <g font-size="24" font-weight="700" fill="#ffffff" text-anchor="middle">
+      <text x="220" y="415">A101</text>
+      <text x="390" y="415">A102</text>
+      <text x="560" y="415">A103</text>
+      <text x="750" y="415">A104</text>
+      <text x="920" y="475">通道</text>
+      <text x="260" y="535">B101</text>
+      <text x="505" y="535">B102</text>
+      <text x="750" y="535">空置</text>
+      <text x="225" y="680">C101</text>
+      <text x="400" y="680">C102</text>
+      <text x="590" y="680">C103</text>
+      <text x="830" y="680">C104</text>
+    </g>
+
+    <rect x="1090" y="210" width="420" height="610" rx="24" fill="#ffffff" stroke="#dbe4ee" stroke-width="2"/>
+    <text x="1130" y="270" font-size="30" font-weight="700" fill="#0f172a">讲解重点</text>
+    <g font-size="24" fill="#334155">
+      <text x="1130" y="335">1. 每个柜位都有唯一经营单元</text>
+      <text x="1130" y="395">2. 经营单元关联合同和供应商</text>
+      <text x="1130" y="455">3. 销售、结算、其他收益汇总到铺位</text>
+      <text x="1130" y="515">4. 地图按收益表现自动染色</text>
+      <text x="1130" y="575">5. 点击柜位可钻取明细</text>
+    </g>
+
+    <text x="1130" y="650" font-size="24" font-weight="700" fill="#0f172a">颜色图例</text>
+    <rect x="1130" y="685" width="34" height="34" rx="6" fill="#22c55e"/><text x="1180" y="711" font-size="22" fill="#334155">表现较好</text>
+    <rect x="1310" y="685" width="34" height="34" rx="6" fill="#f59e0b"/><text x="1360" y="711" font-size="22" fill="#334155">需关注</text>
+    <rect x="1130" y="740" width="34" height="34" rx="6" fill="#ef4444"/><text x="1180" y="766" font-size="22" fill="#334155">重点跟进</text>
+    <rect x="1310" y="740" width="34" height="34" rx="6" fill="#94a3b8"/><text x="1360" y="766" font-size="22" fill="#334155">暂无数据</text>
+  </g>
+</svg>

@@ -2238,7 +2238,7 @@ async def voucher_match_candidates(
     end_date: str | None = Query(None, description="日志日期止 YYYY-MM-DD"),
     subject_codes: list[str] = Query(default=["122104"], description="凭证科目编码，默认促销应收款 122104"),
     tolerance: float = Query(0.01, ge=0, le=1000, description="金额匹配容差"),
-    candidate_limit: int = Query(5, ge=1, le=20, description="每个业务汇总行返回的候选凭证明细数"),
+    candidate_limit: int = Query(1, ge=1, le=20, description="每个业务汇总行返回的候选凭证明细数"),
     hide_auto_confirmed: bool = Query(True, description="是否隐藏已自动确认的匹配"),
     exclude_coupon_types: list[str] = Query(default=["V", "W"], description="不需要凭证匹配的券字母"),
     store_code: str | None = Query(None, description="业务门店编码：601/602/603/604"),
@@ -2422,6 +2422,7 @@ async def voucher_match_candidates(
             END AS voucher_business_date
           FROM bh_dw_gl_detail_fact2 v
           WHERE {subject_filter_sql}
+            AND v.excrate1 = 1
             AND (:store_code = '' OR v.pk_corp = :voucher_pk_corp OR SUBSTRING(v.explanation FROM '^\\((10[125]|604)\\)') = :voucher_store_code)
             AND (
               COALESCE(v.localdebitamount, v.debitamount, 0) <> 0
@@ -2662,6 +2663,7 @@ async def voucher_details(
     store_code: str | None = Query(None, description="业务门店编码：601/602/603/604"),
     coupon_type: str | None = Query(None, description="券字母"),
     strict_coupon_type: bool = Query(False, description="是否强制按摘要券码过滤；手工选择默认不强制"),
+    strict_business_scope: bool = Query(False, description="是否强制按业务日期和摘要门店过滤；手工选择使用"),
     match_type: str = Query("DEBIT_USE", pattern="^(DEBIT_USE|CREDIT_BUY)$"),
     amount: float | None = Query(None, description="参考金额"),
     amount_tolerance: float = Query(5000, ge=0, le=1000000, description="金额上下浮动范围"),
@@ -2696,6 +2698,7 @@ async def voucher_details(
         "voucher_pk_corp": selected_pk_corp,
         "coupon_type": coupon_type.strip().upper() if coupon_type else "",
         "strict_coupon_type": strict_coupon_type,
+        "strict_business_scope": strict_business_scope,
         "amount": amount,
         "amount_tolerance": amount_tolerance,
         "keyword": f"%{keyword.strip()}%" if keyword and keyword.strip() else "",
@@ -2743,7 +2746,21 @@ async def voucher_details(
               COALESCE(v.localdebitamount, v.debitamount, 0) <> 0
               OR COALESCE(v.localcreditamount, v.creditamount, 0) <> 0
             )
-            AND (:store_code = '' OR v.pk_corp = :voucher_pk_corp OR SUBSTRING(v.explanation FROM '^\\((10[125]|604)\\)') = :voucher_store_code)
+            AND v.excrate1 = 1
+            AND (
+              :store_code = ''
+              OR (
+                :strict_business_scope IS TRUE
+                AND SUBSTRING(v.explanation FROM '^\\((10[125]|604)\\)') = :voucher_store_code
+              )
+              OR (
+                :strict_business_scope IS FALSE
+                AND (
+                  v.pk_corp = :voucher_pk_corp
+                  OR SUBSTRING(v.explanation FROM '^\\((10[125]|604)\\)') = :voucher_store_code
+                )
+              )
+            )
             AND (
               :strict_coupon_type IS FALSE
               OR :coupon_type = ''
@@ -2761,8 +2778,9 @@ async def voucher_details(
             ELSE voucher_amount - :amount
           END AS amount_diff
         FROM voucher_rows
-        WHERE (:start_date IS NULL OR voucher_business_date IS NULL OR voucher_business_date >= CAST(:start_date AS DATE))
-          AND (:end_date IS NULL OR voucher_business_date IS NULL OR voucher_business_date <= CAST(:end_date AS DATE))
+        WHERE (:strict_business_scope IS FALSE OR voucher_business_date IS NOT NULL)
+          AND (:start_date IS NULL OR (:strict_business_scope IS FALSE AND voucher_business_date IS NULL) OR voucher_business_date >= CAST(:start_date AS DATE))
+          AND (:end_date IS NULL OR (:strict_business_scope IS FALSE AND voucher_business_date IS NULL) OR voucher_business_date <= CAST(:end_date AS DATE))
         ORDER BY
           CASE
             WHEN :coupon_type <> '' AND (voucher_coupon_type = :coupon_type OR explanation ILIKE ('%促销券' || :coupon_type || '%')) THEN 0

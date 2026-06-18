@@ -1,5 +1,5 @@
-import BusinessUnitsPage from "@/pages/business-units";
+import ManaframePage from "@/pages/manaframe";
 
 export default function CountersPage() {
-  return <BusinessUnitsPage />;
+  return <ManaframePage />;
 }

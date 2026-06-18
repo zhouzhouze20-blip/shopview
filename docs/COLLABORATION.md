@@ -138,7 +138,7 @@ Review 重点：
 第 1 天：
 
 - 让 Codex 按 [开发接手指南](./DEVELOPMENT.md) 梳理项目并跑起来。
-- 阅读 [系统架构梳理](../SYSTEM_ARCHITECTURE.md) 的第 1-4 节。
+- 阅读 [系统架构梳理](./architecture/SYSTEM_ARCHITECTURE.md) 的第 1-4 节。
 
 第 2-3 天：
 

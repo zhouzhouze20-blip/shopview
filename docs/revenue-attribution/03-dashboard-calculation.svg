@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .bg{fill:#f6f8fb}.title{font:700 48px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.sub{font:400 24px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#5f6b7a}
+      .h2{font:700 30px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.h3{font:700 22px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}
+      .txt{font:400 21px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}.small{font:400 17px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#667386}
+      .money{font:700 38px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#0f8a4d}.neg{font:700 30px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#b73232}
+      .card{fill:#fff;stroke:#dce4ef;stroke-width:2}.head{fill:#eaf4ff;stroke:#b7d6f3}.green{fill:#eaf8f1;stroke:#72c99c}.orange{fill:#fff3e6;stroke:#f3b36c}.red{fill:#fff0f0;stroke:#ed8d8d}
+      .line{stroke:#dce4ef;stroke-width:2}.th{font:700 19px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}.td{font:400 18px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}
+    </style>
+  </defs>
+  <rect class="bg" width="1920" height="1080"/>
+  <text x="100" y="96" class="title">B 厅房收益看板统计口径</text>
+  <text x="100" y="142" class="sub">看板按“收益归因厅房”统计经营贡献，同时保留“承载合同”用于穿透到结算和 OA 审批。</text>
+
+  <rect x="100" y="210" width="390" height="184" rx="18" class="card"/>
+  <text x="135" y="265" class="h3">合同收益</text>
+  <text x="135" y="318" class="money">0.00</text>
+  <text x="135" y="360" class="small">B 厅房没有正式合同，则该项为 0</text>
+
+  <rect x="530" y="210" width="390" height="184" rx="18" class="card"/>
+  <text x="565" y="265" class="h3">商品编码归因收益</text>
+  <text x="565" y="318" class="money">销售额 × 低扣率</text>
+  <text x="565" y="360" class="small">编码归属 A 合同，但有效期内归因到 B</text>
+
+  <rect x="960" y="210" width="390" height="184" rx="18" class="card"/>
+  <text x="995" y="265" class="h3">费用补收归因收益</text>
+  <text x="995" y="318" class="money">2778.12</text>
+  <text x="995" y="360" class="small">补收挂 A 合同，经营收益归因到 B</text>
+
+  <rect x="1390" y="210" width="430" height="184" rx="18" class="green"/>
+  <text x="1425" y="265" class="h3">B 厅房经营收益合计</text>
+  <text x="1425" y="318" class="money">合同 + 编码归因 + 补收归因</text>
+  <text x="1425" y="360" class="small">用于领导看空间价值和空厅利用效果</text>
+
+  <rect x="100" y="470" width="1720" height="390" rx="18" class="card"/>
+  <rect x="100" y="470" width="1720" height="64" rx="18" class="head"/>
+  <text x="135" y="512" class="h2">收益穿透明细示例</text>
+
+  <line x1="100" y1="594" x2="1820" y2="594" class="line"/>
+  <line x1="100" y1="674" x2="1820" y2="674" class="line"/>
+  <line x1="100" y1="754" x2="1820" y2="754" class="line"/>
+  <line x1="250" y1="534" x2="250" y2="860" class="line"/>
+  <line x1="465" y1="534" x2="465" y2="860" class="line"/>
+  <line x1="675" y1="534" x2="675" y2="860" class="line"/>
+  <line x1="900" y1="534" x2="900" y2="860" class="line"/>
+  <line x1="1115" y1="534" x2="1115" y2="860" class="line"/>
+  <line x1="1325" y1="534" x2="1325" y2="860" class="line"/>
+  <line x1="1535" y1="534" x2="1535" y2="860" class="line"/>
+
+  <text x="130" y="572" class="th">来源类型</text>
+  <text x="280" y="572" class="th">承载合同</text>
+  <text x="495" y="572" class="th">结算厅房</text>
+  <text x="705" y="572" class="th">收益归因厅房</text>
+  <text x="930" y="572" class="th">销售额</text>
+  <text x="1145" y="572" class="th">扣率 / 金额</text>
+  <text x="1355" y="572" class="th">计入 B 收益</text>
+  <text x="1565" y="572" class="th">说明</text>
+
+  <text x="130" y="642" class="td">特卖合同</text>
+  <text x="280" y="642" class="td">B 合同</text>
+  <text x="495" y="642" class="td">B 厅房</text>
+  <text x="705" y="642" class="td">B 厅房</text>
+  <text x="930" y="642" class="td">按实际销售</text>
+  <text x="1145" y="642" class="td">合同扣率</text>
+  <text x="1355" y="642" class="td">是</text>
+  <text x="1565" y="642" class="td">正常合同场景</text>
+
+  <text x="130" y="722" class="td">低扣率编码</text>
+  <text x="280" y="722" class="td">A 合同</text>
+  <text x="495" y="722" class="td">A 厅房</text>
+  <text x="705" y="722" class="td">B 厅房</text>
+  <text x="930" y="722" class="td">10000.00</text>
+  <text x="1145" y="722" class="td">4% = 400.00</text>
+  <text x="1355" y="722" class="td">400.00</text>
+  <text x="1565" y="722" class="td">靠商品编码归因配置</text>
+
+  <text x="130" y="802" class="td">费用补收</text>
+  <text x="280" y="802" class="td">A 合同</text>
+  <text x="495" y="802" class="td">A 厅房</text>
+  <text x="705" y="802" class="td">B 厅房</text>
+  <text x="930" y="802" class="td">6849.00</text>
+  <text x="1145" y="802" class="td">2778.12</text>
+  <text x="1355" y="802" class="td">2778.12</text>
+  <text x="1565" y="792" class="td">补收挂 A 合同</text>
+  <text x="1565" y="824" class="td">空间收益归因 B</text>
+
+  <rect x="100" y="910" width="820" height="92" rx="16" class="orange"/>
+  <text x="135" y="950" class="h3">A 厅房页面建议展示</text>
+  <text x="135" y="982" class="txt">合同承载收益 +2778.12；其中归因其他厅房 +2778.12，避免误判为 A 自身经营贡献。</text>
+
+  <rect x="1000" y="910" width="820" height="92" rx="16" class="green"/>
+  <text x="1035" y="950" class="h3">B 厅房页面建议展示</text>
+  <text x="1035" y="982" class="txt">合同收益 0；商品编码归因收益 +400.00；补收归因收益 +2778.12。</text>
+</svg>

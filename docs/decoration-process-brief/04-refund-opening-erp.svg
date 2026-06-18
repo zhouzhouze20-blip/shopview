@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8495"/>
+    </marker>
+  </defs>
+  <style>
+    svg { background: #f7f8fb; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #172033; }
+    .title { font-size: 42px; font-weight: 800; }
+    .subtitle { font-size: 20px; fill: #5b6474; }
+    .section-title { font-size: 24px; font-weight: 800; }
+    .small { font-size: 16px; fill: #5b6474; }
+    .label { font-size: 18px; font-weight: 700; }
+    .body { font-size: 16px; fill: #354052; }
+    .num { font-size: 18px; font-weight: 800; fill: #fff; }
+    .lane { fill: #ffffff; stroke: #d8dde8; stroke-width: 1.4; }
+    .card { fill: #ffffff; stroke: #cfd6e4; stroke-width: 1.5; rx: 16; }
+    .blue { fill: #e7f0ff; stroke: #6a9cf5; }
+    .green { fill: #e8f7ef; stroke: #55b97a; }
+    .amber { fill: #fff4da; stroke: #e3ad3f; }
+    .red { fill: #fff0ef; stroke: #e36a5c; }
+    .purple { fill: #f0eaff; stroke: #8d73e6; }
+    .dark { fill: #172033; }
+    .line { stroke: #7b8495; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    .dash { stroke: #9aa3b4; stroke-width: 2; stroke-dasharray: 7 7; fill: none; marker-end: url(#arrow); }
+    .pill { rx: 18; }
+    .note { fill: #fff; stroke: #e0e4ed; stroke-width: 1.2; rx: 14; }
+  </style>
+<rect x="0" y="0" width="1600" height="900" fill="#f7f8fb"/>
+
+    <rect x="0" y="0" width="1600" height="120" fill="#ffffff"/>
+    <text class="title" x="70" y="68">验收、退保证金与开柜流转</text>
+    <text class="subtitle" x="72" y="100">迁移 OA 原流程：百货营运-23 品牌进(撤)场施工验收及保证金退还流程</text>
+  
+
+    <rect class="card green" x="90" y="170" width="245" height="125"/>
+    <circle cx="120" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="120" y="208">1</text>
+    <text class="label" x="148" y="208">施工完成</text>
+    <text class="body" x="114" y="240">业务/施工方提交完工</text>
+<text class="body" x="114" y="264">关联原进场缴费流程</text>
+  
+
+    <rect class="card green" x="395" y="170" width="245" height="125"/>
+    <circle cx="425" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="425" y="208">2</text>
+    <text class="label" x="453" y="208">现场验收</text>
+    <text class="body" x="419" y="240">物业/工程现场确认</text>
+<text class="body" x="419" y="264">纸质验收单签字</text>
+  
+
+    <rect class="card blue" x="700" y="170" width="245" height="125"/>
+    <circle cx="730" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="730" y="208">3</text>
+    <text class="label" x="758" y="208">发起退款</text>
+    <text class="body" x="724" y="240">上传验收单、签到表</text>
+<text class="body" x="724" y="264">带出原缴费金额</text>
+  
+
+    <rect class="card amber" x="1005" y="170" width="245" height="125"/>
+    <circle cx="1035" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="1035" y="208">4</text>
+    <text class="label" x="1063" y="208">扣款测算</text>
+    <text class="body" x="1029" y="240">管理费、水电费</text>
+<text class="body" x="1029" y="264">施工罚款、工本费</text>
+  
+
+    <rect class="card red" x="1310" y="170" width="245" height="125"/>
+    <circle cx="1340" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="1340" y="208">5</text>
+    <text class="label" x="1368" y="208">财务退款</text>
+    <text class="body" x="1334" y="240">审核退款账号</text>
+<text class="body" x="1334" y="264">回填退款凭证</text>
+  
+<path class="line" d="M335 232 H390"/><path class="line" d="M640 232 H695"/><path class="line" d="M945 232 H1000"/><path class="line" d="M1250 232 H1305"/>
+<path class="dash" d="M1430 295 C1430 370 250 370 250 455"/>
+
+    <rect class="card blue" x="170" y="455" width="300" height="125"/>
+    <circle cx="200" cy="486" r="18" class="dark"/><text class="num" text-anchor="middle" x="200" y="493">6</text>
+    <text class="label" x="228" y="493">自动生成开柜流转单</text>
+    <text class="body" x="194" y="525">来源：验收/退款完成</text>
+<text class="body" x="194" y="549">避免业务重复发起</text>
+  
+
+    <rect class="card purple" x="560" y="455" width="300" height="125"/>
+    <circle cx="590" cy="486" r="18" class="dark"/><text class="num" text-anchor="middle" x="590" y="493">7</text>
+    <text class="label" x="618" y="493">实测面积/用电功率</text>
+    <text class="body" x="584" y="525">工程或物业填报</text>
+<text class="body" x="584" y="549">形成测算依据</text>
+  
+
+    <rect class="card amber" x="950" y="455" width="300" height="125"/>
+    <circle cx="980" cy="486" r="18" class="dark"/><text class="num" text-anchor="middle" x="980" y="493">8</text>
+    <text class="label" x="1008" y="493">条款测算</text>
+    <text class="body" x="974" y="525">电费条款、租金条款</text>
+<text class="body" x="974" y="549">能耗/综合管理费</text>
+  
+
+    <rect class="card green" x="1340" y="455" width="220" height="125"/>
+    <circle cx="1370" cy="486" r="18" class="dark"/><text class="num" text-anchor="middle" x="1370" y="493">9</text>
+    <text class="label" x="1398" y="493">ERP 更新</text>
+    <text class="body" x="1364" y="525">传 ERP 修改</text>
+<text class="body" x="1364" y="549">回填单号/截图</text>
+  
+<path class="line" d="M470 518 H555"/><path class="line" d="M860 518 H945"/><path class="line" d="M1250 518 H1335"/>
+<rect class="note" x="180" y="705" width="1240" height="95"/>
+<text class="section-title" x="220" y="742">汇报口径</text>
+<text class="body" x="220" y="775">退保证金不是孤立流程，必须强关联原进场缴费流程；开柜流转单也不应人工重建，应该由验收/退款完成后自动生成。</text>
+<text class="body" x="220" y="801">这样可以把扣款依据、退款凭证、实测面积、用电功率、ERP 条款更新全部串起来。</text>
+</svg>

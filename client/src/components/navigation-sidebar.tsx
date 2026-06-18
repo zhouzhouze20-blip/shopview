@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Users, FileText, CreditCard, BarChart3, Settings, ChevronLeft, Truck, HardHat, FileSpreadsheet, Activity, TicketPercent, Shield } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Building2, Users, FileText, CreditCard, BarChart3, Settings, ChevronLeft, Truck, HardHat, FileSpreadsheet, Activity, TicketPercent, Shield, CircleDollarSign, Target, Eye, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { filterAccessibleModuleTree } from "@/lib/module-permissions";
+import { filterAccessibleModuleTree, isAdminUser } from "@/lib/module-permissions";
 
 export interface NavigationItem {
   id: string;
@@ -43,7 +45,8 @@ export const navigationItems: NavigationItem[] = [
     name: "合同管理",
     icon: FileText,
     subItems: [
-      { id: "contracts", name: "合同台账", icon: FileText }
+      { id: "contracts", name: "合同台账", icon: FileText },
+      { id: "contract-unit-bindings", name: "合同柜位绑定", icon: Building2 }
     ]
   },
   {
@@ -74,7 +77,11 @@ export const navigationItems: NavigationItem[] = [
     id: "financial-management",
     name: "财务管理",
     icon: CreditCard,
-    subItems: [{ id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet }]
+    subItems: [
+      { id: "merchant-planning", name: "招商规划", icon: Target },
+      { id: "revenue-map", name: "收益地图", icon: CircleDollarSign },
+      { id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet },
+    ]
   },
   {
     id: "system-management",
@@ -110,8 +117,27 @@ interface NavigationSidebarProps {
 
 export default function NavigationSidebar({ activeModule = "dashboard", onModuleChange, isCollapsed = false, onToggleCollapse, className }: NavigationSidebarProps) {
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
-  const { user } = useAuth();
-  const visibleNavigationItems = useMemo(() => filterAccessibleModuleTree(navigationItems, user), [user]);
+  const [adminViewSearch, setAdminViewSearch] = useState("");
+  const { user, menuUser, adminViewUsers, adminViewUser, adminViewLoading, setAdminViewUserId } = useAuth();
+  const visibleNavigationItems = useMemo(() => filterAccessibleModuleTree(navigationItems, menuUser), [menuUser]);
+  const canUseAdminView = isAdminUser(user);
+  const adminViewOptions = useMemo(
+    () => adminViewUsers.filter((candidate) => candidate.user_id !== user?.user_id),
+    [adminViewUsers, user?.user_id],
+  );
+  const filteredAdminViewOptions = useMemo(() => {
+    const keyword = adminViewSearch.trim().toLowerCase();
+    if (!keyword) return adminViewOptions;
+    return adminViewOptions.filter((candidate) =>
+      [
+        candidate.username,
+        candidate.real_name,
+        candidate.employee_no,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(keyword)),
+    );
+  }, [adminViewOptions, adminViewSearch]);
 
   const toggleExpanded = (itemId: string) => {
     setExpandedItems(prev => 
@@ -274,9 +300,61 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
       </div>
 
       <div className="p-6 border-t border-slate-800">
+        {canUseAdminView && (
+          <div className="mb-4 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+              <Eye className="h-3.5 w-3.5" />
+              <span>管理员代看</span>
+            </div>
+            <Select
+              value={adminViewUser ? String(adminViewUser.user_id) : "__self__"}
+              onValueChange={(value) => setAdminViewUserId(value === "__self__" ? null : Number(value))}
+              disabled={adminViewLoading}
+            >
+              <SelectTrigger className="h-9 border-slate-700 bg-slate-950 text-xs text-slate-100">
+                <SelectValue placeholder={adminViewLoading ? "加载用户..." : "选择代看用户"} />
+              </SelectTrigger>
+              <SelectContent>
+                <div className="sticky top-0 z-10 bg-white p-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      value={adminViewSearch}
+                      onChange={(event) => setAdminViewSearch(event.target.value)}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      placeholder="搜索用户名/姓名"
+                      className="h-8 pl-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <SelectItem value="__self__">退出代看，查看管理员菜单</SelectItem>
+                {filteredAdminViewOptions.map((candidate) => (
+                  <SelectItem key={candidate.user_id} value={String(candidate.user_id)}>
+                    {candidate.real_name || candidate.username}
+                    {candidate.real_name && candidate.username ? ` (${candidate.username})` : ""}
+                    {candidate.role_names?.length ? ` / ${candidate.role_names.join("、")}` : ""}
+                  </SelectItem>
+                ))}
+                {!filteredAdminViewOptions.length ? (
+                  <div className="px-8 py-2 text-xs text-slate-500">没有匹配用户</div>
+                ) : null}
+              </SelectContent>
+            </Select>
+            {adminViewUser ? (
+              <div className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1.5 text-[11px] leading-4 text-amber-100">
+                菜单和数据范围按 {adminViewUser.real_name || adminViewUser.username} 计算，登录身份仍为管理员。
+              </div>
+            ) : null}
+          </div>
+        )}
         <div className="text-xs text-slate-400">
           当前用户: {user?.real_name || user?.username || "已登录"}
         </div>
+        {adminViewUser ? (
+          <div className="mt-1 text-xs text-amber-200">
+            代看菜单: {adminViewUser.real_name || adminViewUser.username}
+          </div>
+        ) : null}
         <div className="text-xs text-slate-500 mt-1">
           版本: v1.0.0
         </div>

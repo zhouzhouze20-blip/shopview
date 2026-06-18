@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#134e4a"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#ecfeff" stop-opacity="0.95"/>
+    </linearGradient>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei",Arial,sans-serif}
+      .title{font-size:52px;font-weight:800;fill:#fff}
+      .sub{font-size:25px;fill:#ccfbf1}
+      .card{fill:url(#card);stroke:#5eead4;stroke-width:3;rx:26}
+      .darkCard{fill:#082f49;stroke:#38bdf8;stroke-width:3;rx:26}
+      .h{font-size:30px;font-weight:800;fill:#0f172a}
+      .p{font-size:22px;fill:#334155}
+      .whiteH{font-size:30px;font-weight:800;fill:#fff}
+      .whiteP{font-size:22px;fill:#dbeafe}
+      .num{font-size:38px;font-weight:900;fill:#0891b2}
+      .arrow{stroke:#fbbf24;stroke-width:8;fill:none;marker-end:url(#arrow)}
+      .old{fill:#fff7ed;stroke:#fb923c;stroke-width:3;rx:22}
+      .new{fill:#ecfdf5;stroke:#34d399;stroke-width:3;rx:22}
+      .bad{font-size:25px;font-weight:800;fill:#c2410c}
+      .good{font-size:25px;font-weight:800;fill:#047857}
+      .foot{font-size:25px;font-weight:800;fill:#fff}
+      .small{font-size:20px;fill:#475569}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#fbbf24"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1380" cy="140" r="250" fill="#22d3ee" opacity="0.12"/>
+  <circle cx="130" cy="760" r="330" fill="#fbbf24" opacity="0.10"/>
+
+  <text x="80" y="92" class="title">硬件 / 网络 / 服务器 / 虚拟机的 AI 协作模式</text>
+  <text x="82" y="135" class="sub">目标：不是让工程师多写记录，而是把重复巡检和排查前置自动化</text>
+
+  <rect x="80" y="205" width="440" height="240" class="old"/>
+  <text x="115" y="260" class="bad">旧模式：人先救火</text>
+  <text x="115" y="318" class="p">业务发现异常后，工程师登录服务器、</text>
+  <text x="115" y="354" class="p">查端口、查日志、查磁盘、查服务。</text>
+  <text x="115" y="405" class="small">问题：依赖个人经验，过程难复用，</text>
+  <text x="115" y="434" class="small">登记变成额外负担。</text>
+
+  <rect x="1080" y="205" width="440" height="240" class="new"/>
+  <text x="1115" y="260" class="good">新模式：系统先发现</text>
+  <text x="1115" y="318" class="p">巡检脚本定时采集状态，AI 先生成</text>
+  <text x="1115" y="354" class="p">摘要、风险等级和建议动作。</text>
+  <text x="1115" y="405" class="small">工程师只处理确认、例外、高风险</text>
+  <text x="1115" y="434" class="small">变更和规则维护。</text>
+
+  <rect x="125" y="545" width="250" height="180" class="card"/>
+  <text x="155" y="600" class="num">01</text>
+  <text x="155" y="650" class="h">自动巡检</text>
+  <text x="155" y="695" class="p">主机、端口、服务、</text>
+  <text x="155" y="725" class="p">磁盘、备份、证书</text>
+
+  <rect x="460" y="545" width="250" height="180" class="card"/>
+  <text x="490" y="600" class="num">02</text>
+  <text x="490" y="650" class="h">AI 摘要</text>
+  <text x="490" y="695" class="p">正常项、预警项、</text>
+  <text x="490" y="725" class="p">严重项、建议动作</text>
+
+  <rect x="795" y="545" width="250" height="180" class="card"/>
+  <text x="825" y="600" class="num">03</text>
+  <text x="825" y="650" class="h">人工确认</text>
+  <text x="825" y="695" class="p">判断风险、审批变更、</text>
+  <text x="825" y="725" class="p">处理例外情况</text>
+
+  <rect x="1130" y="545" width="250" height="180" class="card"/>
+  <text x="1160" y="600" class="num">04</text>
+  <text x="1160" y="650" class="h">自动留痕</text>
+  <text x="1160" y="695" class="p">生成故障记录、</text>
+  <text x="1160" y="725" class="p">变更记录和案例</text>
+
+  <path d="M385 635 L450 635" class="arrow"/>
+  <path d="M720 635 L785 635" class="arrow"/>
+  <path d="M1055 635 L1120 635" class="arrow"/>
+
+  <rect x="570" y="210" width="460" height="235" class="darkCard"/>
+  <text x="610" y="270" class="whiteH">工程师的新职责</text>
+  <text x="610" y="330" class="whiteP">1. 建巡检项和阈值</text>
+  <text x="610" y="370" class="whiteP">2. 维护标准处置 Playbook</text>
+  <text x="610" y="410" class="whiteP">3. 审核高风险操作和例外问题</text>
+
+  <rect x="265" y="785" width="1070" height="64" fill="#020617" rx="22" opacity="0.92"/>
+  <text x="315" y="827" class="foot">一句话：人不再反复手工查状态，而是建设巡检、预警、处置流程和风险确认机制</text>
+</svg>

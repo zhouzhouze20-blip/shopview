@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +20,7 @@ import {
   useSuppliers,
   useUpdateSupplier,
 } from "@/hooks/useSuppliers";
+import { apiGet } from "@/lib/api";
 import { Pencil, Plus, Trash2, Truck } from "lucide-react";
 
 type SupplierFormState = {
@@ -190,17 +192,45 @@ function statusBadge(status?: string | null) {
   return <Badge variant="outline">{status || "未设置"}</Badge>;
 }
 
+function fmtValue(value?: string | number | null) {
+  if (value == null || value === "") return "—";
+  return String(value);
+}
+
+interface StoreOption {
+  storeId?: number;
+  store_id?: number;
+  storeCode?: string;
+  store_code?: string;
+  storeName?: string;
+  store_name?: string;
+}
+
+function DetailItem({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div className="space-y-1 rounded-md border bg-slate-50 px-3 py-2">
+      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className="break-words text-xs font-medium text-slate-900">{fmtValue(value)}</div>
+    </div>
+  );
+}
+
 export default function SuppliersPage() {
   const { toast } = useToast();
+  const [storeId, setStoreId] = useState("ALL");
   const [supplierCode, setSupplierCode] = useState("");
   const [supplierName, setSupplierName] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [form, setForm] = useState<SupplierFormState>(defaultForm);
 
-  const suppliersQuery = useSuppliers(supplierCode, supplierName, statusFilter === "ALL" ? "" : statusFilter);
-  const detailQuery = useSupplierDetail(editingId ?? undefined);
+  const suppliersQuery = useSuppliers({ storeId, supplierCode, supplierName });
+  const detailQuery = useSupplierDetail(editingId ?? viewingId ?? undefined);
+  const storesQuery = useQuery({
+    queryKey: ["/api/stores", { is_active: true }],
+    queryFn: () => apiGet<StoreOption[]>("/api/stores?is_active=true"),
+  });
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
   const deleteSupplier = useDeleteSupplier();
@@ -212,6 +242,7 @@ export default function SuppliersPage() {
   }, [editingId, detailQuery.data]);
 
   const suppliers = useMemo(() => suppliersQuery.data ?? [], [suppliersQuery.data]);
+  const stores = useMemo(() => storesQuery.data ?? [], [storesQuery.data]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -222,6 +253,14 @@ export default function SuppliersPage() {
   const openEdit = (supplierId: string) => {
     setEditingId(supplierId);
     setDialogOpen(true);
+  };
+
+  const openDetail = (supplierId: string) => {
+    setViewingId(supplierId);
+  };
+
+  const closeDetail = () => {
+    setViewingId(null);
   };
 
   const closeDialog = () => {
@@ -275,110 +314,118 @@ export default function SuppliersPage() {
   };
 
   return (
-    <div className="p-6 space-y-6" data-testid="suppliers-page">
+    <div className="p-4 space-y-4 text-sm" data-testid="suppliers-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">供应商管理</h1>
-          <p className="text-sm text-slate-500 mt-1">基于 `supplierbase` 的供应商基础资料维护</p>
+          <h1 className="text-2xl font-bold text-slate-900">供应商管理</h1>
+          <p className="mt-1 text-xs text-slate-500">基于 `supplierbase` 的供应商基础资料维护</p>
         </div>
-        <Button onClick={openCreate} className="bg-blue-600 hover:bg-blue-700">
+        <Button onClick={openCreate} className="h-9 bg-blue-600 text-sm hover:bg-blue-700">
           <Plus className="w-4 h-4 mr-2" />
           新增供应商
         </Button>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>筛选条件</CardTitle>
+        <CardHeader className="px-5 py-4">
+          <CardTitle className="text-lg">筛选条件</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label>供应商编码</Label>
+        <CardContent className="grid grid-cols-1 gap-4 px-5 pb-5 md:grid-cols-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">门店</Label>
+            <Select value={storeId} onValueChange={setStoreId}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="z-50 bg-white border shadow-xl">
+                <SelectItem value="ALL">全部门店</SelectItem>
+                {stores.map((store) => {
+                  const id = store.storeId ?? store.store_id;
+                  const code = store.storeCode ?? store.store_code ?? id;
+                  const name = store.storeName ?? store.store_name ?? `门店 ${id}`;
+                  if (id == null) return null;
+                  const value = code != null ? String(code) : String(id);
+                  return (
+                    <SelectItem key={id} value={value}>
+                      {code ? `${code} · ${name}` : name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">供应商编码</Label>
             <Input
+              className="h-9 text-sm"
               value={supplierCode}
               onChange={(event) => setSupplierCode(event.target.value)}
               placeholder="请输入供应商编码"
             />
           </div>
-          <div className="space-y-2">
-            <Label>供应商名称</Label>
+          <div className="space-y-1.5">
+            <Label className="text-xs">供应商名称</Label>
             <Input
+              className="h-9 text-sm"
               value={supplierName}
               onChange={(event) => setSupplierName(event.target.value)}
               placeholder="请输入供应商名称"
             />
           </div>
-          <div className="space-y-2">
-            <Label>状态</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="全部状态" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部</SelectItem>
-                <SelectItem value="Y">正常</SelectItem>
-                <SelectItem value="N">停用</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <div className="flex items-end">
-            <div className="text-sm text-slate-500">当前共 {suppliers.length} 条记录</div>
+            <div className="inline-flex h-9 items-center text-xs text-slate-500">当前共 {suppliers.length} 条记录</div>
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Truck className="w-5 h-5 text-blue-600" />
+        <CardHeader className="px-5 py-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Truck className="w-4 h-4 text-blue-600" />
             供应商列表
           </CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <Table>
+        <CardContent className="overflow-x-auto px-5 pb-5">
+          <Table className="text-xs">
             <TableHeader>
               <TableRow>
-                <TableHead>编码</TableHead>
-                <TableHead>名称</TableHead>
-                <TableHead>地址</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>分类</TableHead>
-                <TableHead>法定代表人</TableHead>
-                <TableHead>开户行</TableHead>
-                <TableHead>账号</TableHead>
-                <TableHead>税号</TableHead>
-                <TableHead>更新时间</TableHead>
-                <TableHead className="text-right">操作</TableHead>
+                <TableHead className="whitespace-nowrap">供应商编码</TableHead>
+                <TableHead className="whitespace-nowrap">供应商名称</TableHead>
+                <TableHead className="whitespace-nowrap">地址</TableHead>
+                <TableHead className="whitespace-nowrap">状态</TableHead>
+                <TableHead className="whitespace-nowrap text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {suppliersQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="py-8 text-center text-slate-500">
+                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">
                     正在加载供应商数据...
                   </TableCell>
                 </TableRow>
               ) : suppliersQuery.error ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="py-8 text-center text-red-600">
+                  <TableCell colSpan={5} className="py-8 text-center text-red-600">
                     {suppliersQuery.error instanceof Error ? suppliersQuery.error.message : "供应商加载失败"}
                   </TableCell>
                 </TableRow>
               ) : suppliers.length ? (
                 suppliers.map((supplier) => (
                   <TableRow key={supplier.sbid}>
-                    <TableCell className="font-medium">{supplier.sbid}</TableCell>
-                    <TableCell>{supplier.sbcname}</TableCell>
-                    <TableCell className="max-w-[260px] truncate" title={supplier.sbaddr ?? ""}>
+                    <TableCell className="whitespace-nowrap font-medium">
+                      <button className="text-blue-700 hover:underline" onClick={() => openDetail(supplier.sbid)}>
+                        {supplier.sbid}
+                      </button>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <button className="text-blue-700 hover:underline" onClick={() => openDetail(supplier.sbid)}>
+                        {supplier.sbcname}
+                      </button>
+                    </TableCell>
+                    <TableCell className="max-w-[420px] truncate whitespace-nowrap" title={supplier.sbaddr ?? ""}>
                       {supplier.sbaddr || "—"}
                     </TableCell>
-                    <TableCell>{statusBadge(supplier.sbstatus)}</TableCell>
-                    <TableCell>{supplier.sbcatcode || "—"}</TableCell>
-                    <TableCell>{supplier.sbfrdb || "—"}</TableCell>
-                    <TableCell>{supplier.sbbank || "—"}</TableCell>
-                    <TableCell>{supplier.sbaccntno || "—"}</TableCell>
-                    <TableCell>{supplier.sbtaxno || "—"}</TableCell>
-                    <TableCell>{supplier.sbxgrq ? new Date(supplier.sbxgrq).toLocaleString("zh-CN") : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">{statusBadge(supplier.sbstatus)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button variant="outline" size="sm" onClick={() => openEdit(supplier.sbid)}>
@@ -393,7 +440,7 @@ export default function SuppliersPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={11} className="py-8 text-center text-slate-500">
+                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">
                     暂无供应商数据
                   </TableCell>
                 </TableRow>
@@ -402,6 +449,50 @@ export default function SuppliersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(viewingId)} onOpenChange={(open) => (!open ? closeDetail() : undefined)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg">供应商详情</DialogTitle>
+          </DialogHeader>
+          {detailQuery.isLoading ? (
+            <div className="py-10 text-center text-sm text-slate-500">正在加载供应商详情...</div>
+          ) : detailQuery.error ? (
+            <div className="py-10 text-center text-sm text-red-600">
+              {detailQuery.error instanceof Error ? detailQuery.error.message : "供应商详情加载失败"}
+            </div>
+          ) : detailQuery.data ? (
+            <div className="space-y-4 text-sm">
+              <div>
+                <div className="text-base font-semibold text-slate-900">
+                  {fmtValue(detailQuery.data.sbid)} · {fmtValue(detailQuery.data.sbcname)}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">{fmtValue(detailQuery.data.sbaddr)}</div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <DetailItem
+                  label="状态"
+                  value={
+                    detailQuery.data.sbstatus === "Y"
+                      ? "正常"
+                      : detailQuery.data.sbstatus === "N"
+                        ? "停用"
+                        : detailQuery.data.sbstatus
+                  }
+                />
+                <DetailItem label="分类" value={detailQuery.data.sbcatcode} />
+                <DetailItem label="法定代表人" value={detailQuery.data.sbfrdb} />
+                <DetailItem label="开户行" value={detailQuery.data.sbbank} />
+                <DetailItem label="账号" value={detailQuery.data.sbaccntno} />
+                <DetailItem label="税号" value={detailQuery.data.sbtaxno} />
+                <DetailItem label="联系人" value={detailQuery.data.sblxr} />
+                <DetailItem label="联系方式" value={detailQuery.data.sblxfs || detailQuery.data.sbtel} />
+                <DetailItem label="邮箱" value={detailQuery.data.sbemail} />
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => (!open ? closeDialog() : setDialogOpen(true))}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">

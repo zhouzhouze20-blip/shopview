@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+
+  <style>
+    svg { background: #eef2f7; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #182033; }
+    .app { fill: #f4f7fb; }
+    .top { fill: #111827; }
+    .side { fill: #ffffff; stroke: #dbe2ee; }
+    .main { fill: #f6f8fb; }
+    .panel { fill: #ffffff; stroke: #d9e1ef; stroke-width: 1; rx: 10; }
+    .soft { fill: #f8fafc; stroke: #e2e8f0; rx: 8; }
+    .blue { fill: #e8f1ff; stroke: #79a8f7; rx: 8; }
+    .green { fill: #e8f7ef; stroke: #64bd84; rx: 8; }
+    .amber { fill: #fff5df; stroke: #e4b551; rx: 8; }
+    .red { fill: #fff0ef; stroke: #e27468; rx: 8; }
+    .purple { fill: #f1edff; stroke: #9279e6; rx: 8; }
+    .muted { fill: #687386; }
+    .white { fill: #ffffff; }
+    .title { font-size: 28px; font-weight: 800; }
+    .h2 { font-size: 20px; font-weight: 800; }
+    .h3 { font-size: 17px; font-weight: 800; }
+    .body { font-size: 15px; fill: #364154; }
+    .small { font-size: 13px; fill: #647084; }
+    .tiny { font-size: 12px; fill: #7b8495; }
+    .nav { font-size: 15px; fill: #334155; }
+    .nav-on { font-size: 15px; font-weight: 800; fill: #1d4ed8; }
+    .btn { fill: #2563eb; rx: 7; }
+    .btn2 { fill: #ffffff; stroke: #cfd8e8; rx: 7; }
+    .btnText { font-size: 14px; font-weight: 700; fill: #ffffff; }
+    .btnText2 { font-size: 14px; font-weight: 700; fill: #334155; }
+    .tag { rx: 13; }
+    .tagText { font-size: 12px; font-weight: 700; }
+    .line { stroke: #d8dfeb; stroke-width: 1; }
+    .th { font-size: 13px; font-weight: 800; fill: #475569; }
+    .td { font-size: 13px; fill: #334155; }
+  </style>
+
+    <rect class="app" x="0" y="0" width="1600" height="1000"/>
+    <rect class="top" x="0" y="0" width="1600" height="64"/>
+    <text class="white" x="32" y="40" font-size="22" font-weight="800">ShopView</text>
+    <text class="white" x="1350" y="39" font-size="14">装修流程迁移原型</text>
+    <rect class="side" x="0" y="64" width="230" height="936"/>
+    <text class="nav" x="32" y="118">合同台账</text>
+    <rect x="20" y="145" width="190" height="42" fill="#e8f1ff" rx="8"/>
+    <text class="nav-on" x="32" y="172">装修管理</text>
+    <text class="nav" x="32" y="224">夜间施工</text>
+    <text class="nav" x="32" y="270">费用退款</text>
+    <text class="nav" x="32" y="316">开柜流转</text>
+    <text class="nav" x="32" y="362">ERP 修改记录</text>
+    <rect class="main" x="230" y="64" width="1370" height="936"/>
+    <text class="title" x="270" y="120">退保证金与开柜流转</text>
+    <text class="small" x="270" y="148">退保证金完成后自动生成开柜流转单，继续完成实测面积、用电功率和 ERP 条款更新</text>
+  
+<rect class="btn" x="1408" y="100" width="98" height="34"/><text class="btnText" text-anchor="middle" x="1457" y="122">提交退款</text><rect class="btn2" x="1282" y="100" width="98" height="34"/><text class="btnText2" text-anchor="middle" x="1331" y="122">保存测算</text>
+<rect class="panel" x="270" y="180" width="1260" height="130"/><text class="h2" x="292" y="216">关联原交保证金流程</text>
+
+    <text class="tiny" x="292" y="238">原流程编号</text>
+    <rect class="soft" x="292" y="248" width="230" height="38"/>
+    <text class="body" x="304" y="273">ZXSQ-2026-0602-015</text>
+  
+
+    <text class="tiny" x="532" y="238">品牌/柜位</text>
+    <rect class="soft" x="532" y="248" width="210" height="38"/>
+    <text class="body" x="544" y="273">爱慕 / 6F 厅房</text>
+  
+
+    <text class="tiny" x="762" y="238">原缴费合计</text>
+    <rect class="soft" x="762" y="248" width="160" height="38"/>
+    <text class="body" x="774" y="273">9,000.00</text>
+  
+
+    <text class="tiny" x="952" y="238">可退金额</text>
+    <rect class="soft" x="952" y="248" width="160" height="38"/>
+    <text class="body" x="964" y="273">8,000.00</text>
+  
+
+    <text class="tiny" x="1142" y="238">退款账号</text>
+    <rect class="soft" x="1142" y="248" width="280" height="38"/>
+    <text class="body" x="1154" y="273">张三 / 建设银行 / 6222****</text>
+  
+<rect class="panel" x="270" y="340" width="610" height="300"/><text class="h2" x="292" y="376">验收与扣款</text>
+<rect class="green" x="292" y="395" width="250" height="64"/><text class="h3" x="315" y="424">纸质验收单</text><text class="small" x="315" y="446">已上传，物业确认</text>
+<rect class="blue" x="570" y="395" width="250" height="64"/><text class="h3" x="593" y="424">纸质签到表</text><text class="small" x="593" y="446">已上传 2 页</text>
+<rect class="soft" x="292" y="490" width="570" height="166"/><text class="th" x="306" y="516">扣款项</text><text class="th" x="486" y="516">金额</text><line class="line" x1="472" y1="490" x2="472" y2="656"/><text class="th" x="616" y="516">依据</text><line class="line" x1="602" y1="490" x2="602" y2="656"/><line class="line" x1="292" y1="530" x2="862" y2="530"/><text class="td" x="306" y="557">管理费扣款</text><text class="td" x="486" y="557">300.00</text><text class="td" x="616" y="557">按施工天数计算</text><line class="line" x1="292" y1="572" x2="862" y2="572"/><text class="td" x="306" y="599">水电费扣款</text><text class="td" x="486" y="599">180.00</text><text class="td" x="616" y="599">现场核算</text><line class="line" x1="292" y1="614" x2="862" y2="614"/><text class="td" x="306" y="641">施工罚款</text><text class="td" x="486" y="641">0.00</text><text class="td" x="616" y="641">无违规记录</text>
+<rect class="panel" x="910" y="340" width="620" height="300"/><text class="h2" x="932" y="376">退款结果</text>
+
+    <text class="tiny" x="932" y="398">原收保证金</text>
+    <rect class="soft" x="932" y="408" width="170" height="38"/>
+    <text class="body" x="944" y="433">8,000.00</text>
+  
+
+    <text class="tiny" x="1140" y="398">扣款合计</text>
+    <rect class="soft" x="1140" y="408" width="150" height="38"/>
+    <text class="body" x="1152" y="433">480.00</text>
+  
+
+    <text class="tiny" x="1320" y="398">应退金额</text>
+    <rect class="soft" x="1320" y="408" width="150" height="38"/>
+    <text class="body" x="1332" y="433">7,520.00</text>
+  
+<rect class="red" x="932" y="485" width="510" height="70"/><text class="h3" x="955" y="515">财务付款确认</text><text class="small" x="955" y="538">付款完成后回填退款凭证，流程进入开柜流转。</text>
+<rect class="panel" x="270" y="670" width="1260" height="210"/><text class="h2" x="292" y="706">开柜流转单</text>
+
+    <text class="tiny" x="292" y="728">实测面积</text>
+    <rect class="soft" x="292" y="738" width="180" height="38"/>
+    <text class="body" x="304" y="763">86.50 平方米</text>
+  
+
+    <text class="tiny" x="512" y="728">照明功率</text>
+    <rect class="soft" x="512" y="738" width="150" height="38"/>
+    <text class="body" x="524" y="763">12.5 kW</text>
+  
+
+    <text class="tiny" x="702" y="728">其他功率</text>
+    <rect class="soft" x="702" y="738" width="150" height="38"/>
+    <text class="body" x="714" y="763">3.2 kW</text>
+  
+
+    <text class="tiny" x="892" y="728">电费条款</text>
+    <rect class="soft" x="892" y="738" width="210" height="38"/>
+    <text class="body" x="904" y="763">按实测功率调整</text>
+  
+
+    <text class="tiny" x="1132" y="728">租金条款</text>
+    <rect class="soft" x="1132" y="738" width="210" height="38"/>
+    <text class="body" x="1144" y="763">按实测面积调整</text>
+  
+
+    <text class="tiny" x="292" y="795">ERP 修改状态</text>
+    <rect class="soft" x="292" y="805" width="180" height="38"/>
+    <text class="body" x="304" y="830">待传 ERP</text>
+  
+
+    <text class="tiny" x="512" y="795">ERP 单号/截图</text>
+    <rect class="soft" x="512" y="805" width="180" height="38"/>
+    <text class="body" x="524" y="830">待回填</text>
+  
+
+    <text class="tiny" x="732" y="795">下一处理人</text>
+    <rect class="soft" x="732" y="805" width="200" height="38"/>
+    <text class="body" x="744" y="830">合同/财务经办</text>
+  
+</svg>

@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8495"/>
+    </marker>
+  </defs>
+  <style>
+    svg { background: #f7f8fb; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #172033; }
+    .title { font-size: 42px; font-weight: 800; }
+    .subtitle { font-size: 20px; fill: #5b6474; }
+    .section-title { font-size: 24px; font-weight: 800; }
+    .small { font-size: 16px; fill: #5b6474; }
+    .label { font-size: 18px; font-weight: 700; }
+    .body { font-size: 16px; fill: #354052; }
+    .num { font-size: 18px; font-weight: 800; fill: #fff; }
+    .lane { fill: #ffffff; stroke: #d8dde8; stroke-width: 1.4; }
+    .card { fill: #ffffff; stroke: #cfd6e4; stroke-width: 1.5; rx: 16; }
+    .blue { fill: #e7f0ff; stroke: #6a9cf5; }
+    .green { fill: #e8f7ef; stroke: #55b97a; }
+    .amber { fill: #fff4da; stroke: #e3ad3f; }
+    .red { fill: #fff0ef; stroke: #e36a5c; }
+    .purple { fill: #f0eaff; stroke: #8d73e6; }
+    .dark { fill: #172033; }
+    .line { stroke: #7b8495; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    .dash { stroke: #9aa3b4; stroke-width: 2; stroke-dasharray: 7 7; fill: none; marker-end: url(#arrow); }
+    .pill { rx: 18; }
+    .note { fill: #fff; stroke: #e0e4ed; stroke-width: 1.2; rx: 14; }
+  </style>
+<rect x="0" y="0" width="1600" height="900" fill="#f7f8fb"/>
+
+    <rect x="0" y="0" width="1600" height="120" fill="#ffffff"/>
+    <text class="title" x="70" y="68">夜间施工报备与安保执行流程</text>
+    <text class="subtitle" x="72" y="100">把邮件汇总表转成系统报备、汇总、核验、归档的可追溯链路</text>
+  
+
+    <rect class="card blue" x="90" y="170" width="270" height="120"/>
+    <circle cx="120" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="120" y="208">1</text>
+    <text class="label" x="148" y="208">业务报备</text>
+    <text class="body" x="114" y="240">施工日期、品牌/铺位</text>
+<text class="body" x="114" y="264">施工方、负责人、人数</text>
+<text class="body" x="114" y="288">施工事项、周期、措施</text>
+  
+
+    <rect class="card purple" x="430" y="170" width="270" height="120"/>
+    <circle cx="460" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="460" y="208">2</text>
+    <text class="label" x="488" y="208">物业汇总</text>
+    <text class="body" x="454" y="240">按日报表汇总</text>
+<text class="body" x="454" y="264">形成夜间施工人员表</text>
+<text class="body" x="454" y="288">发群/同步安保</text>
+  
+
+    <rect class="card amber" x="770" y="170" width="270" height="120"/>
+    <circle cx="800" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="800" y="208">3</text>
+    <text class="label" x="828" y="208">安保核验</text>
+    <text class="body" x="794" y="240">按汇总表确认人员</text>
+<text class="body" x="794" y="264">核对施工证/负责人</text>
+<text class="body" x="794" y="288">异常不放行</text>
+  
+
+    <rect class="card green" x="1110" y="170" width="270" height="120"/>
+    <circle cx="1140" cy="201" r="18" class="dark"/><text class="num" text-anchor="middle" x="1140" y="208">4</text>
+    <text class="label" x="1168" y="208">签到进出场</text>
+    <text class="body" x="1134" y="240">纸质签字进场</text>
+<text class="body" x="1134" y="264">施工结束签离场时间</text>
+<text class="body" x="1134" y="288">纸质表上传归档</text>
+  
+<path class="line" d="M360 230 H425"/><path class="line" d="M700 230 H765"/><path class="line" d="M1040 230 H1105"/>
+<rect class="note" x="100" y="380" width="1380" height="350"/>
+<text class="section-title" x="130" y="425">夜间施工人员汇总表字段建议</text>
+<line x1="130" y1="455" x2="1450" y2="455" stroke="#d8dde8"/>
+<text class="label" x="150" y="495">基础信息</text>
+<text class="body" x="150" y="530">日期、部门/品牌、装修厅房或地点、施工方名称</text>
+<text class="body" x="150" y="554">现场负责人姓名、现场负责人联系方式</text>
+<text class="label" x="570" y="495">施工信息</text>
+<text class="body" x="570" y="530">装修事项、人数、施工周期、影响区域</text>
+<text class="body" x="570" y="554">采取措施、备注、是否需要保留配合</text>
+<text class="label" x="990" y="495">现场执行</text>
+<text class="body" x="990" y="530">安保确认人、进场时间、离场时间</text>
+<text class="body" x="990" y="554">异常说明、纸质签到表附件</text>
+<rect x="130" y="640" width="1320" height="70" fill="#fff4da" stroke="#e3ad3f" rx="14"/>
+<text class="label" x="160" y="682">控制点：未在当日汇总表内的施工人员，不允许夜间进场；纸质签到表作为现阶段现场依据，但系统必须留附件。</text>
+</svg>

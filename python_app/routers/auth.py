@@ -37,10 +37,11 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "12"))
 AUTH_COOKIE_NAME = "shopview_auth_token"
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "lampo123")
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "123456")
 PASSWORD_ITERATIONS = 390000
 WECOM_STATE_EXPIRE_MINUTES = 10
 WECOM_LOGIN_RESULT_DIR = Path(os.getenv("WECOM_LOGIN_RESULT_DIR", "/tmp/shopview-wecom-login"))
+ADMIN_ROLE_CODES = {"super_admin", "system_admin"}
 
 
 def get_client_ip(request: Request) -> str | None:
@@ -253,6 +254,23 @@ def _serialize_auth_user(db: Session, user: User) -> dict:
     }
 
 
+def _is_admin_user(db: Session, user: User) -> bool:
+    role_codes = {
+        row.role_code
+        for row in (
+            db.query(Role.role_code)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .filter(
+                UserRole.user_id == user.user_id,
+                Role.is_active == True,
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > func.now()),
+            )
+            .all()
+        )
+    }
+    return bool(role_codes & ADMIN_ROLE_CODES)
+
+
 def ensure_default_admin() -> None:
     db = SessionLocal()
     try:
@@ -347,6 +365,7 @@ def reset_all_passwords(password: str = DEFAULT_ADMIN_PASSWORD) -> None:
 
 
 def get_current_user(
+    request: Request,
     auth_token: Optional[str] = Cookie(default=None, alias=AUTH_COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> User:
@@ -360,6 +379,25 @@ def get_current_user(
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不可用")
+
+    admin_view_user_id = (request.headers.get("x-shopview-admin-view-user-id") or "").strip()
+    if admin_view_user_id and _is_admin_user(db, user):
+        try:
+            target_user_id = int(admin_view_user_id)
+        except ValueError:
+            target_user_id = 0
+        if target_user_id and target_user_id != user.user_id:
+            target = (
+                db.query(User)
+                .filter(
+                    User.user_id == target_user_id,
+                    User.is_active == True,
+                    or_(User.status.is_(None), User.status.notin_(["DISABLED", "LOCKED"])),
+                )
+                .first()
+            )
+            if target:
+                setattr(user, "admin_view_user_id", target.user_id)
     return user
 
 
@@ -524,6 +562,23 @@ async def wecom_callback(
 @router.get("/me", response_model=AuthUserSchema)
 async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _serialize_auth_user(db, current_user)
+
+
+@router.get("/admin-view/users", response_model=list[AuthUserSchema])
+async def get_admin_view_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not _is_admin_user(db, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅管理员可使用代看模式")
+
+    users = (
+        db.query(User)
+        .filter(
+            User.is_active == True,
+            or_(User.status.is_(None), User.status.notin_(["DISABLED", "LOCKED"])),
+        )
+        .order_by(User.real_name.asc().nullslast(), User.username.asc())
+        .all()
+    )
+    return [_serialize_auth_user(db, user) for user in users]
 
 
 @router.post("/logout")

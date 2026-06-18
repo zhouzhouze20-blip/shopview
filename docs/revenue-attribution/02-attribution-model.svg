@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .bg{fill:#f6f8fb}.title{font:700 48px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.sub{font:400 24px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#5f6b7a}
+      .h2{font:700 30px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.h3{font:700 24px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}
+      .txt{font:400 22px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}.small{font:400 18px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#667386}
+      .label{font:700 18px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#fff}.chip{font:700 20px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}.footer{font:700 26px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#fff}
+      .card{fill:#fff;stroke:#dce4ef;stroke-width:2}.blue{fill:#eaf4ff;stroke:#7db7ef}.green{fill:#eaf8f1;stroke:#72c99c}.yellow{fill:#fff8df;stroke:#f1ce60}.gray{fill:#eef3f8;stroke:#c8d4e2}
+      .line{stroke:#8796aa;stroke-width:4;fill:none}.dash{stroke:#aeb9c7;stroke-width:4;fill:none;stroke-dasharray:12 10}.arrow{fill:#8796aa}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1920" height="1080"/>
+  <text x="100" y="96" class="title">建议模型：一笔业务，两套口径</text>
+  <text x="100" y="142" class="sub">不改变合同结算规则，只在业务系统沉淀“经营归因”。OA 负责审批，收益看板按归因字段统计。</text>
+
+  <rect x="130" y="230" width="510" height="640" rx="20" class="card blue"/>
+  <rect x="170" y="270" width="190" height="40" rx="20" fill="#1976d2"/>
+  <text x="200" y="297" class="label">财务 / 结算口径</text>
+  <text x="170" y="360" class="h2">合同承载</text>
+  <text x="170" y="420" class="txt">承载合同：A 厅房合同</text>
+  <text x="170" y="462" class="txt">承载柜组：A 厅正厅</text>
+  <text x="170" y="504" class="txt">供应商：A 合同供应商</text>
+  <text x="170" y="546" class="txt">用途：收款、结算、对账、发票</text>
+  <rect x="170" y="620" width="390" height="82" rx="12" fill="#fff"/>
+  <text x="195" y="655" class="small">示例</text>
+  <text x="195" y="690" class="h3">费用补收 +2778.12 计入 A 合同</text>
+  <text x="170" y="790" class="chip">原则：系统现有合同规则不被破坏</text>
+
+  <rect x="1280" y="230" width="510" height="640" rx="20" class="card green"/>
+  <rect x="1320" y="270" width="190" height="40" rx="20" fill="#17804d"/>
+  <text x="1350" y="297" class="label">经营 / 空间口径</text>
+  <text x="1320" y="360" class="h2">收益归因</text>
+  <text x="1320" y="420" class="txt">实际经营厅房：B 厅房</text>
+  <text x="1320" y="462" class="txt">收益归因厅房：B 厅房</text>
+  <text x="1320" y="504" class="txt">归因原因：临时占用空厅经营</text>
+  <text x="1320" y="546" class="txt">用途：看板、经营分析、空间价值</text>
+  <rect x="1320" y="620" width="390" height="82" rx="12" fill="#fff"/>
+  <text x="1345" y="655" class="small">示例</text>
+  <text x="1345" y="690" class="h3">经营收益 +2778.12 计入 B 厅房</text>
+  <text x="1320" y="790" class="chip">原则：B 厅房不再因为无合同而显示 0</text>
+
+  <rect x="750" y="238" width="420" height="184" rx="18" class="card"/>
+  <text x="790" y="298" class="h2">费用补收申请</text>
+  <text x="790" y="354" class="txt">承载合同 = A</text>
+  <text x="790" y="394" class="txt">收益归因厅房 = B</text>
+  <path d="M 640 360 L 748 360" class="line" marker-end="url(#arrow)"/>
+  <path d="M 1172 360 L 1280 360" class="line" marker-end="url(#arrow)"/>
+
+  <rect x="750" y="488" width="420" height="184" rx="18" class="card"/>
+  <text x="790" y="548" class="h2">商品编码归因配置</text>
+  <text x="790" y="604" class="txt">商品编码仍属 A 合同</text>
+  <text x="790" y="644" class="txt">有效期内经营归因 = B</text>
+  <path d="M 640 610 L 748 610" class="line" marker-end="url(#arrow)"/>
+  <path d="M 1172 610 L 1280 610" class="line" marker-end="url(#arrow)"/>
+
+  <rect x="750" y="738" width="420" height="132" rx="18" class="card yellow"/>
+  <text x="790" y="796" class="h2">OA 审批</text>
+  <text x="790" y="846" class="txt">审批通过后回写状态与流程号</text>
+  <path d="M 960 672 L 960 735" class="dash" marker-end="url(#arrow)"/>
+
+  <rect x="230" y="920" width="1460" height="76" rx="16" fill="#172033"/>
+  <text x="270" y="968" class="footer">落地字段：承载合同 / 承载厅房 / 实际经营厅房 / 收益归因厅房 / 来源类型 / 有效期 / 是否计入空间收益</text>
+</svg>

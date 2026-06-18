@@ -132,8 +132,8 @@ DETAIL_COLUMNS = """
 """
 
 
-def _table_exists(db: Session) -> bool:
-    return bool(db.execute(text("SELECT to_regclass('public.supplierbase')")).scalar())
+def _table_exists(db: Session, table_name: str = "supplierbase") -> bool:
+    return bool(db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": f"public.{table_name}"}).scalar())
 
 
 def _ensure_table_ready(db: Session) -> None:
@@ -153,6 +153,7 @@ def _fetch_one(db: Session, sql: str, params: Dict[str, Any]) -> Optional[Dict[s
 @router.get("/", response_model=List[SupplierListItem])
 async def list_suppliers(
     keyword: Optional[str] = Query(None, description="编码/名称/简称/联系人搜索"),
+    store_id: Optional[str] = Query(None, description="门店编码"),
     supplier_code: Optional[str] = Query(None, description="供应商编码"),
     supplier_name: Optional[str] = Query(None, description="供应商名称"),
     status_filter: Optional[str] = Query(None, alias="status", description="状态"),
@@ -187,11 +188,30 @@ async def list_suppliers(
         params["status_filter"] = status_value
         where_clauses.append("sbstatus = :status_filter")
 
+    store_value = (store_id or "").strip()
+    if store_value and _table_exists(db, "contmain") and _table_exists(db, "contmanaframe"):
+        params["store_id"] = store_value
+        where_clauses.append(
+            """
+            EXISTS (
+              SELECT 1
+              FROM contmain cm
+              LEFT JOIN contmanaframe cmf
+                ON upper(trim(COALESCE(cmf.cmfcontno, ''))) = upper(trim(COALESCE(cm.cmcontno, '')))
+              WHERE upper(trim(COALESCE(cm.cmsupid, ''))) = upper(trim(COALESCE(supplierbase.sbid, '')))
+                AND (
+                  SUBSTRING(TRIM(BOTH FROM COALESCE(cmf.cmfmfid, cm.cmmfid, cm.cmchar9, '')) FROM 1 FOR 3) = :store_id
+                  OR upper(trim(COALESCE(cmf.cmfmarket, cm.cmjsmkt, ''))) = upper(trim(:store_id))
+                )
+            )
+            """
+        )
+
     sql = f"""
         SELECT {LIST_COLUMNS}
         FROM supplierbase
         WHERE {' AND '.join(where_clauses)}
-        ORDER BY sbid
+        ORDER BY NULLIF(sbcname, '') NULLS LAST, sbid
         OFFSET :skip
         LIMIT :limit
     """

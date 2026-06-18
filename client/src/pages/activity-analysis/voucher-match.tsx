@@ -120,6 +120,7 @@ export default function VoucherMatchPage() {
           store_code: String(manualRow?.market_code || ""),
           coupon_type: String(manualRow?.coupon_type || ""),
           strict_coupon_type: false,
+          strict_business_scope: true,
           match_type: String(manualRow?.match_type || "DEBIT_USE"),
           amount: toNumber(manualRow?.business_amount),
           amount_tolerance: Number(manualTolerance || 0),

@@ -273,25 +273,12 @@ JOIN permissions p ON p.permission_code IN (
     'store.view',
     'floor.view',
     'counter.view',
-    'counter.create',
-    'counter.edit',
     'hall.view',
-    'hall.edit',
-    'hall.bind_group',
     'business_unit.view',
-    'business_unit.create',
-    'business_unit.edit',
     'tenant.view',
-    'tenant.create',
-    'tenant.edit',
     'contract.view',
-    'contract.create',
-    'contract.edit',
     'bill.view',
-    'bill.create',
-    'bill.edit',
-    'revenue.view',
-    'revenue.export'
+    'revenue.view'
 )
 WHERE r.role_code = 'store_admin'
 ON CONFLICT DO NOTHING;
@@ -304,15 +291,10 @@ JOIN permissions p ON p.permission_code IN (
     'store.view',
     'floor.view',
     'counter.view',
-    'counter.edit',
     'hall.view',
-    'hall.edit',
     'business_unit.view',
-    'business_unit.edit',
     'tenant.view',
-    'tenant.edit',
     'contract.view',
-    'contract.edit',
     'bill.view',
     'revenue.view'
 )
@@ -343,11 +325,7 @@ JOIN permissions p ON p.permission_code IN (
     'tenant.view',
     'contract.view',
     'bill.view',
-    'bill.create',
-    'bill.edit',
-    'bill.approve',
-    'revenue.view',
-    'revenue.export'
+    'revenue.view'
 )
 WHERE r.role_code = 'finance'
 ON CONFLICT DO NOTHING;

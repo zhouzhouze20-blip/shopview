@@ -497,7 +497,6 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                 <TableHead>楼层ID</TableHead>
                 <TableHead>{codeLabel}</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>合同经营限制</TableHead>
                 <TableHead>人工面积</TableHead>
                 <TableHead>{parentLabel.replace("（可选）", "")}</TableHead>
                 <TableHead>更新时间</TableHead>
@@ -507,13 +506,13 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
             <TableBody>
               {listQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     {emptyText}
                   </TableCell>
                 </TableRow>
@@ -525,12 +524,6 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                       <TableCell>{r.floor_id}</TableCell>
                       <TableCell>{r.unit_code}</TableCell>
                       <TableCell>{statusLabel(r.status)}</TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <div>{contractModeLabel(r.contract_mode)}</div>
-                          <div className="text-xs text-muted-foreground">{contractModeDescription(r.contract_mode)}</div>
-                        </div>
-                      </TableCell>
                       <TableCell>{r.manual_area ?? "—"}</TableCell>
                       <TableCell>{r.parent_unit_id ?? "—"}</TableCell>
                       <TableCell>{r.updated_at ?? "—"}</TableCell>

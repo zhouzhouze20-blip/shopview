@@ -1,5 +1,0 @@
-import { redirect } from "next/navigation"
-
-export default function StoresPage() {
-  redirect("/stores/list")
-}

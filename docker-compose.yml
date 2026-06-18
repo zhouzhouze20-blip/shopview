@@ -12,7 +12,7 @@ services:
     env_file:
       - .env
     ports:
-      - "${APP_PORT}:${PORT}"
+      - "${APP_PORT:-8020}:${PORT:-8020}"
     volumes:
-      - ./uploads:${UPLOAD_PATH}:Z
-      - ./logs:${LOG_PATH}:Z
+      - ./uploads:${UPLOAD_PATH:-/app/uploads}:Z
+      - ./logs:${LOG_PATH:-/app/logs}:Z

@@ -10,9 +10,10 @@ from typing import Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
-from models.database import get_db
+from models.database import SessionLocal, get_db
 from models.models import (
     DataPolicy,
     DataPolicyItem,
@@ -56,10 +57,11 @@ from schemas.schemas import (
 router = APIRouter(prefix="/api/system", tags=["system"])
 PASSWORD_ITERATIONS = 390000
 CONTRACT_VIEWER_ROLE_CODE = "contract_viewer"
+DEPARTMENT_MANAGER_ROLE_CODE = "dept_manager"
 BUSINESS_SCOPE_RESOURCE = "business_scope"
 BUSINESS_SCOPE_ACTION = "view"
-MANUAL_SOURCE_TYPE = "MANUAL"
-MANUAL_SOURCE_SYSTEM = "shopview"
+WECOM_SOURCE_TYPE = "WECOM"
+WECOM_SOURCE_SYSTEM = "wecom"
 WECOM_RULE_MATCH_MODES = {"ALL", "ANY"}
 WECOM_RULE_SCOPE_MODES = {"ALL", "CUSTOM", "NONE"}
 WECOM_RULE_SCOPE_DIMENSIONS = {"store", "department", "group", "floor", "unit", "supplier", "brand", "category"}
@@ -206,6 +208,96 @@ def _ensure_contract_viewer_role(db: Session) -> Role:
     return role
 
 
+def _ensure_department_manager_role(db: Session) -> Role:
+    role = db.query(Role).filter(Role.role_code == DEPARTMENT_MANAGER_ROLE_CODE).first()
+    if not role:
+        role = Role(
+            role_code=DEPARTMENT_MANAGER_ROLE_CODE,
+            role_name="部门经理",
+            role_level=700,
+            is_system=True,
+            is_active=True,
+        )
+        db.add(role)
+        db.flush()
+    else:
+        role.role_name = "部门经理"
+        role.is_active = True
+    return role
+
+
+def ensure_department_manager_wecom_rule() -> None:
+    db = SessionLocal()
+    try:
+        _ensure_department_manager_role(db)
+        rule = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.rule_name == "默认-部门主管").first()
+        if rule:
+            keywords = list(rule.position_keywords or [])
+            changed = False
+            for keyword in ["部门经理", "经理", "副经理"]:
+                if keyword not in keywords:
+                    keywords.append(keyword)
+                    changed = True
+            if changed:
+                rule.position_keywords = keywords
+            if "dept_manager" not in (rule.role_codes or []):
+                rule.role_codes = [*(rule.role_codes or []), "dept_manager"]
+            rule.is_active = True
+        db.commit()
+    except ProgrammingError:
+        db.rollback()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def replace_contract_viewer_roles_with_dept_manager() -> None:
+    """Replace legacy contract-viewer assignments with department-manager role.
+
+    Older Enterprise WeChat sync runs granted every synced user the lightweight
+    contract_viewer role. Current business policy treats these users as
+    department managers instead, while their WeCom business data scope remains
+    on the user policy.
+    """
+    db = SessionLocal()
+    try:
+        viewer_role = db.query(Role).filter(Role.role_code == CONTRACT_VIEWER_ROLE_CODE).first()
+        dept_role = db.query(Role).filter(Role.role_code == DEPARTMENT_MANAGER_ROLE_CODE, Role.is_active == True).first()
+        if not viewer_role or not dept_role:
+            return
+
+        user_ids = [
+            row.user_id
+            for row in db.query(UserRole.user_id).filter(UserRole.role_id == viewer_role.id).all()
+        ]
+        if not user_ids:
+            return
+
+        existing_dept_user_ids = {
+            row.user_id
+            for row in (
+                db.query(UserRole.user_id)
+                .filter(UserRole.role_id == dept_role.id, UserRole.user_id.in_(user_ids))
+                .all()
+            )
+        }
+        for user_id in user_ids:
+            if user_id not in existing_dept_user_ids:
+                db.add(UserRole(user_id=user_id, role_id=dept_role.id, created_at=datetime.now()))
+
+        removed = db.query(UserRole).filter(UserRole.role_id == viewer_role.id).delete(synchronize_session=False)
+        db.commit()
+        if removed:
+            print(f"已将 {removed} 个合同查看人员角色替换为部门经理")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _user_has_permission(db: Session, user_id: int, permission_code: str) -> bool:
     return bool(
         db.query(Permission.id)
@@ -230,8 +322,8 @@ def _user_has_role(db: Session, user_id: int, role_code: str) -> bool:
     )
 
 
-def _manual_business_scope_for_user(db: Session, user_id: int) -> dict:
-    """仅本页（手工 shopview）维护的策略维度，用于编辑弹窗；不含 ERP 合并值。"""
+def _wecom_business_scope_for_user(db: Session, user_id: int) -> dict:
+    """Business scope managed by Enterprise WeChat rules."""
     policies = db.query(DataPolicy).filter(
         DataPolicy.subject_type == "USER",
         DataPolicy.subject_id == user_id,
@@ -239,20 +331,9 @@ def _manual_business_scope_for_user(db: Session, user_id: int) -> dict:
         DataPolicy.action_code == BUSINESS_SCOPE_ACTION,
         DataPolicy.effect == "ALLOW",
         DataPolicy.is_active == True,
-        DataPolicy.source_type == MANUAL_SOURCE_TYPE,
-        DataPolicy.source_system == MANUAL_SOURCE_SYSTEM,
+        DataPolicy.source_type == WECOM_SOURCE_TYPE,
+        DataPolicy.source_system == WECOM_SOURCE_SYSTEM,
     ).all()
-    if not policies:
-        policies = db.query(DataPolicy).filter(
-            DataPolicy.subject_type == "USER",
-            DataPolicy.subject_id == user_id,
-            DataPolicy.resource_code == "contract",
-            DataPolicy.action_code == "view",
-            DataPolicy.effect == "ALLOW",
-            DataPolicy.is_active == True,
-            DataPolicy.source_type == MANUAL_SOURCE_TYPE,
-            DataPolicy.source_system == MANUAL_SOURCE_SYSTEM,
-        ).all()
     policy_ids = [policy.id for policy in policies]
     values = {"store": [], "department": [], "group": []}
     if policy_ids:
@@ -269,13 +350,13 @@ def _manual_business_scope_for_user(db: Session, user_id: int) -> dict:
     }
 
 
-def _scope_tab_active_from_manual(db: Session, user_id: int, manual: dict) -> bool:
-    """业务范围弹窗「开通」开关：合同查看人员角色，或存在手工业务范围策略。"""
-    if _user_has_role(db, user_id, CONTRACT_VIEWER_ROLE_CODE):
+def _scope_tab_active_from_scope(db: Session, user_id: int, scope: dict) -> bool:
+    """业务范围弹窗「开通」开关：部门经理角色，或存在企业微信业务范围策略。"""
+    if _user_has_role(db, user_id, DEPARTMENT_MANAGER_ROLE_CODE):
         return True
-    if manual["scope_mode"] == "ALL":
+    if scope["scope_mode"] == "ALL":
         return True
-    return bool(manual["store_values"] or manual["department_values"] or manual["group_values"])
+    return bool(scope["store_values"] or scope["department_values"] or scope["group_values"])
 
 
 def _contract_scope_for_user(db: Session, user_id: int) -> dict:
@@ -286,16 +367,9 @@ def _contract_scope_for_user(db: Session, user_id: int) -> dict:
         DataPolicy.action_code == BUSINESS_SCOPE_ACTION,
         DataPolicy.effect == "ALLOW",
         DataPolicy.is_active == True,
+        DataPolicy.source_type == WECOM_SOURCE_TYPE,
+        DataPolicy.source_system == WECOM_SOURCE_SYSTEM,
     ).all()
-    if not policies:
-        policies = db.query(DataPolicy).filter(
-            DataPolicy.subject_type == "USER",
-            DataPolicy.subject_id == user_id,
-            DataPolicy.resource_code == "contract",
-            DataPolicy.action_code == "view",
-            DataPolicy.effect == "ALLOW",
-            DataPolicy.is_active == True,
-        ).all()
     policy_ids = [policy.id for policy in policies]
     values = {"store": [], "department": [], "group": []}
     if policy_ids:
@@ -309,8 +383,7 @@ def _contract_scope_for_user(db: Session, user_id: int) -> dict:
         "store_values": values["store"],
         "department_values": values["department"],
         "group_values": values["group"],
-        "manual_scope_count": len([policy for policy in policies if (policy.source_type or MANUAL_SOURCE_TYPE).upper() == MANUAL_SOURCE_TYPE]),
-        "erp_scope_count": len([policy for policy in policies if (policy.source_type or "").upper() == "ERP"]),
+        "wecom_scope_count": len(policies),
     }
 
 
@@ -499,8 +572,8 @@ def _serialize_data_policies(db: Session, policies: List[DataPolicy]) -> List[di
             "effect": policy.effect,
             "priority": policy.priority,
             "is_active": policy.is_active,
-            "source_type": policy.source_type or MANUAL_SOURCE_TYPE,
-            "source_system": policy.source_system or MANUAL_SOURCE_SYSTEM,
+            "source_type": policy.source_type or WECOM_SOURCE_TYPE,
+            "source_system": policy.source_system or WECOM_SOURCE_SYSTEM,
             "external_scope_id": policy.external_scope_id,
             "external_scope_name": policy.external_scope_name,
             "synced_at": policy.synced_at,
@@ -1228,7 +1301,7 @@ async def get_contract_permissions(db: Session = Depends(get_db), current_user: 
     result = []
     for user in serialized_users:
         scope = _contract_scope_for_user(db, user["user_id"])
-        manual = _manual_business_scope_for_user(db, user["user_id"])
+        wecom_scope = _wecom_business_scope_for_user(db, user["user_id"])
         result.append({
             "user_id": user["user_id"],
             "username": user["username"],
@@ -1238,11 +1311,11 @@ async def get_contract_permissions(db: Session = Depends(get_db), current_user: 
             "is_active": user["is_active"],
             "role_names": user["role_names"],
             "has_contract_view": _user_has_permission(db, user["user_id"], "contract.view"),
-            "scope_tab_active": _scope_tab_active_from_manual(db, user["user_id"], manual),
-            "manual_scope_mode": manual["scope_mode"],
-            "manual_store_values": manual["store_values"],
-            "manual_department_values": manual["department_values"],
-            "manual_group_values": manual["group_values"],
+            "scope_tab_active": _scope_tab_active_from_scope(db, user["user_id"], scope),
+            "wecom_scope_mode": wecom_scope["scope_mode"],
+            "wecom_store_values": wecom_scope["store_values"],
+            "wecom_department_values": wecom_scope["department_values"],
+            "wecom_group_values": wecom_scope["group_values"],
             **scope,
         })
     return result
@@ -1256,23 +1329,24 @@ async def update_contract_permission(user_id: int, payload: dict, db: Session = 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
 
     enabled = bool(payload.get("enabled"))
-    viewer_role = _ensure_contract_viewer_role(db)
+    viewer_role = db.query(Role).filter(Role.role_code == CONTRACT_VIEWER_ROLE_CODE).first()
+    dept_manager_role = _ensure_department_manager_role(db)
 
-    db.query(UserRole).filter(
-        UserRole.user_id == user_id,
-        UserRole.role_id == viewer_role.id,
-    ).delete()
+    role_ids_to_remove = [dept_manager_role.id]
+    if viewer_role:
+        role_ids_to_remove.append(viewer_role.id)
+    db.query(UserRole).filter(UserRole.user_id == user_id, UserRole.role_id.in_(role_ids_to_remove)).delete()
     db.query(DataPolicy).filter(
         DataPolicy.subject_type == "USER",
         DataPolicy.subject_id == user_id,
         DataPolicy.resource_code == BUSINESS_SCOPE_RESOURCE,
         DataPolicy.action_code == BUSINESS_SCOPE_ACTION,
-        DataPolicy.source_type == MANUAL_SOURCE_TYPE,
-        DataPolicy.source_system == MANUAL_SOURCE_SYSTEM,
+        DataPolicy.source_type == WECOM_SOURCE_TYPE,
+        DataPolicy.source_system == WECOM_SOURCE_SYSTEM,
     ).delete()
 
     if enabled:
-        db.add(UserRole(user_id=user_id, role_id=viewer_role.id))
+        db.add(UserRole(user_id=user_id, role_id=dept_manager_role.id))
         scope_mode = payload.get("scope_mode") or "CUSTOM"
         if scope_mode not in {"ALL", "CUSTOM"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的范围模式")
@@ -1286,8 +1360,8 @@ async def update_contract_permission(user_id: int, payload: dict, db: Session = 
             effect="ALLOW",
             priority=100,
             is_active=True,
-            source_type=MANUAL_SOURCE_TYPE,
-            source_system=MANUAL_SOURCE_SYSTEM,
+            source_type=WECOM_SOURCE_TYPE,
+            source_system=WECOM_SOURCE_SYSTEM,
         )
         db.add(policy)
         db.flush()
@@ -1328,8 +1402,8 @@ async def create_data_policy(payload: DataPolicyCreate, db: Session = Depends(ge
         effect=payload.effect,
         priority=payload.priority,
         is_active=payload.is_active,
-        source_type=payload.source_type,
-        source_system=payload.source_system,
+        source_type=WECOM_SOURCE_TYPE,
+        source_system=WECOM_SOURCE_SYSTEM,
         external_scope_id=payload.external_scope_id,
         external_scope_name=payload.external_scope_name,
         synced_at=payload.synced_at,
@@ -1349,12 +1423,14 @@ async def update_data_policy(policy_id: int, payload: DataPolicyUpdate, db: Sess
     if not policy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据策略不存在")
 
-    update_data = payload.model_dump(exclude_unset=True, exclude={"items"})
+    update_data = payload.model_dump(exclude_unset=True, exclude={"items", "source_type", "source_system"})
     new_subject_type = update_data.get("subject_type", policy.subject_type)
     new_subject_id = update_data.get("subject_id", policy.subject_id)
     _ensure_subject_exists(db, new_subject_type, new_subject_id)
     for field, value in update_data.items():
         setattr(policy, field, value)
+    policy.source_type = WECOM_SOURCE_TYPE
+    policy.source_system = WECOM_SOURCE_SYSTEM
 
     if payload.items is not None:
         _sync_policy_items(db, policy.id, [item.model_dump() for item in payload.items])

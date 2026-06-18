@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .bg{fill:#f6f8fb}.title{font:700 48px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.sub{font:400 24px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#5f6b7a}
+      .h2{font:700 28px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}.h3{font:700 24px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#172033}
+      .txt{font:400 22px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#263244}.small{font:400 18px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#687487}
+      .badge{font:700 20px "PingFang SC","Microsoft YaHei",Arial,sans-serif}.num{font:700 34px "PingFang SC","Microsoft YaHei",Arial,sans-serif}.footer{font:700 28px "PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#fff}
+      .card{fill:#fff;stroke:#dce4ef;stroke-width:2}.blue{fill:#eaf4ff;stroke:#7db7ef}.green{fill:#eaf8f1;stroke:#72c99c}.orange{fill:#fff3e6;stroke:#f3b36c}.red{fill:#fff0f0;stroke:#ed8d8d}
+      .line{stroke:#9aa8bb;stroke-width:4;fill:none}.dash{stroke:#b9c4d2;stroke-width:4;fill:none;stroke-dasharray:12 10}.arrow{fill:#9aa8bb}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1920" height="1080"/>
+  <text x="100" y="96" class="title">A / B 厅房收益归属问题</text>
+  <text x="100" y="142" class="sub">B 厅房被临时使用经营，但合同、商品编码、补收流程都可能挂在 A 厅房，导致 B 厅房经营价值无法展示。</text>
+
+  <rect x="100" y="210" width="470" height="250" rx="18" class="card blue"/>
+  <text x="140" y="268" class="h2">A 厅房</text>
+  <text x="140" y="318" class="txt">有正式合同</text>
+  <text x="140" y="356" class="txt">有商品编码</text>
+  <text x="140" y="394" class="txt">可承载结算、补收、销售</text>
+  <text x="140" y="430" class="small">系统默认按合同 / 商品编码统计到 A</text>
+
+  <rect x="1350" y="210" width="470" height="250" rx="18" class="card green"/>
+  <text x="1390" y="268" class="h2">B 厅房</text>
+  <text x="1390" y="318" class="txt">当前为空厅 / 临时使用</text>
+  <text x="1390" y="356" class="txt">没有独立合同</text>
+  <text x="1390" y="394" class="txt">没有天然商品编码归属</text>
+  <text x="1390" y="430" class="small">如果只按合同统计，B 收益显示为 0</text>
+
+  <path d="M 590 335 C 780 250, 1130 250, 1330 335" class="line" marker-end="url(#arrow)"/>
+  <text x="765" y="255" class="badge" fill="#47637f">A 商户把货拿到 B 厅房经营</text>
+
+  <rect x="100" y="550" width="540" height="330" rx="18" class="card"/>
+  <circle cx="150" cy="612" r="28" fill="#1976d2"/><text x="141" y="622" class="num" fill="#fff">1</text>
+  <text x="195" y="622" class="h3">签订特卖合同</text>
+  <text x="140" y="685" class="txt">B 厅房有合同或特卖合同</text>
+  <text x="140" y="725" class="txt">销售、扣点、保底正常归到 B</text>
+  <rect x="140" y="778" width="420" height="54" rx="10" fill="#eaf8f1"/>
+  <text x="165" y="813" class="badge" fill="#17804d">正常：B 厅房可直接显示收益</text>
+
+  <rect x="690" y="550" width="540" height="330" rx="18" class="card"/>
+  <circle cx="740" cy="612" r="28" fill="#f08b24"/><text x="731" y="622" class="num" fill="#fff">2</text>
+  <text x="785" y="622" class="h3">低扣率商品编码销售</text>
+  <text x="730" y="685" class="txt">编码仍然跟 A 合同</text>
+  <text x="730" y="725" class="txt">实际经营发生在 B 厅房</text>
+  <rect x="730" y="778" width="420" height="54" rx="10" fill="#fff3e6"/>
+  <text x="755" y="813" class="badge" fill="#a65a10">需要：商品编码经营归因到 B</text>
+
+  <rect x="1280" y="550" width="540" height="330" rx="18" class="card"/>
+  <circle cx="1330" cy="612" r="28" fill="#d64545"/><text x="1321" y="622" class="num" fill="#fff">3</text>
+  <text x="1375" y="622" class="h3">A 编码销售 + 费用补收</text>
+  <text x="1320" y="685" class="txt">补收流程只能挂 A 合同</text>
+  <text x="1320" y="725" class="txt">补收收益本质来自 B 空间使用</text>
+  <rect x="1320" y="778" width="420" height="54" rx="10" fill="#fff0f0"/>
+  <text x="1345" y="813" class="badge" fill="#b73232">需要：补收单收益归因到 B</text>
+
+  <rect x="100" y="930" width="1720" height="82" rx="16" fill="#172033"/>
+  <text x="140" y="982" class="footer">核心矛盾：结算必须挂 A 合同，但经营价值应该归因到 B 厅房。收益看板必须同时支持“合同口径”和“空间经营口径”。</text>
+</svg>

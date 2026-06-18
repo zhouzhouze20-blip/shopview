@@ -108,14 +108,20 @@ export interface SupplierUpdateInput extends Omit<SupplierMutationInput, "sbid">
   sbid?: string;
 }
 
-export function useSuppliers(supplierCode?: string, supplierName?: string, status?: string) {
+export interface SupplierFilters {
+  storeId?: string;
+  supplierCode?: string;
+  supplierName?: string;
+}
+
+export function useSuppliers(filters: SupplierFilters = {}) {
   return useQuery({
-    queryKey: ["suppliers", supplierCode ?? "", supplierName ?? "", status ?? ""],
+    queryKey: ["suppliers", filters],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (supplierCode?.trim()) params.set("supplier_code", supplierCode.trim());
-      if (supplierName?.trim()) params.set("supplier_name", supplierName.trim());
-      if (status?.trim()) params.set("status", status.trim());
+      if (filters.storeId?.trim() && filters.storeId !== "ALL") params.set("store_id", filters.storeId.trim());
+      if (filters.supplierCode?.trim()) params.set("supplier_code", filters.supplierCode.trim());
+      if (filters.supplierName?.trim()) params.set("supplier_name", filters.supplierName.trim());
       const query = params.toString();
       return apiGet<SupplierItem[]>(`/api/suppliers/${query ? `?${query}` : ""}`);
     },

@@ -39,7 +39,9 @@ from routers import (
     business_units,
     floor_area_report,
     contracts,
+    contract_unit_bindings,
     sales,
+    revenue,
     merchant_planning,
     activity_analysis,
     manaframe,
@@ -96,7 +98,9 @@ app.include_router(geo_elements.router)
 app.include_router(business_units.router)
 app.include_router(floor_area_report.router)
 app.include_router(contracts.router)
+app.include_router(contract_unit_bindings.router)
 app.include_router(sales.router)
+app.include_router(revenue.router)
 app.include_router(merchant_planning.router)
 app.include_router(activity_analysis.router)
 app.include_router(manaframe.router)
@@ -108,10 +112,14 @@ app.include_router(decorations.router)
 @app.on_event("startup")
 async def startup_event():
     from routers.auth import ensure_default_admin
-    from routers.authz import ensure_core_permissions
+    from routers.authz import ensure_core_permissions, ensure_default_roles_are_view_only
+    from routers.system_management import ensure_department_manager_wecom_rule, replace_contract_viewer_roles_with_dept_manager
 
     ensure_core_permissions()
+    ensure_default_roles_are_view_only()
     ensure_default_admin()
+    replace_contract_viewer_roles_with_dept_manager()
+    ensure_department_manager_wecom_rule()
     repair_base_maps = os.getenv("SHOPVIEW_REPAIR_BASE_MAP_UPLOADS", "false").strip().lower() in {
         "1",
         "true",

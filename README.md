@@ -85,7 +85,7 @@ npm run dev
 - [任务拆分建议](./docs/TASK_SPLIT.md)
 
 ## 部署说明
-详细的部署说明请参考 [APP-DEPLOYMENT.md](./APP-DEPLOYMENT.md)
+详细的部署说明请参考 [应用部署指南](./docs/deployment/APP-DEPLOYMENT.md)
 
 ## 许可证
 MIT License

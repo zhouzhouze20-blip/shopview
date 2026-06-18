@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from math import ceil
+from statistics import median
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
@@ -29,6 +31,9 @@ from schemas.schemas import (
 
 
 router = APIRouter(prefix="/api/merchant-planning", tags=["merchant-planning"])
+
+LOW_EFFICIENCY_MEDIAN_RATIO = Decimal("0.60")
+EXPIRING_DAYS = 90
 
 
 def _money(value: Decimal | int | float | None) -> Decimal:
@@ -110,6 +115,45 @@ def _model_dump(model, **kwargs) -> dict:
 
 def _table_exists(db: Session, table_name: str) -> bool:
     return bool(db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table_name}).scalar())
+
+
+def _candidate_floor_medians(rows) -> dict[int, Decimal]:
+    floor_revenues: dict[int, list[Decimal]] = {}
+    for row in rows:
+        floor_id = row["floor_id"]
+        revenue = _decimal(row["period_revenue"])
+        if floor_id is None or revenue <= 0:
+            continue
+        floor_revenues.setdefault(int(floor_id), []).append(revenue)
+    return {floor_id: Decimal(str(median(values))) for floor_id, values in floor_revenues.items()}
+
+
+def _as_date(value) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _classify_candidate(row, floor_medians: dict[int, Decimal], today: date | None = None) -> str:
+    if row["current_contract_id"] is None:
+        return "VACANT"
+
+    today = today or date.today()
+    end_date = _as_date(row["contract_end_date"])
+    if end_date is not None and today <= end_date <= today + timedelta(days=EXPIRING_DAYS):
+        return "EXPIRING"
+
+    floor_id = row["floor_id"]
+    revenue = _decimal(row["period_revenue"])
+    floor_median = floor_medians.get(int(floor_id)) if floor_id is not None else None
+    if floor_median is not None and revenue > 0 and revenue < floor_median * LOW_EFFICIENCY_MEDIAN_RATIO:
+        return "LOW_EFFICIENCY"
+
+    return "NORMAL"
 
 
 def _candidate_sql(has_revenue_summary: bool) -> str:
@@ -367,6 +411,7 @@ def list_candidates(
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     sql = _candidate_sql(_table_exists(db, "unit_daily_revenue_summary"))
     rows = db.execute(text(sql), {"store_id": store_id, "floor_id": floor_id}).mappings().all()
+    floor_medians = _candidate_floor_medians(rows)
     result = []
     for row in rows:
         item = dict(row)
@@ -378,7 +423,7 @@ def list_candidates(
             brand_code=item["current_brand"],
         ):
             continue
-        tag = "VACANT" if item["current_contract_id"] is None else "NORMAL"
+        tag = _classify_candidate(item, floor_medians)
         if candidate_type and candidate_type != "ALL" and tag != candidate_type:
             continue
         result.append({**item, "candidate_type": tag})

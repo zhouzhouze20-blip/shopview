@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+
+  <style>
+    svg { background: #eef2f7; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #182033; }
+    .app { fill: #f4f7fb; }
+    .top { fill: #111827; }
+    .side { fill: #ffffff; stroke: #dbe2ee; }
+    .main { fill: #f6f8fb; }
+    .panel { fill: #ffffff; stroke: #d9e1ef; stroke-width: 1; rx: 10; }
+    .soft { fill: #f8fafc; stroke: #e2e8f0; rx: 8; }
+    .blue { fill: #e8f1ff; stroke: #79a8f7; rx: 8; }
+    .green { fill: #e8f7ef; stroke: #64bd84; rx: 8; }
+    .amber { fill: #fff5df; stroke: #e4b551; rx: 8; }
+    .red { fill: #fff0ef; stroke: #e27468; rx: 8; }
+    .purple { fill: #f1edff; stroke: #9279e6; rx: 8; }
+    .muted { fill: #687386; }
+    .white { fill: #ffffff; }
+    .title { font-size: 28px; font-weight: 800; }
+    .h2 { font-size: 20px; font-weight: 800; }
+    .h3 { font-size: 17px; font-weight: 800; }
+    .body { font-size: 15px; fill: #364154; }
+    .small { font-size: 13px; fill: #647084; }
+    .tiny { font-size: 12px; fill: #7b8495; }
+    .nav { font-size: 15px; fill: #334155; }
+    .nav-on { font-size: 15px; font-weight: 800; fill: #1d4ed8; }
+    .btn { fill: #2563eb; rx: 7; }
+    .btn2 { fill: #ffffff; stroke: #cfd8e8; rx: 7; }
+    .btnText { font-size: 14px; font-weight: 700; fill: #ffffff; }
+    .btnText2 { font-size: 14px; font-weight: 700; fill: #334155; }
+    .tag { rx: 13; }
+    .tagText { font-size: 12px; font-weight: 700; }
+    .line { stroke: #d8dfeb; stroke-width: 1; }
+    .th { font-size: 13px; font-weight: 800; fill: #475569; }
+    .td { font-size: 13px; fill: #334155; }
+  </style>
+
+    <rect class="app" x="0" y="0" width="1600" height="1000"/>
+    <rect class="top" x="0" y="0" width="1600" height="64"/>
+    <text class="white" x="32" y="40" font-size="22" font-weight="800">ShopView</text>
+    <text class="white" x="1350" y="39" font-size="14">装修流程迁移原型</text>
+    <rect class="side" x="0" y="64" width="230" height="936"/>
+    <text class="nav" x="32" y="118">合同台账</text>
+    <rect x="20" y="145" width="190" height="42" fill="#e8f1ff" rx="8"/>
+    <text class="nav-on" x="32" y="172">装修管理</text>
+    <text class="nav" x="32" y="224">夜间施工</text>
+    <text class="nav" x="32" y="270">费用退款</text>
+    <text class="nav" x="32" y="316">开柜流转</text>
+    <text class="nav" x="32" y="362">ERP 修改记录</text>
+    <rect class="main" x="230" y="64" width="1370" height="936"/>
+    <text class="title" x="270" y="120">交保证金申请</text>
+    <text class="small" x="270" y="148">迁移 OA 原交保证金流程：图纸材料、施工单位、费用明细、缴费凭证</text>
+  
+<rect class="btn" x="1400" y="100" width="98" height="34"/><text class="btnText" text-anchor="middle" x="1449" y="122">提交审批</text><rect class="btn2" x="1280" y="100" width="98" height="34"/><text class="btnText2" text-anchor="middle" x="1329" y="122">保存草稿</text>
+<rect class="panel" x="270" y="180" width="1260" height="110"/><text class="h2" x="292" y="216">基础信息</text>
+
+    <text class="tiny" x="292" y="238">合同编号</text>
+    <rect class="soft" x="292" y="248" width="210" height="38"/>
+    <text class="body" x="304" y="273">HT-2026-0602-008</text>
+  
+
+    <text class="tiny" x="532" y="238">品牌/柜组</text>
+    <rect class="soft" x="532" y="248" width="230" height="38"/>
+    <text class="body" x="544" y="273">Salomon / 中心二部</text>
+  
+
+    <text class="tiny" x="782" y="238">铺位</text>
+    <rect class="soft" x="782" y="248" width="150" height="38"/>
+    <text class="body" x="794" y="273">1F-6F</text>
+  
+
+    <text class="tiny" x="962" y="238">发起部门</text>
+    <rect class="soft" x="962" y="248" width="160" height="38"/>
+    <text class="body" x="974" y="273">品类部</text>
+  
+
+    <text class="tiny" x="1152" y="238">施工类型</text>
+    <rect class="soft" x="1152" y="248" width="160" height="38"/>
+    <text class="body" x="1164" y="273">进场装修</text>
+  
+<rect class="panel" x="270" y="320" width="610" height="255"/><text class="h2" x="292" y="356">图纸与审核材料</text>
+<rect class="blue" x="292" y="375" width="250" height="70"/><text class="h3" x="315" y="407">装修全套图</text><text class="small" x="315" y="430">已上传 3 个文件</text>
+<rect class="green" x="570" y="375" width="250" height="70"/><text class="h3" x="593" y="407">审批表</text><text class="small" x="593" y="430">工程已确认</text>
+<rect class="soft" x="292" y="470" width="528" height="58"/><text class="body" x="315" y="505">审核意见：图纸完整，现场施工不得影响周边品牌营业。</text>
+<rect class="panel" x="910" y="320" width="620" height="255"/><text class="h2" x="932" y="356">施工单位信息</text>
+
+    <text class="tiny" x="932" y="378">施工单位</text>
+    <rect class="soft" x="932" y="388" width="300" height="38"/>
+    <text class="body" x="944" y="413">常州某某装饰工程有限公司</text>
+  
+
+    <text class="tiny" x="1260" y="378">负责人</text>
+    <rect class="soft" x="1260" y="388" width="150" height="38"/>
+    <text class="body" x="1272" y="413">吴浩</text>
+  
+
+    <text class="tiny" x="932" y="445">联系方式</text>
+    <rect class="soft" x="932" y="455" width="180" height="38"/>
+    <text class="body" x="944" y="480">158****0035</text>
+  
+
+    <text class="tiny" x="1145" y="445">开户行</text>
+    <rect class="soft" x="1145" y="455" width="220" height="38"/>
+    <text class="body" x="1157" y="480">建设银行常州支行</text>
+  
+
+    <text class="tiny" x="932" y="512">银行账号</text>
+    <rect class="soft" x="932" y="522" width="300" height="38"/>
+    <text class="body" x="944" y="547">6222 **** **** 9271</text>
+  
+<rect class="panel" x="270" y="605" width="1260" height="285"/><text class="h2" x="292" y="641">费用明细与缴费凭证</text>
+<rect class="soft" x="292" y="660" width="1050" height="208"/><text class="th" x="306" y="686">费用项</text><text class="th" x="496" y="686">应缴金额</text><line class="line" x1="482" y1="660" x2="482" y2="868"/><text class="th" x="626" y="686">是否可退</text><line class="line" x1="612" y1="660" x2="612" y2="868"/><text class="th" x="756" y="686">退款账号</text><line class="line" x1="742" y1="660" x2="742" y2="868"/><text class="th" x="916" y="686">缴费状态</text><line class="line" x1="902" y1="660" x2="902" y2="868"/><text class="th" x="1096" y="686">凭证</text><line class="line" x1="1082" y1="660" x2="1082" y2="868"/><line class="line" x1="292" y1="700" x2="1342" y2="700"/><text class="td" x="306" y="727">施工证工本费</text><text class="td" x="496" y="727">200.00</text><text class="td" x="626" y="727">否</text><text class="td" x="756" y="727">不需要</text><text class="td" x="916" y="727">待扫码缴费</text><text class="td" x="1096" y="727">未上传</text><line class="line" x1="292" y1="742" x2="1342" y2="742"/><text class="td" x="306" y="769">施工证保证金</text><text class="td" x="496" y="769">1000.00</text><text class="td" x="626" y="769">是</text><text class="td" x="756" y="769">必填</text><text class="td" x="916" y="769">待扫码缴费</text><text class="td" x="1096" y="769">未上传</text><line class="line" x1="292" y1="784" x2="1342" y2="784"/><text class="td" x="306" y="811">施工保证金</text><text class="td" x="496" y="811">5000.00</text><text class="td" x="626" y="811">是</text><text class="td" x="756" y="811">必填</text><text class="td" x="916" y="811">待扫码缴费</text><text class="td" x="1096" y="811">未上传</text><line class="line" x1="292" y1="826" x2="1342" y2="826"/><text class="td" x="306" y="853">围挡及其他费用</text><text class="td" x="496" y="853">800.00</text><text class="td" x="626" y="853">按规则</text><text class="td" x="756" y="853">视规则</text><text class="td" x="916" y="853">待确认</text><text class="td" x="1096" y="853">未上传</text>
+</svg>

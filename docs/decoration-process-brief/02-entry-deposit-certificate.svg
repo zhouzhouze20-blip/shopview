@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8495"/>
+    </marker>
+  </defs>
+  <style>
+    svg { background: #f7f8fb; }
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #172033; }
+    .title { font-size: 42px; font-weight: 800; }
+    .subtitle { font-size: 20px; fill: #5b6474; }
+    .section-title { font-size: 24px; font-weight: 800; }
+    .small { font-size: 16px; fill: #5b6474; }
+    .label { font-size: 18px; font-weight: 700; }
+    .body { font-size: 16px; fill: #354052; }
+    .num { font-size: 18px; font-weight: 800; fill: #fff; }
+    .lane { fill: #ffffff; stroke: #d8dde8; stroke-width: 1.4; }
+    .card { fill: #ffffff; stroke: #cfd6e4; stroke-width: 1.5; rx: 16; }
+    .blue { fill: #e7f0ff; stroke: #6a9cf5; }
+    .green { fill: #e8f7ef; stroke: #55b97a; }
+    .amber { fill: #fff4da; stroke: #e3ad3f; }
+    .red { fill: #fff0ef; stroke: #e36a5c; }
+    .purple { fill: #f0eaff; stroke: #8d73e6; }
+    .dark { fill: #172033; }
+    .line { stroke: #7b8495; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    .dash { stroke: #9aa3b4; stroke-width: 2; stroke-dasharray: 7 7; fill: none; marker-end: url(#arrow); }
+    .pill { rx: 18; }
+    .note { fill: #fff; stroke: #e0e4ed; stroke-width: 1.2; rx: 14; }
+  </style>
+<rect x="0" y="0" width="1600" height="900" fill="#f7f8fb"/>
+
+    <rect x="0" y="0" width="1600" height="120" fill="#ffffff"/>
+    <text class="title" x="70" y="68">进场缴费与施工证领取流程</text>
+    <text class="subtitle" x="72" y="100">迁移 OA 原流程：百货营运-22 品牌进(撤)场施工保证金及费用缴纳流程</text>
+  
+<rect class="lane" x="70" y="160" width="1480" height="120"/><text class="section-title" x="90" y="205">业务/前台</text>
+<rect class="lane" x="70" y="300" width="1480" height="120"/><text class="section-title" x="90" y="345">工程/营运</text>
+<rect class="lane" x="70" y="440" width="1480" height="120"/><text class="section-title" x="90" y="485">施工方/收款</text>
+<rect class="lane" x="70" y="580" width="1480" height="120"/><text class="section-title" x="90" y="625">物业</text>
+
+    <rect class="card blue" x="250" y="180" width="250" height="80"/>
+    
+    <text class="label" x="272" y="218">发起进场申请</text>
+    <text class="body" x="274" y="250">关联合同/柜位/品牌</text>
+  
+
+    <rect class="card blue" x="610" y="180" width="260" height="80"/>
+    
+    <text class="label" x="632" y="218">填写施工资料</text>
+    <text class="body" x="634" y="250">图纸、审核材料、施工方信息</text>
+  
+
+    <rect class="card green" x="610" y="320" width="260" height="80"/>
+    
+    <text class="label" x="632" y="358">图纸/材料审核</text>
+    <text class="body" x="634" y="390">不通过退回补充</text>
+  
+
+    <rect class="card amber" x="970" y="320" width="260" height="80"/>
+    
+    <text class="label" x="992" y="358">计算应缴费用</text>
+    <text class="body" x="994" y="390">保证金、押金、工本费</text>
+  
+
+    <rect class="card amber" x="970" y="460" width="260" height="80"/>
+    
+    <text class="label" x="992" y="498">扫码缴费</text>
+    <text class="body" x="994" y="530">工本费 + 保证金/押金</text>
+  
+
+    <rect class="card blue" x="1290" y="460" width="230" height="80"/>
+    
+    <text class="label" x="1312" y="498">上传缴费凭证</text>
+    <text class="body" x="1314" y="530">可退项目填写退款账号</text>
+  
+
+    <rect class="card green" x="1290" y="600" width="230" height="80"/>
+    
+    <text class="label" x="1312" y="638">发放施工证</text>
+    <text class="body" x="1314" y="670">凭缴费凭证领取</text>
+  
+<path class="line" d="M500 220 H605"/><path class="line" d="M740 260 V315"/>
+<path class="line" d="M870 360 H965"/><path class="line" d="M1100 400 V455"/>
+<path class="line" d="M1230 500 H1285"/><path class="line" d="M1405 540 V595"/>
+<rect x="180" y="740" width="430" height="70" class="card red"/><text class="label" x="205" y="775">可退费用</text><text class="body" x="205" y="800">施工保证金、施工押金：必须记录姓名、账号、开户行</text>
+<rect x="660" y="740" width="360" height="70" class="card amber"/><text class="label" x="685" y="775">不可退费用</text><text class="body" x="685" y="800">施工证工本费：只留缴费凭证，不需要退款账号</text>
+<rect x="1070" y="740" width="360" height="70" class="card blue"/><text class="label" x="1095" y="775">流程控制</text><text class="body" x="1095" y="800">未确认缴费和施工证，不允许进入施工报备</text>
+</svg>

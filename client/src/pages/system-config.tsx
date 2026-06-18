@@ -200,18 +200,17 @@ interface ContractPermissionUser {
   is_active: boolean;
   role_names: string[];
   has_contract_view: boolean;
-  /** 本页「开通」状态：合同查看人员角色或手工业务范围（勿与 has_contract_view 混用） */
+  /** 本页「开通」状态：部门经理角色或企业微信业务范围（勿与 has_contract_view 混用） */
   scope_tab_active?: boolean;
-  manual_scope_mode?: "ALL" | "CUSTOM";
-  manual_store_values?: string[];
-  manual_department_values?: string[];
-  manual_group_values?: string[];
+  wecom_scope_mode?: "ALL" | "CUSTOM";
+  wecom_store_values?: string[];
+  wecom_department_values?: string[];
+  wecom_group_values?: string[];
   scope_mode: "ALL" | "CUSTOM";
   store_values: string[];
   department_values: string[];
   group_values: string[];
-  manual_scope_count: number;
-  erp_scope_count: number;
+  wecom_scope_count: number;
 }
 
 type SystemConfigTab = "users" | "roles" | "departments" | "contract-permissions" | "wecom-rules" | "policies" | "audit-logs";
@@ -305,8 +304,8 @@ const emptyPolicyForm = {
   effect: "ALLOW",
   priority: "100",
   is_active: true,
-  source_type: "MANUAL",
-  source_system: "shopview",
+  source_type: "WECOM",
+  source_system: "wecom",
   external_scope_id: "",
   external_scope_name: "",
   store_values: "",
@@ -797,8 +796,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
         effect: policyForm.effect,
         priority: Number(policyForm.priority || 100),
         is_active: policyForm.is_active,
-        source_type: policyForm.source_type,
-        source_system: policyForm.source_system,
+        source_type: "WECOM",
+        source_system: "wecom",
         external_scope_id: policyForm.external_scope_id || null,
         external_scope_name: policyForm.external_scope_name || null,
         items: buildPolicyItems(policyForm),
@@ -988,8 +987,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
       supplier_values: itemsByType("supplier"),
       brand_values: itemsByType("brand"),
       category_values: itemsByType("category"),
-      source_type: policy.source_type || "MANUAL",
-      source_system: policy.source_system || "shopview",
+      source_type: "WECOM",
+      source_system: "wecom",
       external_scope_id: policy.external_scope_id || "",
       external_scope_name: policy.external_scope_name || "",
     });
@@ -999,10 +998,10 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const openEditContractPermission = (user: ContractPermissionUser) => {
     setEditingContractPermission(user);
     const tabOn = user.scope_tab_active ?? user.has_contract_view;
-    const mode = user.manual_scope_mode ?? user.scope_mode ?? "CUSTOM";
-    const storeValues = uniqueByNorm((user.manual_store_values ?? []).map(normStoreIdForScope).filter(Boolean), normStoreIdForScope);
-    const deptValues = uniqueByNorm(user.manual_department_values ?? []);
-    const groupValues = uniqueByNorm(user.manual_group_values ?? []);
+    const mode = user.wecom_scope_mode ?? user.scope_mode ?? "CUSTOM";
+    const storeValues = uniqueByNorm((user.wecom_store_values ?? []).map(normStoreIdForScope).filter(Boolean), normStoreIdForScope);
+    const deptValues = uniqueByNorm(user.wecom_department_values ?? []);
+    const groupValues = uniqueByNorm(user.wecom_group_values ?? []);
     const filterStores = new Set(storeValues);
     for (const row of contractScopeMatrixEffective) {
       const storeId = normStoreIdForScope(row.store_id);
@@ -1464,8 +1463,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1 text-xs">
-                          <Badge variant="outline">手工 {user.manual_scope_count}</Badge>
-                          <Badge variant="secondary">ERP {user.erp_scope_count}</Badge>
+                          <Badge variant="outline">企业微信 {user.wecom_scope_count}</Badge>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1580,8 +1578,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       <TableCell>{policy.action_code}</TableCell>
                       <TableCell>
                         <div className="space-y-1 text-xs">
-                          <Badge variant={policy.source_type === "ERP" ? "secondary" : "outline"}>{policy.source_type || "MANUAL"}</Badge>
-                          <div className="text-muted-foreground">{policy.external_scope_name || policy.source_system || "shopview"}</div>
+                          <Badge variant="outline">WECOM</Badge>
+                          <div className="text-muted-foreground">{policy.external_scope_name || policy.source_system || "wecom"}</div>
                         </div>
                       </TableCell>
                       <TableCell>{policy.scope_mode}</TableCell>
@@ -1786,16 +1784,11 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                   checked={contractPermissionForm.enabled}
                   onCheckedChange={(checked) => setContractPermissionForm((prev) => ({ ...prev, enabled: !!checked }))}
                 />
-                <span className="text-sm">允许查看合同模块（本页对应「合同查看人员」角色及手工业务范围）</span>
+                <span className="text-sm">允许查看合同模块（本页对应「部门经理」角色及企业微信业务范围）</span>
               </div>
               {editingContractPermission?.has_contract_view && editingContractPermission?.scope_tab_active === false ? (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-                  该账号仍通过<strong>其他角色</strong>拥有合同查看权限；关闭上方开关只会移除「合同查看人员」角色与本页手工范围，不会在角色管理中改动其它角色。
-                </p>
-              ) : null}
-              {(editingContractPermission?.erp_scope_count ?? 0) > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  列表「范围」列可能合并显示 ERP 同步策略；下方勾选框仅编辑<strong>手工维护</strong>的范围（与列表列不完全一致属正常现象）。
+                  该账号仍通过<strong>其他角色</strong>拥有合同查看权限；关闭上方开关只会移除「部门经理」角色与本页企业微信范围，不会在角色管理中改动其它角色。
                 </p>
               ) : null}
             </div>
@@ -1834,7 +1827,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
 	                  ) : contractScopeMatrixFiltered.length === 0 ? (
                     <p className="text-xs text-muted-foreground border rounded-md p-3 bg-slate-50">
                       {contractScopeMatrixEffective.length === 0
-                        ? "系统中暂无柜组（manaframe）。请先同步 ERP 后再配置。"
+                        ? "系统中暂无柜组（manaframe）。请先同步柜组主数据后再配置。"
                         : "当前勾选门店在柜组表中没有带部门编码的柜组记录。请核对 manaframe.mfcode、mfpcode 和上级部门。"}
                     </p>
 		                  ) : (
@@ -2372,20 +2365,6 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                   {meta?.effects.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-            <div>
-              <Label>来源类型</Label>
-              <Select value={policyForm.source_type} onValueChange={(value) => setPolicyForm((prev) => ({ ...prev, source_type: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MANUAL">MANUAL</SelectItem>
-                  <SelectItem value="ERP">ERP</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>来源系统</Label>
-              <Input value={policyForm.source_system} onChange={(e) => setPolicyForm((prev) => ({ ...prev, source_system: e.target.value }))} />
             </div>
             <div>
               <Label>优先级</Label>

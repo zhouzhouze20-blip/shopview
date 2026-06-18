@@ -4,6 +4,8 @@ import { apiGet } from "@/lib/api";
 export interface ManaframeItem {
   mfcode: string;
   mfcname?: string | null;
+  store_code?: string | null;
+  store_id?: number | null;
   mfstatus?: string | null;
   mfjyfs?: string | null;
   mfjywz?: string | null;
@@ -17,13 +19,20 @@ export interface ManaframeItem {
   mfmemo?: string | null;
 }
 
-export function useManaframe(keyword: string, statusFilter: string) {
+export interface ManaframeFilters {
+  storeId: string;
+  groupCode: string;
+  groupName: string;
+}
+
+export function useManaframe(filters: ManaframeFilters) {
   return useQuery({
-    queryKey: ["manaframe", keyword, statusFilter],
+    queryKey: ["manaframe", filters],
     queryFn: () => {
       const q = new URLSearchParams();
-      if (keyword.trim()) q.set("keyword", keyword.trim());
-      if (statusFilter && statusFilter !== "ALL") q.set("status_filter", statusFilter);
+      if (filters.storeId && filters.storeId !== "ALL") q.set("store_id", filters.storeId);
+      if (filters.groupCode.trim()) q.set("group_code", filters.groupCode.trim());
+      if (filters.groupName.trim()) q.set("group_name", filters.groupName.trim());
       return apiGet<ManaframeItem[]>(`/api/manaframe/?${q.toString()}`);
     },
   });

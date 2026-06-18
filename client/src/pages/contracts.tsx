@@ -50,6 +50,12 @@ function getFloorStoreRef(floor: { store_id?: string | null; building_code?: str
   return floor.store_id?.trim() || floor.building_code?.trim() || "";
 }
 
+function isLikelySvgAsset(url?: string | null) {
+  if (!url) return false;
+  const path = url.split("?", 1)[0].split("#", 1)[0].toLowerCase();
+  return path.endsWith(".svg");
+}
+
 function fmtDate(value?: string | null) {
   if (!value) return "-";
   return value.slice(0, 10);
@@ -304,6 +310,7 @@ export default function ContractsPage({
   const [listPageSize, setListPageSize] = useState(100);
   const [pageView, setPageView] = useState("list");
   const [resolvedSvgViewBox, setResolvedSvgViewBox] = useState<string | null>(null);
+  const [imageNaturalViewBox, setImageNaturalViewBox] = useState<string | null>(null);
   const [mapFullscreenOpen, setMapFullscreenOpen] = useState(false);
   const [mapLandscapeOpen, setMapLandscapeOpen] = useState(false);
   const [mapZoom, setMapZoom] = useState(1);
@@ -400,35 +407,56 @@ export default function ContractsPage({
   const normalizedCounterKeyword = useMemo(() => normalizeUnitCode(counterKeyword), [counterKeyword]);
 
   useEffect(() => {
+    setImageNaturalViewBox(null);
     const immediate = deriveSvgViewBox({
       viewBox: selectedBaseMap?.svg_viewbox ?? null,
       width: selectedBaseMap?.svg_width ?? null,
       height: selectedBaseMap?.svg_height ?? null,
     });
-    setResolvedSvgViewBox(immediate);
+    const shouldPreferImageSize = selectedBaseMapUrl && !isLikelySvgAsset(selectedBaseMapUrl);
+    setResolvedSvgViewBox(shouldPreferImageSize ? null : immediate);
 
-    if (immediate || !selectedBaseMapUrl) return;
+    if (!selectedBaseMapUrl) return;
 
     let cancelled = false;
-    fetch(selectedBaseMapUrl)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`加载底图失败: ${response.status}`);
+    if (isLikelySvgAsset(selectedBaseMapUrl) && !immediate) {
+      fetch(selectedBaseMapUrl)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`加载底图失败: ${response.status}`);
+          }
+          return response.text();
+        })
+        .then((text) => {
+          const metadata = extractSvgMetadataFromText(text);
+          const derived = deriveSvgViewBox(metadata);
+          if (!cancelled) {
+            setResolvedSvgViewBox(derived);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setResolvedSvgViewBox(null);
+          }
+        });
+    }
+
+    const image = new Image();
+    image.onload = () => {
+      if (cancelled) return;
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+        const naturalViewBox = `0 0 ${image.naturalWidth} ${image.naturalHeight}`;
+        setImageNaturalViewBox(naturalViewBox);
+        if (shouldPreferImageSize) {
+          setResolvedSvgViewBox(naturalViewBox);
         }
-        return response.text();
-      })
-      .then((text) => {
-        const metadata = extractSvgMetadataFromText(text);
-        const derived = deriveSvgViewBox(metadata);
-        if (!cancelled) {
-          setResolvedSvgViewBox(derived);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setResolvedSvgViewBox(null);
-        }
-      });
+      }
+    };
+    image.onerror = () => {
+      if (cancelled || !shouldPreferImageSize) return;
+      setResolvedSvgViewBox(immediate);
+    };
+    image.src = selectedBaseMapUrl;
 
     return () => {
       cancelled = true;
@@ -436,12 +464,12 @@ export default function ContractsPage({
   }, [selectedBaseMap?.svg_height, selectedBaseMap?.svg_viewbox, selectedBaseMap?.svg_width, selectedBaseMapUrl]);
 
   const vb = useMemo(() => {
-    const raw = (resolvedSvgViewBox || "").trim();
+    const raw = (resolvedSvgViewBox || imageNaturalViewBox || "").trim();
     if (!raw) return null;
     const parts = raw.split(/\s+/).map((x) => Number(x));
     if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
     return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
-  }, [resolvedSvgViewBox]);
+  }, [imageNaturalViewBox, resolvedSvgViewBox]);
 
   const align = useMemo(() => {
     const a = alignQuery.data;
@@ -654,6 +682,10 @@ export default function ContractsPage({
     };
   };
 
+  useEffect(() => {
+    resetMapView();
+  }, [floorId, selectedBaseMapUrl, versionId]);
+
   const updateMapZoom = (nextZoom: number) => {
     setMapZoom(clampMapZoom(nextZoom));
   };
@@ -799,7 +831,14 @@ export default function ContractsPage({
               transformOrigin: "center",
             }}
           >
-            <image href={selectedBaseMapUrl} x={vb.x} y={vb.y} width={vb.w} height={vb.h} />
+            <image
+              href={selectedBaseMapUrl}
+              x={vb.x}
+              y={vb.y}
+              width={vb.w}
+              height={vb.h}
+              preserveAspectRatio="xMidYMid meet"
+            />
             <g transform={alignTransformText}>
               {geoRows.map((g) => {
                 const isSelected = g.id === selectedGeoId;
@@ -865,13 +904,14 @@ export default function ContractsPage({
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6" data-testid="contracts-page">
+    <div className="container mx-auto p-4 space-y-4 text-sm" data-testid="contracts-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">合同台账</h1>
-          <p className="text-sm text-muted-foreground mt-1">选择门店和楼层，或输入柜位号，直接在图纸上定位并查看 ERP 合同</p>
+          <h1 className="text-2xl font-bold tracking-tight">合同台账</h1>
+          <p className="mt-1 text-xs text-muted-foreground">选择门店和楼层，或输入柜位号，直接在图纸上定位并查看 ERP 合同</p>
         </div>
         <Button
+          className="h-9 text-sm"
           variant="outline"
           onClick={() => {
             contractsListQuery.refetch();
@@ -884,12 +924,12 @@ export default function ContractsPage({
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>筛选条件</CardTitle>
+        <CardHeader className="px-5 py-4">
+          <CardTitle className="text-lg">筛选条件</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label>门店</Label>
+        <CardContent className="grid grid-cols-1 gap-4 px-5 pb-5 md:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">门店</Label>
             <Select
               value={storeFilter}
               onValueChange={(value) => {
@@ -898,7 +938,7 @@ export default function ContractsPage({
               }}
               disabled={storesLoading || !storeOptions.length}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-9 text-sm">
                 <SelectValue placeholder="选择门店" />
               </SelectTrigger>
               <SelectContent className="z-50 bg-white border shadow-xl">
@@ -910,14 +950,14 @@ export default function ContractsPage({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
-            <Label>楼层</Label>
+          <div className="space-y-1.5">
+            <Label className="text-xs">楼层</Label>
             <Select
               value={floorId ? String(floorId) : ""}
               onValueChange={(v) => setFloorId(Number(v))}
               disabled={floorsQuery.isLoading || !visibleFloorOptions.length}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-9 text-sm">
                 <SelectValue placeholder={storeFilter ? "选择楼层" : "请先选择门店"} />
               </SelectTrigger>
               <SelectContent className="z-50 bg-white border shadow-xl">
@@ -932,9 +972,10 @@ export default function ContractsPage({
               <div className="text-xs text-muted-foreground">当前门店没有可用楼层</div>
             ) : null}
           </div>
-          <div className="space-y-2">
-            <Label>柜位号</Label>
+          <div className="space-y-1.5">
+            <Label className="text-xs">柜位号</Label>
             <Input
+              className="h-9 text-sm"
               value={counterKeyword}
               onChange={(e) => setCounterKeyword(e.target.value)}
               placeholder="输入柜位号，如 A118 / B6-4A"
@@ -947,69 +988,68 @@ export default function ContractsPage({
                 : "输入柜位号后，下方图纸会自动高亮对应柜位"}
             </div>
           </div>
+          <div className="space-y-1.5 md:col-span-1">
+            <Label className="text-xs">合同搜索</Label>
+            <Input
+              className="h-9 text-sm"
+              value={listKeyword}
+              onChange={(e) => setListKeyword(e.target.value)}
+              placeholder="合同号、主题、供应商、品牌、柜组"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">合同状态</Label>
+            <Select value={listStatus} onValueChange={setListStatus}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue placeholder="全部状态" />
+              </SelectTrigger>
+              <SelectContent className="z-50 bg-white border shadow-xl">
+                {CONTRACT_STATUS_OPTIONS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">柜组编码</Label>
+            <Input
+              className="h-9 text-sm"
+              value={listGroupCode}
+              onChange={(e) => setListGroupCode(e.target.value)}
+              placeholder="如 6030106076"
+            />
+          </div>
         </CardContent>
       </Card>
 
-      <Tabs value={pageView} onValueChange={setPageView} className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <TabsList className="grid w-full grid-cols-2 md:w-[360px]">
-            <TabsTrigger value="list" className="gap-2">
+      <Tabs value={pageView} onValueChange={setPageView} className="space-y-2">
+        <div className="flex flex-col gap-3 rounded-t-lg border border-b-0 bg-white px-5 py-3 md:flex-row md:items-center md:justify-between">
+          <TabsList className="grid h-10 w-full grid-cols-2 md:w-[320px]">
+            <TabsTrigger value="list" className="gap-2 text-sm">
               <FileText className="h-4 w-4" />
               合同列表
             </TabsTrigger>
-            <TabsTrigger value="map" className="gap-2">
+            <TabsTrigger value="map" className="gap-2 text-sm">
               <MapIcon className="h-4 w-4" />
               图纸定位
             </TabsTrigger>
           </TabsList>
-          <div className="text-sm text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             列表 {contractListRows.length} 条
             {selectedUnitCode ? `；当前柜位 ${selectedUnitCode}` : ""}
           </div>
         </div>
 
         <TabsContent value="list" className="mt-0">
-          <Card>
-            <CardHeader>
-              <CardTitle>合同列表</CardTitle>
+          <Card className="rounded-t-none">
+            <CardHeader className="px-5 py-4">
+              <CardTitle className="text-lg">合同列表</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>合同搜索</Label>
-                  <Input
-                    value={listKeyword}
-                    onChange={(e) => setListKeyword(e.target.value)}
-                    placeholder="合同号、主题、供应商、品牌、柜组"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>合同状态</Label>
-                  <Select value={listStatus} onValueChange={setListStatus}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="全部状态" />
-                    </SelectTrigger>
-                    <SelectContent className="z-50 bg-white border shadow-xl">
-                      {CONTRACT_STATUS_OPTIONS.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>柜组编码</Label>
-                  <Input
-                    value={listGroupCode}
-                    onChange={(e) => setListGroupCode(e.target.value)}
-                    placeholder="如 6030106076"
-                  />
-                </div>
-              </div>
-
+            <CardContent className="space-y-4 px-5 pb-5">
               <div className="overflow-x-auto rounded-md border">
-                <Table>
+                <Table className="text-xs">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="whitespace-nowrap">状态</TableHead>
@@ -1135,11 +1175,11 @@ export default function ContractsPage({
         </TabsContent>
 
         <TabsContent value="map" className="mt-0">
-          <Card>
-            <CardHeader>
-              <CardTitle>合同图</CardTitle>
+          <Card className="rounded-t-none">
+            <CardHeader className="px-5 py-4">
+              <CardTitle className="text-lg">合同图</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 px-5 pb-5">
               <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                 {STATUS_LEGEND_ORDER.map((status) => {
                   const meta = STATUS_META[status];
