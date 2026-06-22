@@ -232,13 +232,13 @@ def ensure_department_manager_wecom_rule() -> None:
         _ensure_department_manager_role(db)
         rule = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.rule_name == "默认-部门主管").first()
         if rule:
-            keywords = list(rule.position_keywords or [])
+            keywords = [keyword for keyword in list(rule.position_keywords or []) if keyword != "经理"]
             changed = False
-            for keyword in ["部门经理", "经理", "副经理"]:
+            for keyword in ["部门经理", "副经理"]:
                 if keyword not in keywords:
                     keywords.append(keyword)
                     changed = True
-            if changed:
+            if changed or keywords != list(rule.position_keywords or []):
                 rule.position_keywords = keywords
             if "dept_manager" not in (rule.role_codes or []):
                 rule.role_codes = [*(rule.role_codes or []), "dept_manager"]

@@ -113,12 +113,11 @@ app.include_router(decorations.router)
 async def startup_event():
     from routers.auth import ensure_default_admin
     from routers.authz import ensure_core_permissions, ensure_default_roles_are_view_only
-    from routers.system_management import ensure_department_manager_wecom_rule, replace_contract_viewer_roles_with_dept_manager
+    from routers.system_management import ensure_department_manager_wecom_rule
 
     ensure_core_permissions()
     ensure_default_roles_are_view_only()
     ensure_default_admin()
-    replace_contract_viewer_roles_with_dept_manager()
     ensure_department_manager_wecom_rule()
     repair_base_maps = os.getenv("SHOPVIEW_REPAIR_BASE_MAP_UPLOADS", "false").strip().lower() in {
         "1",

@@ -46,7 +46,7 @@ WECOM_SOURCE_TYPE = "WECOM"
 WECOM_SOURCE_SYSTEM = "wecom"
 BUSINESS_SCOPE_RESOURCE = "business_scope"
 BUSINESS_SCOPE_ACTION = "view"
-DEFAULT_SYNC_ROLE_CODE = "dept_manager"
+DEFAULT_SYNC_ROLE_CODE = "contract_viewer"
 DEFAULT_ALLOWED_DEPARTMENT_KEYWORDS = ["百货条线", "集团总裁办"]
 DEFAULT_ROLE_SCOPE_RULES = [
     {
@@ -56,7 +56,7 @@ DEFAULT_ROLE_SCOPE_RULES = [
         "scope_dimensions": {"store": ["$store_id"]},
     },
     {
-        "position_keywords": ["部门主管", "部门经理", "主管", "经理", "副经理"],
+        "position_keywords": ["部门主管", "部门经理", "主管", "副经理"],
         "role_codes": ["dept_manager"],
         "scope_mode": "CUSTOM",
         "scope_dimensions": {"department": ["$department"]},
@@ -543,9 +543,6 @@ def _resolve_role_scope(
 
     department_scope_values = _department_scope_values(member.department)
 
-    if not role_codes and use_default_rules:
-        role_codes.append(DEFAULT_SYNC_ROLE_CODE)
-
     if department_scope_values and scope_mode != "ALL":
         scope_mode = "CUSTOM"
         scope_dimensions = {"department": department_scope_values}
@@ -649,8 +646,6 @@ def _ensure_viewer_role(db, user_id: int) -> bool:
 
 
 def _ensure_user_role(db, user_id: int, role_code: str) -> bool:
-    if role_code == "contract_viewer":
-        role_code = DEFAULT_SYNC_ROLE_CODE
     role = db.query(Role).filter(Role.role_code == role_code, Role.is_active == True).first()
     if not role:
         raise WeComSyncError(f"自动分配角色失败：角色不存在或未启用 {role_code}")
