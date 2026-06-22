@@ -40,8 +40,18 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        COMMENT ON COLUMN unit_revenue_sales_detail.original_deduction_profit_amount
-        IS '原扣率毛利金额'
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'unit_revenue_sales_detail'
+                  AND column_name = 'original_deduction_profit_amount'
+            ) THEN
+                COMMENT ON COLUMN unit_revenue_sales_detail.original_deduction_profit_amount
+                IS '原扣率毛利金额';
+            END IF;
+        END $$;
         """
     )
 
@@ -70,7 +80,17 @@ def downgrade() -> None:
     )
     op.execute(
         """
-        COMMENT ON COLUMN unit_revenue_sales_detail.original_deduction_gross_profit_amount
-        IS '原扣率毛利金额'
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'unit_revenue_sales_detail'
+                  AND column_name = 'original_deduction_gross_profit_amount'
+            ) THEN
+                COMMENT ON COLUMN unit_revenue_sales_detail.original_deduction_gross_profit_amount
+                IS '原扣率毛利金额';
+            END IF;
+        END $$;
         """
     )

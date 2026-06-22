@@ -64,8 +64,18 @@ def upgrade() -> None:
         _rename_if_needed(old_name, new_name)
         op.execute(
             f"""
-            COMMENT ON COLUMN unit_revenue_sales_detail.{new_name}
-            IS '{comment}'
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'unit_revenue_sales_detail'
+                      AND column_name = '{new_name}'
+                ) THEN
+                    COMMENT ON COLUMN unit_revenue_sales_detail.{new_name}
+                    IS '{comment}';
+                END IF;
+            END $$;
             """
         )
 
@@ -75,7 +85,17 @@ def downgrade() -> None:
         _rename_if_needed(new_name, old_name)
         op.execute(
             f"""
-            COMMENT ON COLUMN unit_revenue_sales_detail.{old_name}
-            IS '{comment}'
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'unit_revenue_sales_detail'
+                      AND column_name = '{old_name}'
+                ) THEN
+                    COMMENT ON COLUMN unit_revenue_sales_detail.{old_name}
+                    IS '{comment}';
+                END IF;
+            END $$;
             """
         )

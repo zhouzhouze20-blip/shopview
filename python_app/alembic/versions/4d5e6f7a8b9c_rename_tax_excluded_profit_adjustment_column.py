@@ -40,8 +40,18 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        COMMENT ON COLUMN unit_revenue_sales_detail.tax_excluded_profit_adjustment
-        IS '不含税毛利调整金额'
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'unit_revenue_sales_detail'
+                  AND column_name = 'tax_excluded_profit_adjustment'
+            ) THEN
+                COMMENT ON COLUMN unit_revenue_sales_detail.tax_excluded_profit_adjustment
+                IS '不含税毛利调整金额';
+            END IF;
+        END $$;
         """
     )
 
@@ -70,7 +80,17 @@ def downgrade() -> None:
     )
     op.execute(
         """
-        COMMENT ON COLUMN unit_revenue_sales_detail.tax_excluded_gross_profit_adjustment
-        IS '不含税毛利调整金额'
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'unit_revenue_sales_detail'
+                  AND column_name = 'tax_excluded_gross_profit_adjustment'
+            ) THEN
+                COMMENT ON COLUMN unit_revenue_sales_detail.tax_excluded_gross_profit_adjustment
+                IS '不含税毛利调整金额';
+            END IF;
+        END $$;
         """
     )
