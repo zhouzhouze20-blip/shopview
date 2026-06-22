@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from models.models import DataPolicy, DataPolicyItem, Department
+from models.models import CounterGroup, DataPolicy, DataPolicyItem, Department
 
 
 BUSINESS_SCOPE_RESOURCE = "business_scope"
@@ -33,6 +33,12 @@ class DepartmentScopeRefreshResult:
     department_code: str = ""
     department_name: str = ""
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class BusinessDepartment:
+    dept_code: str
+    dept_name: str
 
 
 def normalize_department_name(value: object) -> str:
@@ -68,12 +74,29 @@ def _department_rows(db) -> list[Any]:
     return query.all()
 
 
+def _counter_group_department_rows(db) -> list[BusinessDepartment]:
+    rows = (
+        db.query(CounterGroup.department_code, CounterGroup.department_name)
+        .filter(
+            CounterGroup.department_code.isnot(None),
+            CounterGroup.department_name.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    return [
+        BusinessDepartment(dept_code=row.department_code, dept_name=row.department_name)
+        for row in rows
+        if normalize_department_name(row.department_code) and normalize_department_name(row.department_name)
+    ]
+
+
 def resolve_business_department(db, department_path: str):
     leaves = department_leaf_names(department_path)
     if not leaves:
         return None
 
-    departments = _department_rows(db)
+    departments = [*_department_rows(db), *_counter_group_department_rows(db)]
     by_name = {
         normalize_department_name(getattr(department, "dept_name", "")): department
         for department in departments

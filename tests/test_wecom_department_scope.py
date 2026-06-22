@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from models.database import Base
-from models.models import DataPolicy, DataPolicyItem, Department, Role, Store, User, UserRole
+from models.models import CounterGroup, DataPolicy, DataPolicyItem, Department, Role, Store, User, UserRole
 from routers.authz import load_business_scope
 from services.wecom_department_scope import (
     AUTO_SCOPE_EXTERNAL_PREFIX,
@@ -23,6 +23,7 @@ class WeComDepartmentScopeTest(unittest.TestCase):
             self.engine,
             tables=[
                 Store.__table__,
+                CounterGroup.__table__,
                 Department.__table__,
                 DataPolicy.__table__,
                 DataPolicyItem.__table__,
@@ -56,6 +57,7 @@ class WeComDepartmentScopeTest(unittest.TestCase):
             self.engine,
             tables=[
                 Store.__table__,
+                CounterGroup.__table__,
                 Department.__table__,
                 DataPolicy.__table__,
                 DataPolicyItem.__table__,
@@ -78,6 +80,21 @@ class WeComDepartmentScopeTest(unittest.TestCase):
         self.db.add(department)
         self.db.flush()
         return department
+
+    def add_counter_group_department(self, dept_code, dept_name, is_active=True):
+        group = CounterGroup(
+            group_id=self.next_department_id + 1000,
+            group_code=f"{dept_code}001",
+            group_name=f"{dept_name}测试柜组",
+            store_id=1,
+            department_code=dept_code,
+            department_name=dept_name,
+            is_active=is_active,
+        )
+        self.next_department_id += 1
+        self.db.add(group)
+        self.db.flush()
+        return group
 
     def test_normalize_department_name_handles_full_width_parentheses(self):
         self.assertEqual(normalize_department_name(" 中心四部（男装） "), "中心四部(男装)")
@@ -102,6 +119,15 @@ class WeComDepartmentScopeTest(unittest.TestCase):
         department = resolve_business_department(self.db, "江苏普灵仕集团/百货条线/中心四部（男装）")
 
         self.assertEqual(department.dept_code, "6010102")
+
+    def test_resolve_business_department_falls_back_to_counter_groups(self):
+        self.add_department("6010102", "中心四部(男装)").is_active = False
+        self.add_counter_group_department("6010102", "中心四部(男装)", is_active=False)
+
+        department = resolve_business_department(self.db, "江苏普灵仕集团/百货条线/中心四部（男装）")
+
+        self.assertEqual(department.dept_code, "6010102")
+        self.assertEqual(department.dept_name, "中心四部(男装)")
 
     def test_refresh_auto_department_scope_replaces_only_auto_policy(self):
         user = SimpleNamespace(user_id=963, real_name="蒋佳卫")
