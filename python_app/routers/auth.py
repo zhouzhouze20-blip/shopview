@@ -21,11 +21,14 @@ from sqlalchemy.sql import func
 
 from models.database import SessionLocal, get_db
 from models.models import LoginLog, Permission, Role, RolePermission, User, UserIdentity, UserRole
+from services.wecom_department_scope import refresh_auto_department_scope
 from schemas.schemas import AuthUserSchema, LoginRequest, LoginResponse
 from services.wecom_client import (
     WeComApiError,
     WeComConfigError,
     build_qr_login_url,
+    get_department_paths,
+    get_user_detail,
     get_userinfo_by_code,
     require_wecom_config,
 )
@@ -269,6 +272,34 @@ def _is_admin_user(db: Session, user: User) -> bool:
         )
     }
     return bool(role_codes & ADMIN_ROLE_CODES)
+
+
+def _refresh_wecom_department_scope_after_login(db: Session, config, user: User, wecom_user_id: str) -> None:
+    try:
+        detail = get_user_detail(config, wecom_user_id)
+        department_ids = detail.get("department") or []
+        if not department_ids:
+            print(f"企业微信自动部门范围跳过: user_id={user.user_id} wecom_user_id={wecom_user_id} reason=no_department")
+            return
+        department_paths = get_department_paths(config)
+        department_path = department_paths.get(int(department_ids[0]), str(department_ids[0]))
+        result = refresh_auto_department_scope(
+            db,
+            user=user,
+            wecom_user_id=wecom_user_id,
+            department_path=department_path,
+        )
+        if not result.updated:
+            print(
+                "企业微信自动部门范围刷新失败: "
+                f"user_id={user.user_id} real_name={user.real_name or ''} "
+                f"wecom_user_id={wecom_user_id} department={department_path} reason={result.reason}"
+            )
+    except Exception as exc:
+        print(
+            "企业微信自动部门范围刷新异常: "
+            f"user_id={user.user_id} wecom_user_id={wecom_user_id} error={exc}"
+        )
 
 
 def ensure_default_admin() -> None:
@@ -540,6 +571,7 @@ async def wecom_callback(
         db.commit()
         return RedirectResponse(_frontend_redirect_url("/", auth_error="wecom_disabled"))
 
+    _refresh_wecom_department_scope_after_login(db, config, user, wecom_user_id)
     token = _create_access_token(user.user_id)
     _store_wecom_login_success(state, user.user_id, token)
     redirect = RedirectResponse(_frontend_redirect_url(state_payload.get("next") or "/"))

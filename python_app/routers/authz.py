@@ -310,7 +310,7 @@ def _load_scope_from_policies(
 
 
 def load_business_scope(db: Session, user: User, *, fallback_resource_code: str | None = None) -> DataScope:
-    """Load the WeCom business data scope used by contracts, sales, settlements and revenue."""
+    """Load user-level business data scope used by contracts, sales, settlements and revenue."""
     authz_user = get_authz_subject(db, user)
     if is_admin(db, authz_user):
         return DataScope(all_access=True)
@@ -320,8 +320,6 @@ def load_business_scope(db: Session, user: User, *, fallback_resource_code: str 
         authz_user,
         "business_scope",
         "view",
-        source_type="WECOM",
-        source_system="wecom",
         user_only=True,
     )
 

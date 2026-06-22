@@ -39,6 +39,7 @@ from models.models import (
     WeComRoleScopeRule,
 )
 from routers.auth import DEFAULT_ADMIN_PASSWORD, _hash_password
+from services.wecom_department_scope import refresh_auto_department_scope
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
 DEFAULT_TIMEOUT_SECONDS = 12
 WECOM_SOURCE_TYPE = "WECOM"
@@ -677,6 +678,7 @@ def _refresh_wecom_business_scope(
             DataPolicy.action_code == BUSINESS_SCOPE_ACTION,
             DataPolicy.source_type == WECOM_SOURCE_TYPE,
             DataPolicy.source_system == WECOM_SOURCE_SYSTEM,
+            DataPolicy.external_scope_id == f"{member.userid}:business_scope",
         )
         .all()
     ]
@@ -751,8 +753,25 @@ def _sync_role_scope_for_member(
         if _ensure_user_role(db, user.user_id, role_code):
             stats["auto_roles_added"] += 1
 
-    if _refresh_wecom_business_scope(db, user.user_id, member, scope_mode, scope_dimensions):
+    non_department_dimensions = {
+        dimension: values
+        for dimension, values in scope_dimensions.items()
+        if dimension != "department"
+    }
+    if _refresh_wecom_business_scope(db, user.user_id, member, scope_mode, non_department_dimensions):
         stats["wecom_business_scopes_refreshed"] += 1
+
+    if member.department:
+        result = refresh_auto_department_scope(
+            db,
+            user=user,
+            wecom_user_id=member.userid,
+            department_path=member.department,
+        )
+        if result.updated:
+            stats["wecom_auto_department_scopes_refreshed"] += 1
+        else:
+            stats[f"wecom_auto_department_scope_failed_{result.reason or 'unknown'}"] += 1
     return stats
 
 

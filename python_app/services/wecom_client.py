@@ -127,3 +127,45 @@ def get_userinfo_by_code(config: WeComConfig, code: str) -> dict[str, Any]:
         f"{WECOM_API_BASE}/user/getuserinfo",
         {"access_token": access_token, "code": code},
     )
+
+
+def get_user_detail(config: WeComConfig, userid: str) -> dict[str, Any]:
+    access_token = get_app_access_token(config)
+    return _request_json(
+        f"{WECOM_API_BASE}/user/get",
+        {"access_token": access_token, "userid": userid},
+    )
+
+
+def get_department_paths(config: WeComConfig) -> dict[int, str]:
+    access_token = get_app_access_token(config)
+    payload = _request_json(f"{WECOM_API_BASE}/department/list", {"access_token": access_token})
+    department_names: dict[int, str] = {}
+    parent_ids: dict[int, int] = {}
+    ids: list[int] = []
+    for item in payload.get("department", []):
+        if item.get("id") is None:
+            continue
+        department_id = int(item["id"])
+        ids.append(department_id)
+        department_names[department_id] = str(item.get("name") or item.get("name_en") or department_id).strip()
+        if item.get("parentid") is not None:
+            parent_ids[department_id] = int(item.get("parentid") or 0)
+
+    def department_path(department_id: int) -> str:
+        path: list[str] = []
+        seen: set[int] = set()
+        current_id = department_id
+        while current_id and current_id not in seen:
+            seen.add(current_id)
+            name = department_names.get(current_id, "").strip()
+            if name:
+                path.append(name)
+            current_id = parent_ids.get(current_id, 0)
+        path.reverse()
+        return "/".join(path)
+
+    return {
+        department_id: department_path(department_id) or department_names.get(department_id, str(department_id))
+        for department_id in ids
+    }
