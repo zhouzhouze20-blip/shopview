@@ -1,29 +1,29 @@
-# Enterprise WeChat Auto Department Scope Design
+# 企业微信自动部门数据范围设计
 
-## Background
+## 背景
 
-ShopView business pages such as sales, contracts, settlements, and revenue use `business_scope/view` data policies to filter records. A user can have the correct module permissions and still see no data when no user-level business scope exists.
+ShopView 的销售、合同、结算、收益等业务页面会使用 `business_scope/view` 数据策略过滤记录。一个用户即使已经有正确的模块查看权限，如果没有用户级业务数据范围，也会看不到数据。
 
-The current issue was reproduced with Jiang Jiawei. The user has the department manager role and view permissions, but no active `business_scope/view` policy. The expected department exists in business data as `6010102 / 中心四部(男装)`, so the failure is caused by missing user data scope, not missing business data.
+这次问题已经用蒋佳卫复现。该用户有部门经理角色和查看权限，但没有有效的 `business_scope/view` 策略。对应业务部门在数据中存在，编码为 `6010102 / 中心四部(男装)`，所以问题不是业务数据缺失，而是用户数据范围缺失。
 
-## Goal
+## 目标
 
-When a user signs in through Enterprise WeChat, ShopView should automatically create or refresh that user's default data scope from the user's Enterprise WeChat department.
+用户通过企业微信登录 ShopView 后，系统应根据该用户在企业微信中的部门，自动创建或刷新该用户的默认数据范围。
 
-The automatic scope covers exactly one department because each person belongs to one Enterprise WeChat department. If one person manages additional departments, an administrator adds those extra ranges manually.
+自动范围只覆盖一个部门，因为每个人在企业微信中只归属一个部门。如果某个人实际管理多个部门，由管理员在后台手工追加额外范围。
 
-## Non-Goals
+## 非目标
 
-- Do not infer multi-department management from job title, department name, or role.
-- Do not grant broad store-level access when department mapping is missing.
-- Do not overwrite manually added data ranges.
-- Do not change business module filtering logic in sales, contracts, settlements, revenue, or dashboard APIs unless a bug is found during implementation.
+- 不根据岗位、部门名称或角色推断跨部门管理范围。
+- 部门映射缺失时，不授予宽泛的门店级权限。
+- 不覆盖管理员手工追加的数据范围。
+- 除非实现过程中发现现有过滤逻辑存在 bug，否则不改销售、合同、结算、收益、驾驶舱等业务模块的过滤逻辑。
 
-## Data Model
+## 数据模型
 
-Automatic department scopes use the existing `data_policies` and `data_policy_items` tables.
+自动部门范围复用现有 `data_policies` 和 `data_policy_items` 表。
 
-Automatic policy:
+自动策略：
 
 - `subject_type = USER`
 - `subject_id = users.user_id`
@@ -36,91 +36,91 @@ Automatic policy:
 - `external_scope_id = wecom-auto-department:<user_id>`
 - `external_scope_name = <real_name> 企业微信自动部门范围`
 
-Automatic policy item:
+自动策略明细：
 
 - `dimension_type = department`
-- `dimension_value = <business department code>`
+- `dimension_value = <业务部门编码>`
 - `include_children = false`
 
-Manual extra ranges must use a distinct source marker, such as `source_type = MANUAL` and `source_system = shopview`, or another non-auto `external_scope_id`. The auto-refresh job only replaces the matching `wecom-auto-department:<user_id>` policy.
+手工追加范围必须使用不同的来源标记，例如 `source_type = MANUAL`、`source_system = shopview`，或者使用不同于自动策略的 `external_scope_id`。自动刷新任务只替换匹配 `wecom-auto-department:<user_id>` 的自动策略。
 
-## Department Mapping
+## 部门映射
 
-Enterprise WeChat department names are not always identical to business department names in `counter_groups` or `departments`. The auto scope must map Enterprise WeChat department to the business department code before writing the policy.
+企业微信部门名称不一定和 `counter_groups` 或 `departments` 中的业务部门名称完全一致。自动范围写入前，必须先把企业微信部门映射到业务部门编码。
 
-The mapping target is the stable business department code and name, for example:
+映射目标是稳定的业务部门编码和名称，例如：
 
-- Enterprise WeChat `中心四部（男装）` maps to business department `6010102 / 中心四部(男装)`.
+- 企业微信 `中心四部（男装）` 映射到业务部门 `6010102 / 中心四部(男装)`。
 
-The mapping layer should support aliases so naming differences do not create empty scopes. Known examples from current data:
+映射层需要支持别名，避免名称差异造成空范围。当前数据中已知示例：
 
-- `中心B部(超市)` maps to `6010104 / 中心BF部(超市)`.
-- `中心B部(生鲜)` maps to `6010106 / 中心BF部(生鲜)`.
-- `中心五部(运动)` maps to `6010118 / 中心五部(运休)`.
-- `中心市场部--营运` maps to `6010110 / 中心营运部`.
-- `中心市场部--客服` maps to `6010109 / 中心企划客服部`.
-- `中心市场部--企划` maps to `6010108 / 中心企划执行部`.
-- `大楼营运` maps to `6020111 / 营运四部`.
+- `中心B部(超市)` 映射到 `6010104 / 中心BF部(超市)`。
+- `中心B部(生鲜)` 映射到 `6010106 / 中心BF部(生鲜)`。
+- `中心五部(运动)` 映射到 `6010118 / 中心五部(运休)`。
+- `中心市场部--营运` 映射到 `6010110 / 中心营运部`。
+- `中心市场部--客服` 映射到 `6010109 / 中心企划客服部`。
+- `中心市场部--企划` 映射到 `6010108 / 中心企划执行部`。
+- `大楼营运` 映射到 `6020111 / 营运四部`。
 
-The implementation can start with a small explicit alias table or configuration file, then fall back to exact normalized name matching against active business departments.
+实现可以先使用一个小的显式别名表或配置文件，再回退到对启用状态业务部门的规范化名称精确匹配。
 
-## Flow
+## 流程
 
-### Enterprise WeChat Login
+### 企业微信登录
 
-1. User authorizes through Enterprise WeChat.
-2. ShopView resolves the Enterprise WeChat identity to `users.user_id`.
-3. ShopView obtains the user's Enterprise WeChat department from the existing contact sync data or by fetching the member profile if needed.
-4. ShopView maps the Enterprise WeChat department to a business department code.
-5. ShopView upserts the auto `business_scope/view` policy for the user.
-6. Login continues even if the scope refresh fails, but the failure is logged with enough context for an administrator to repair the mapping.
+1. 用户通过企业微信授权登录。
+2. ShopView 将企业微信身份解析到 `users.user_id`。
+3. ShopView 从已有通讯录同步数据中取得用户的企业微信部门；如有必要，再调用企业微信成员资料接口补取。
+4. ShopView 将企业微信部门映射到业务部门编码。
+5. ShopView 为该用户新增或更新自动 `business_scope/view` 策略。
+6. 即使范围刷新失败，登录也继续进行；但系统要记录足够上下文，便于管理员修复部门映射。
 
-### Contact Sync
+### 通讯录同步
 
-The existing Enterprise WeChat contact sync should also refresh auto department scopes. This covers department changes and users who do not trigger login immediately after a sync.
+现有企业微信通讯录同步也应刷新自动部门范围。这样可以覆盖用户部门变更，以及同步后没有立刻登录的用户。
 
-The sync should:
+同步逻辑应做到：
 
-1. Resolve the user's one Enterprise WeChat department.
-2. Map it to a business department code.
-3. Replace only the user's auto department policy.
-4. Preserve manual policies and role assignments.
+1. 解析用户唯一的企业微信部门。
+2. 映射到业务部门编码。
+3. 只替换该用户的自动部门策略。
+4. 保留手工策略和角色分配。
 
-## Authorization Behavior
+## 授权行为
 
-Existing API authorization should continue to call `load_business_scope(...)`. The desired effective scope is:
+现有业务 API 继续调用 `load_business_scope(...)`。期望的最终有效范围是：
 
-- automatic Enterprise WeChat department range, plus
-- manually added extra ranges.
+- 企业微信自动部门范围，加上
+- 管理员手工追加范围。
 
-Current `load_business_scope(...)` loads active user policies with `source_type = WECOM` and `source_system = wecom`. During implementation, confirm whether manual extra ranges are currently visible to `load_business_scope(...)`. If they are filtered out, adjust the loader or manual policy marker so automatic and manual ranges combine without granting unintended role-level access.
+当前 `load_business_scope(...)` 会读取 `source_type = WECOM`、`source_system = wecom` 的启用用户策略。实现时需要确认手工追加范围是否能被 `load_business_scope(...)` 读取。如果当前过滤条件会排除手工范围，就需要调整范围加载逻辑或手工策略标记，确保自动范围和手工范围可以合并，同时不能引入非预期的角色级放权。
 
-## Error Handling
+## 异常处理
 
-Missing or ambiguous mapping should not grant access. The system should log a diagnostic record with:
+部门映射缺失或存在歧义时，不授予数据权限。系统应记录诊断信息：
 
-- user id
-- real name
-- Enterprise WeChat user id
-- Enterprise WeChat department name
-- failure reason
+- 用户 ID
+- 姓名
+- 企业微信用户 ID
+- 企业微信部门名称
+- 失败原因
 
-The admin-facing repair path is to add or correct the department mapping, then rerun the sync for that user or the full contact sync.
+管理员修复路径是：补充或修正部门映射，然后重新同步单个用户或重新执行完整通讯录同步。
 
-## Validation
+## 验证
 
-Implementation should include focused tests or diagnostic scripts for these cases:
+实现时需要通过聚焦测试或诊断脚本覆盖以下场景：
 
-1. Jiang Jiawei receives `department:6010102` from Enterprise WeChat department `中心四部(男装)` and can see scoped business data.
-2. Existing manual extra ranges remain after automatic scope refresh.
-3. A missing department mapping creates no data policy and records a diagnostic failure.
-4. Alias examples such as `中心B部(超市)` and `中心五部(运动)` resolve to the correct business department codes.
-5. Contact sync refreshes automatic scopes without deleting non-auto policies.
+1. 蒋佳卫从企业微信部门 `中心四部(男装)` 获得 `department:6010102`，并能看到该范围内的业务数据。
+2. 自动范围刷新后，已有手工追加范围仍然保留。
+3. 部门映射缺失时，不创建数据策略，并记录诊断失败信息。
+4. `中心B部(超市)`、`中心五部(运动)` 等别名能解析到正确业务部门编码。
+5. 通讯录同步能刷新自动范围，且不会删除非自动策略。
 
-## Rollout
+## 上线步骤
 
-1. Add mapping and upsert logic in code.
-2. Run dry-run diagnostics against current production data to list users whose Enterprise WeChat departments map successfully or fail.
-3. Apply the auto-scope refresh for matched users.
-4. Verify Jiang Jiawei and several department-manager samples through admin view mode.
-5. Review unresolved mappings and add aliases before broad launch.
+1. 在代码中增加部门映射和策略新增/更新逻辑。
+2. 先用当前生产数据跑 dry-run 诊断，列出哪些用户映射成功、哪些用户映射失败。
+3. 对映射成功的用户执行自动范围刷新。
+4. 通过管理员代看模式验证蒋佳卫和多个部门经理样例。
+5. 复核未解析部门，补充别名后再扩大上线范围。
