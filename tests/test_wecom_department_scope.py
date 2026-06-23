@@ -12,6 +12,7 @@ from services.wecom_department_scope import (
     department_leaf_names,
     normalize_department_name,
     refresh_auto_department_scope,
+    refresh_auto_department_scope_from_known_assignment,
     resolve_business_department,
 )
 
@@ -182,6 +183,37 @@ class WeComDepartmentScopeTest(unittest.TestCase):
             [(item.policy_id, item.dimension_type, item.dimension_value) for item in items],
             [(2, "department", "6010117"), (3, "department", "6010102")],
         )
+
+    def test_refresh_auto_department_scope_uses_known_assignment_fallback(self):
+        user = SimpleNamespace(user_id=734, username="2269", real_name="于云")
+        self.add_counter_group_department("6010113", "中心二部(女装)", is_active=False)
+
+        result = refresh_auto_department_scope_from_known_assignment(
+            self.db,
+            user=user,
+            wecom_user_id="2269",
+        )
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.department_code, "6010113")
+        item = self.db.query(DataPolicyItem).one()
+        self.assertEqual(item.dimension_type, "department")
+        self.assertEqual(item.dimension_value, "6010113")
+
+    def test_refresh_auto_department_scope_skips_ambiguous_known_assignment(self):
+        user = SimpleNamespace(user_id=788, username="2746", real_name="谈菲")
+        self.add_counter_group_department("6010118", "中心五部(运休)", is_active=False)
+        self.add_counter_group_department("6010103", "中心六部(儿童)", is_active=False)
+
+        result = refresh_auto_department_scope_from_known_assignment(
+            self.db,
+            user=user,
+            wecom_user_id="2746",
+        )
+
+        self.assertFalse(result.updated)
+        self.assertEqual(result.reason, "known_department_ambiguous")
+        self.assertEqual(self.db.query(DataPolicy).count(), 0)
 
     def test_load_business_scope_includes_manual_user_policy(self):
         user = User(

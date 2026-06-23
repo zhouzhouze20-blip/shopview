@@ -26,6 +26,56 @@ DEPARTMENT_ALIASES: dict[str, str] = {
     "大楼营运": "营运四部",
 }
 
+KNOWN_USER_DEPARTMENTS: dict[str, list[str]] = {
+    "黄莉倩": ["中心B部(超市)"],
+    "丁娅": ["中心B部(超市)"],
+    "何蕾": ["中心B部(超市)"],
+    "高敏": ["中心B部(生鲜)"],
+    "陈晓楠": ["中心一部(化妆)"],
+    "薛涌": ["中心一部(化妆)"],
+    "花玲": ["中心一部(化妆)"],
+    "黄欣怡": ["中心一部(名品)"],
+    "于云": ["中心二部(女装)"],
+    "凡水晶": ["中心二部(女装)"],
+    "潘婷": ["中心二部(女装)"],
+    "隆晓蓉": ["中心三部(女装)"],
+    "孙琴莹": ["中心三部(女装)"],
+    "陈蓉": ["中心三部(女装)"],
+    "王科涵": ["中心三部(女装)"],
+    "蒋佳卫": ["中心四部(男装)"],
+    "谈菲": ["中心五部(运动)", "中心六部(儿童)"],
+    "吴炯萱": ["中心六部(儿童)"],
+    "吴彪": ["中心六部(儿童)"],
+    "贺丽": ["中心七部(家居)"],
+    "宋军": ["中心七部(家居)"],
+    "蒋昊": ["中心市场部--营运"],
+    "程益": ["中心市场部--营运"],
+    "徐丹妮": ["中心市场部--客服"],
+    "俞陈": ["中心市场部--企划"],
+    "丁丽娜": ["中心市场部--企划"],
+    "丁岚": ["营运一部"],
+    "刘露露": ["营运二部"],
+    "王南": ["营运三部"],
+    "屠云": ["大楼营运"],
+    "周霞": ["新世纪一部(化妆)"],
+    "赵靓": ["新世纪一部(化妆)"],
+    "金艳": ["新世纪二部"],
+    "毛红霞": ["新世纪二部"],
+    "朱丽华": ["新世纪三部"],
+    "孙丽萍": ["新世纪三部"],
+    "刘烨丹": ["新世纪四部"],
+    "余坚": ["新世纪四部"],
+    "姜榆芳": ["新世纪五部(运休)"],
+    "李美芳": ["新世纪五部(运休)"],
+    "赵佳": ["新世纪六部(男装)"],
+    "顾红年": ["新世纪六部(男装)"],
+    "范梦茜": ["新世纪八部(儿童)"],
+    "刘莉": ["新世纪八部(儿童)"],
+    "张文伟": ["新世纪九部(超市)"],
+    "蒋雪梅": ["新世纪九部(超市)"],
+    "王劲斐": ["新世纪十部(特业)"],
+}
+
 
 @dataclass(frozen=True)
 class DepartmentScopeRefreshResult:
@@ -194,4 +244,38 @@ def refresh_auto_department_scope(
         updated=True,
         department_code=str(department.dept_code),
         department_name=str(department.dept_name),
+    )
+
+
+def known_department_names_for_user(user) -> list[str]:
+    names: list[str] = []
+    for value in (
+        getattr(user, "real_name", None),
+        getattr(user, "username", None),
+        getattr(user, "employee_no", None),
+    ):
+        key = str(value or "").strip()
+        if key and key in KNOWN_USER_DEPARTMENTS:
+            for department_name in KNOWN_USER_DEPARTMENTS[key]:
+                if department_name not in names:
+                    names.append(department_name)
+    return names
+
+
+def refresh_auto_department_scope_from_known_assignment(
+    db,
+    *,
+    user,
+    wecom_user_id: str,
+) -> DepartmentScopeRefreshResult:
+    department_names = known_department_names_for_user(user)
+    if not department_names:
+        return DepartmentScopeRefreshResult(updated=False, reason="known_department_missing")
+    if len(department_names) > 1:
+        return DepartmentScopeRefreshResult(updated=False, reason="known_department_ambiguous")
+    return refresh_auto_department_scope(
+        db,
+        user=user,
+        wecom_user_id=wecom_user_id,
+        department_path=department_names[0],
     )

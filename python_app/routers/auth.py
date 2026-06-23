@@ -21,7 +21,7 @@ from sqlalchemy.sql import func
 
 from models.database import SessionLocal, get_db
 from models.models import LoginLog, Permission, Role, RolePermission, User, UserIdentity, UserRole
-from services.wecom_department_scope import refresh_auto_department_scope
+from services.wecom_department_scope import refresh_auto_department_scope, refresh_auto_department_scope_from_known_assignment
 from schemas.schemas import AuthUserSchema, LoginRequest, LoginResponse
 from services.wecom_client import (
     WeComApiError,
@@ -275,11 +275,32 @@ def _is_admin_user(db: Session, user: User) -> bool:
 
 
 def _refresh_wecom_department_scope_after_login(db: Session, config, user: User, wecom_user_id: str) -> None:
+    def refresh_from_known_assignment(reason: str) -> None:
+        fallback_result = refresh_auto_department_scope_from_known_assignment(
+            db,
+            user=user,
+            wecom_user_id=wecom_user_id,
+        )
+        if fallback_result.updated:
+            print(
+                "企业微信自动部门范围使用已知名单兜底成功: "
+                f"user_id={user.user_id} real_name={user.real_name or ''} "
+                f"wecom_user_id={wecom_user_id} department={fallback_result.department_code}/{fallback_result.department_name} "
+                f"fallback_reason={reason}"
+            )
+        else:
+            print(
+                "企业微信自动部门范围兜底失败: "
+                f"user_id={user.user_id} real_name={user.real_name or ''} "
+                f"wecom_user_id={wecom_user_id} fallback_reason={reason} reason={fallback_result.reason}"
+            )
+
     try:
         detail = get_user_detail(config, wecom_user_id)
         department_ids = detail.get("department") or []
         if not department_ids:
             print(f"企业微信自动部门范围跳过: user_id={user.user_id} wecom_user_id={wecom_user_id} reason=no_department")
+            refresh_from_known_assignment("no_department")
             return
         department_paths = get_department_paths(config)
         department_path = department_paths.get(int(department_ids[0]), str(department_ids[0]))
@@ -295,11 +316,13 @@ def _refresh_wecom_department_scope_after_login(db: Session, config, user: User,
                 f"user_id={user.user_id} real_name={user.real_name or ''} "
                 f"wecom_user_id={wecom_user_id} department={department_path} reason={result.reason}"
             )
+            refresh_from_known_assignment(result.reason or "department_refresh_failed")
     except Exception as exc:
         print(
             "企业微信自动部门范围刷新异常: "
             f"user_id={user.user_id} wecom_user_id={wecom_user_id} error={exc}"
         )
+        refresh_from_known_assignment("exception")
 
 
 def ensure_default_admin() -> None:
