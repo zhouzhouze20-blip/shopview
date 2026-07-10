@@ -78,12 +78,11 @@ export function previousYearDate(iso: string): string {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
+  if (year <= 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
     throw new Error(`Invalid ISO date: ${iso}`);
   }
 
   const previousYear = year - 1;
-  if (previousYear < 0) throw new Error(`Invalid ISO date: ${iso}`);
   const previousDay = Math.min(day, daysInMonth(previousYear, month));
   return `${String(previousYear).padStart(4, "0")}-${match[2]}-${String(previousDay).padStart(2, "0")}`;
 }

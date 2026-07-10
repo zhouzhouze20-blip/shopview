@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { writeFile, unlink } from "node:fs/promises";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   buildOd0002Params,
@@ -24,6 +26,13 @@ test("previousYearDate rejects invalid ISO dates with a clear error", () => {
   assert.throws(
     () => previousYearDate("not-a-date"),
     /Invalid ISO date: not-a-date/,
+  );
+});
+
+test("previousYearDate rejects dates without a representable previous year", () => {
+  assert.throws(
+    () => previousYearDate("0001-01-01"),
+    /Invalid ISO date: 0001-01-01/,
   );
 });
 
@@ -55,19 +64,51 @@ test("OD0002 exposes the six approved tabs in order", () => {
   );
 });
 
-test("frontend model declares every backend response key", async () => {
-  const source = await readFile(new URL("./od0002-report.ts", import.meta.url), "utf8");
-  const requiredKeys = [
-    "sales_current", "sales_prior", "sales_yoy",
-    "profit_current", "profit_prior", "profit_yoy",
-    "margin_current", "margin_prior", "margin_change",
-    "store_code", "store_name", "dimension_code", "dimension_name", "metrics", "total",
-    "unmatched_area_category_group_count", "unmatched_floor_group_count",
-    "unmatched_area_category_sales_current", "unmatched_floor_sales_current",
-    "dates", "selected_store", "dimensions", "totals", "quality", "generated_at",
-  ];
+test("frontend model accepts the complete backend response contract", async () => {
+  const fixtureUrl = new URL("./od0002-report.type-fixture.ts", import.meta.url);
+  const metric = `{
+    sales_current: 120000, sales_prior: 100000, sales_yoy: 0.2,
+    profit_current: 24000, profit_prior: 15000, profit_yoy: 0.6,
+    margin_current: 0.2, margin_prior: 0.15, margin_change: 0.05,
+  }`;
+  const row = `{
+    store_code: "601", store_name: "一店",
+    dimension_code: "601", dimension_name: "一店",
+    metrics: metric, total: metric,
+  }`;
+  const fixture = `
+    import type { Od0002DimensionKey, Od0002Response } from "./od0002-report.ts";
+    const metric = ${metric};
+    const row = ${row};
+    const keys: Od0002DimensionKey[] = ["stores", "departments", "areas", "categories", "groups", "floors"];
+    const dimensions = Object.fromEntries(keys.map((key) => [key, [row]])) as Record<Od0002DimensionKey, typeof row[]>;
+    const totals = Object.fromEntries(keys.map((key) => [key, metric])) as Record<Od0002DimensionKey, typeof metric>;
+    export const response = {
+      dates: {
+        start_date: "2026-01-01", end_date: "2026-01-31",
+        prior_start_date: "2025-01-01", prior_end_date: "2025-01-31",
+      },
+      selected_store: null,
+      dimensions,
+      totals,
+      quality: {
+        unmatched_area_category_group_count: 0,
+        unmatched_floor_group_count: 0,
+        unmatched_area_category_sales_current: 0,
+        unmatched_floor_sales_current: 0,
+      },
+      generated_at: "2026-07-10T00:00:00+00:00",
+    } satisfies Od0002Response;
+  `;
 
-  for (const key of requiredKeys) {
-    assert.match(source, new RegExp(`\\b${key}\\b`), `missing backend key: ${key}`);
+  await writeFile(fixtureUrl, fixture);
+  try {
+    await promisify(execFile)("./node_modules/.bin/tsc", [
+      "--noEmit", "--strict", "--target", "ES2020", "--module", "ESNext",
+      "--moduleResolution", "bundler", "--allowImportingTsExtensions", "--skipLibCheck",
+      fixtureUrl.pathname,
+    ]);
+  } finally {
+    await unlink(fixtureUrl);
   }
 });
