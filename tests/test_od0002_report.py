@@ -100,7 +100,7 @@ def test_report_constants_match_the_design():
 
 
 def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
-    scope_sql = " AND NOT (SUBSTRING(mf.mfcode FROM 1 FOR 3) = ANY(:scope_deny_store))"
+    scope_sql = " AND NOT (s.sglmarket::text = ANY(:scope_deny_store))"
     sql, params = build_report_query(
         date(2026, 5, 29),
         date(2026, 6, 28),
@@ -119,14 +119,19 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert "join manaframe mf" in compact
     assert "join manaframe dept" in compact
     assert "join area_category ac" in compact
+    assert "join stores st" in compact
     assert "s.sglmfid" in compact and "mf.mfcode" in compact
     assert "mf.mfpcode" in compact and "dept.mfcode" in compact
     assert "mf.mfchr1" in compact and "ac.category_code" in compact
     assert "s.sglwmid <> '5'" in compact
     assert "mf.mflc <> '00'" in compact
-    assert "replace(coalesce(ac.area_name, ''), ' ', '') <> '其他类别区域'" in compact
+    assert "trim(both from coalesce(ac.area_name, '')) <> '其他类别区域'" in compact
+    assert "replace(coalesce(ac.area_name" not in compact
     assert scope_sql in sql
-    assert "= :selected_store" in sql
+    assert "s.sglmarket::text = :selected_store" in sql
+    assert "s.sglmarket::text as store_code" in compact
+    assert "st.store_name as store_name" in compact
+    assert "substring(trim(both from coalesce(mf.mfcode" not in compact
     assert set(EXCLUDED_DEPARTMENT_CODES).issubset(set(params["excluded_department_codes"]))
     assert params["scope_deny_store"] == ["602"]
     assert params["selected_store"] == "601"

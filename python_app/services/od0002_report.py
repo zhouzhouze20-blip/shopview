@@ -133,10 +133,7 @@ def build_report_query(
     selected_store_sql = ""
     if selected_store is not None:
         params["selected_store"] = selected_store
-        selected_store_sql = (
-            " AND SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3)"
-            " = :selected_store"
-        )
+        selected_store_sql = " AND s.sglmarket::text = :selected_store"
 
     floor_cases = "\n".join(
         f"WHEN '{code}' THEN '{name}'" for code, name in FLOOR_NAMES.items()
@@ -144,8 +141,8 @@ def build_report_query(
     sql = f"""
 WITH base AS (
   SELECT
-    SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) AS store_code,
-    SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) AS store_name,
+    s.sglmarket::text AS store_code,
+    st.store_name AS store_name,
     dept.mfcode AS department_code,
     COALESCE(NULLIF(TRIM(BOTH FROM dept.mfcname), ''), '未匹配') AS department_name,
     ac.area_code,
@@ -174,6 +171,8 @@ WITH base AS (
     ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
   LEFT JOIN area_category ac
     ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = UPPER(TRIM(COALESCE(ac.category_code, '')))
+  LEFT JOIN stores st
+    ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = s.sglmarket::text
   WHERE (
        s.sglhsrq BETWEEN :start_date AND :end_date
        OR s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
@@ -181,7 +180,7 @@ WITH base AS (
     AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
     AND (mf.mflc IS NULL OR mf.mflc <> '00')
     AND COALESCE(dept.mfcode, '') <> ALL(:excluded_department_codes)
-    AND REPLACE(COALESCE(ac.area_name, ''), ' ', '') <> '其他类别区域'
+    AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
     {scope_filter_sql}
     {selected_store_sql}
   GROUP BY
