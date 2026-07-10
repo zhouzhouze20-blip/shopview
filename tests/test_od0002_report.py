@@ -480,6 +480,70 @@ def test_od0002_route_rejects_explicitly_denied_store(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_od0002_route_preserves_union_semantics_for_mixed_store_and_department_allow(
+    monkeypatch,
+):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(
+        sales,
+        "load_business_scope",
+        lambda *args, **kwargs: DataScope(
+            allow={"store": {"601"}, "department": {"D01"}}
+        ),
+    )
+    monkeypatch.setattr(
+        sales,
+        "load_od0002_report",
+        lambda *args, **kwargs: {"selected_store": kwargs["selected_store"]},
+    )
+
+    result = asyncio.run(
+        sales.od0002_report(
+            date(2026, 1, 1), date(2026, 1, 31), "602", object(), object()
+        )
+    )
+
+    assert result == {"selected_store": "602"}
+
+
+@pytest.mark.parametrize(
+    ("raw_store_id", "expected_store_id"),
+    [(" 601 ", "601"), ("   ", None)],
+)
+def test_od0002_route_normalizes_selected_store(
+    monkeypatch, raw_store_id, expected_store_id
+):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(
+        sales,
+        "load_business_scope",
+        lambda *args, **kwargs: DataScope(all_access=True),
+    )
+    monkeypatch.setattr(
+        sales,
+        "load_od0002_report",
+        lambda *args, **kwargs: {"selected_store": kwargs["selected_store"]},
+    )
+
+    result = asyncio.run(
+        sales.od0002_report(
+            date(2026, 1, 1),
+            date(2026, 1, 31),
+            raw_store_id,
+            object(),
+            object(),
+        )
+    )
+
+    assert result == {"selected_store": expected_store_id}
+
+
 def test_load_od0002_report_returns_complete_empty_structure():
     payload = load_od0002_report(
         FakeDb([]), TrustedScopeSql(""), {}, start_date=date(2026, 1, 1),

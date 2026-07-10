@@ -311,7 +311,14 @@ def _scope_explicitly_rejects_store(scope, store_id: str) -> bool:
     if normalized_store in denied_stores:
         return True
     allowed_stores = {str(value).strip().upper() for value in scope.allow.get("store", set())}
-    return bool(allowed_stores) and normalized_store not in allowed_stores
+    other_allow_dimensions = any(
+        values for dimension, values in scope.allow.items() if dimension != "store"
+    )
+    return (
+        bool(allowed_stores)
+        and not other_allow_dimensions
+        and normalized_store not in allowed_stores
+    )
 
 
 @router.get("/reports/od0002")
@@ -329,9 +336,11 @@ async def od0002_report(
             detail="end_date must be on or after start_date",
         )
 
+    selected_store = (store_id or "").strip() or None
+
     require_permission(db, current_user, "sales.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
-    if store_id is not None and _scope_explicitly_rejects_store(scope, store_id):
+    if selected_store is not None and _scope_explicitly_rejects_store(scope, selected_store):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无该门店数据权限",
@@ -359,7 +368,7 @@ async def od0002_report(
         end_date=end_date,
         prior_start_date=prior_start_date,
         prior_end_date=prior_end_date,
-        selected_store=store_id,
+        selected_store=selected_store,
     )
 
 
