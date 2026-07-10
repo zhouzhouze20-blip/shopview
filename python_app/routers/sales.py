@@ -310,9 +310,12 @@ def _scope_explicitly_rejects_store(scope, store_id: str) -> bool:
     denied_stores = {str(value).strip().upper() for value in scope.deny.get("store", set())}
     if normalized_store in denied_stores:
         return True
+    if scope.all_access:
+        return False
     allowed_stores = {str(value).strip().upper() for value in scope.allow.get("store", set())}
     other_allow_dimensions = any(
-        values for dimension, values in scope.allow.items() if dimension != "store"
+        scope.allow.get(dimension, set())
+        for dimension in ("department", "group", "category", "floor")
     )
     return (
         bool(allowed_stores)
