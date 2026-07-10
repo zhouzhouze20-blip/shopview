@@ -7,7 +7,6 @@
 
 from datetime import date
 from decimal import Decimal
-from io import BytesIO
 from typing import Any, Iterable
 from urllib.parse import quote
 
@@ -16,6 +15,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from models.database import get_db
 from models.models import User
@@ -23,7 +24,7 @@ from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
 from services.sales_analysis import analyze_group_sales
 from services.od0002_report import TrustedScopeSql, compare_period, load_od0002_report
-from services.od0002_excel import build_od0002_workbook
+from services.od0002_excel import build_od0002_workbook_file
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
@@ -426,12 +427,18 @@ async def od0002_export(
     )
     export_report = dict(report)
     export_report["scope_description"] = _od0002_scope_description(scope)
-    content = build_od0002_workbook(export_report)
+    export_file = await run_in_threadpool(build_od0002_workbook_file, export_report)
     filename = f"OD0002_门店销售毛利汇总表_{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
     return StreamingResponse(
-        BytesIO(content),
+        stream_chunks(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        background=BackgroundTask(export_file.close),
     )
 
 

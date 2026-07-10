@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from io import BytesIO
+from tempfile import SpooledTemporaryFile
 from typing import Any
 
 from openpyxl import Workbook
@@ -67,8 +67,16 @@ def _metric_values(metrics: dict[str, Any]) -> list[Any]:
     ]
 
 
+def _safe_excel_text(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def _write_data_row(sheet, row_number: int, values: list[Any], *, total: bool = False) -> None:
     for column, value in enumerate(values, 1):
+        if column <= 4:
+            value = _safe_excel_text(value)
         cell = sheet.cell(row_number, column, value)
         cell.border = BORDER
         if column in (5, 6, 8, 9):
@@ -107,7 +115,6 @@ def _write_report_sheet(sheet, report: dict[str, Any], label: str, dimension_key
     widths = (14, 18, 16, 24) + (14,) * 9
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(index)].width = width
-    sheet.auto_filter.ref = f"A7:M{row_number}"
 
 
 def _write_notes(sheet, report: dict[str, Any]) -> None:
@@ -134,13 +141,31 @@ def _write_notes(sheet, report: dict[str, Any]) -> None:
     sheet.row_dimensions[2].height = 60
 
 
-def build_od0002_workbook(report: dict[str, Any]) -> bytes:
-    """Build the OD0002 multi-sheet workbook entirely in memory."""
+def _build_od0002_workbook(report: dict[str, Any]) -> Workbook:
     workbook = Workbook()
     workbook.remove(workbook.active)
     for label, dimension_key in SHEETS:
         _write_report_sheet(workbook.create_sheet(label), report, label, dimension_key)
     _write_notes(workbook.create_sheet("报表说明"), report)
-    output = BytesIO()
-    workbook.save(output)
-    return output.getvalue()
+    return workbook
+
+
+def build_od0002_workbook_file(report: dict[str, Any]) -> SpooledTemporaryFile:
+    """Save the workbook directly to a seeked temporary file for streaming."""
+    output = SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        _build_od0002_workbook(report).save(output)
+        output.seek(0)
+        return output
+    except Exception:
+        output.close()
+        raise
+
+
+def build_od0002_workbook(report: dict[str, Any]) -> bytes:
+    """Compatibility helper for callers that explicitly need workbook bytes."""
+    output = build_od0002_workbook_file(report)
+    try:
+        return output.read()
+    finally:
+        output.close()

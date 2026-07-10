@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date
 from io import BytesIO
+from tempfile import SpooledTemporaryFile
 
 from openpyxl import load_workbook
 
@@ -88,6 +89,25 @@ def test_workbook_keeps_store_columns_for_multiple_store_rows():
     assert [sheet.cell(9, column).value for column in range(1, 5)] == ["602", "二店", "D02", "男装"]
 
 
+def test_workbook_escapes_formula_like_dimension_text_and_has_no_invalid_filter():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    report = sample_report()
+    report["dimensions"]["departments"][0].update({
+        "store_code": "=1+1",
+        "store_name": "+SUM(A1:A2)",
+        "dimension_code": "-2+3",
+        "dimension_name": "@cmd",
+    })
+    workbook = load_workbook(BytesIO(build_od0002_workbook(report)), data_only=False)
+    sheet = workbook["部门"]
+    for column in range(1, 5):
+        cell = sheet.cell(8, column)
+        assert cell.data_type == "s"
+        assert cell.value.startswith("'")
+    assert sheet.auto_filter.ref is None
+
+
 def test_empty_report_still_has_valid_headers_and_notes():
     from python_app.services.od0002_excel import build_od0002_workbook
 
@@ -95,6 +115,18 @@ def test_empty_report_still_has_valid_headers_and_notes():
     assert workbook["部门"]["A5"].value == "维度"
     assert workbook["部门"]["A8"].value == "合计"
     assert "大类暂不提供" in workbook["报表说明"]["B2"].value
+
+
+def test_workbook_file_api_returns_seeked_temporary_file():
+    from python_app.services.od0002_excel import build_od0002_workbook_file
+
+    export_file = build_od0002_workbook_file(sample_report())
+    try:
+        assert isinstance(export_file, SpooledTemporaryFile)
+        assert export_file.tell() == 0
+        assert load_workbook(export_file).sheetnames[0] == "分店"
+    finally:
+        export_file.close()
 
 
 def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkeypatch):
@@ -110,17 +142,38 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
         calls["selected_store"] = kwargs["selected_store"]
         return sample_report()
     monkeypatch.setattr(sales, "load_od0002_report", fake_load)
-    monkeypatch.setattr(sales, "build_od0002_workbook", lambda report: b"xlsx")
+    export_file = SpooledTemporaryFile()
+    export_file.write(b"xlsx")
+    export_file.seek(0)
+    monkeypatch.setattr(sales, "build_od0002_workbook_file", lambda report: export_file)
+    threadpool_calls = []
+    async def fake_threadpool(function, *args, **kwargs):
+        threadpool_calls.append((function, args, kwargs))
+        return function(*args, **kwargs)
+    monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
 
     response = asyncio.run(sales.od0002_export(
         date(2026, 1, 1), date(2026, 1, 31), " 601 ", object(), object()
     ))
 
     assert calls == {"load": 1, "permission": "sales.view", "selected_store": "601"}
+    assert len(threadpool_calls) == 1
+    assert threadpool_calls[0][0] is sales.build_od0002_workbook_file
+    assert response.background is not None
     assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     disposition = response.headers["content-disposition"]
     assert "filename*=UTF-8''" in disposition
     assert "OD0002_%E9%97%A8%E5%BA%97%E9%94%80%E5%94%AE%E6%AF%9B%E5%88%A9%E6%B1%87%E6%80%BB%E8%A1%A8_2026-01-01_2026-01-31.xlsx" in disposition
+
+    async def consume_and_close():
+        chunks = [chunk async for chunk in response.body_iterator]
+        await response.background()
+        return chunks
+
+    chunks = asyncio.run(consume_and_close())
+    assert b"".join(chunks) == b"xlsx"
+    assert all(len(chunk) <= 64 * 1024 for chunk in chunks)
+    assert export_file.closed
 
 
 def test_query_and_export_each_load_report_once(monkeypatch):
@@ -132,7 +185,10 @@ def test_query_and_export_each_load_report_once(monkeypatch):
     monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True))
     monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda *args, **kwargs: "")
     monkeypatch.setattr(sales, "load_od0002_report", lambda *args, **kwargs: calls.append(kwargs) or sample_report())
-    monkeypatch.setattr(sales, "build_od0002_workbook", lambda report: b"xlsx")
+    monkeypatch.setattr(sales, "build_od0002_workbook_file", lambda report: SpooledTemporaryFile())
+    async def fake_threadpool(function, *args, **kwargs):
+        return function(*args, **kwargs)
+    monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
 
     asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), None, object(), object()))
     assert len(calls) == 1
