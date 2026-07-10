@@ -37,7 +37,8 @@
 
 界面显示名称统一为 `中心年中庆活动`：
 
-- `client/src/lib/navigation-items.ts` 中的左侧菜单和工作区页签来源。
+- `client/src/lib/navigation-items.ts` 中的左侧菜单来源。
+- `client/src/pages/main-dashboard.tsx` 中 `MODULE_LABELS` 的工作区页签标题来源。
 - `client/src/pages/activity-analysis/points.tsx` 中的页面主标题。
 
 内部模块 ID、查询 key、路由、API 和权限编码保持不变。
@@ -117,6 +118,8 @@ AND h.rqsj < CAST(:effective_end_exclusive AS date)
 
 权限内、日期内的积分结果形成一次 `base_point_rows AS MATERIALIZED`。部门、柜组、会员、小票和部门选项均从该小结果集汇总。销售等级汇总也复用已经限定日期和权限的相关小票，不再单独扫描完整日期范围。
 
+当前 `_point_rule_source_status` 会在每次响应末尾对各源表执行精确 `COUNT(*)`。优化后改为从 PostgreSQL 系统目录读取表是否存在及 `reltuples` 估算行数，不再为状态展示扫描 `salegoodslist`、`order_point` 等业务表。
+
 返回字段保持现状，包括：
 
 - `summary`
@@ -172,6 +175,7 @@ AND h.rqsj < CAST(:effective_end_exclusive AS date)
 - 开始日期晚于结束日期时返回 HTTP 400。
 - SQL 使用半开时间区间，不再包含 `h.rqsj::date BETWEEN`。
 - `order_point`、`salegoodslist` 和付款分摊均由相关小票集合限定。
+- `source_status` 只读取系统目录元数据，不再对业务源表执行 `COUNT(*)`。
 - 门店、部门和柜组权限参数仍进入所有积分与销售等级计算路径。
 - dashboard 返回结构与现有前端兼容。
 - 积分接口局部语句超时为 60 秒，其他接口全局超时仍为 30 秒。
