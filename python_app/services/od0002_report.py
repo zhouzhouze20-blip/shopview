@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from collections.abc import Iterable, Mapping
@@ -110,16 +111,42 @@ DIMENSION_TYPES = (
 )
 
 
+@dataclass(frozen=True)
+class TrustedScopeSql:
+    """SQL fragment produced only by routers.sales._business_scope_filter_sql."""
+
+    value: str
+
+
+def _trusted_scope_value(scope_filter_sql: str | TrustedScopeSql) -> str:
+    value = (
+        scope_filter_sql.value
+        if isinstance(scope_filter_sql, TrustedScopeSql)
+        else scope_filter_sql
+    )
+    if not isinstance(value, str) or any(
+        marker in value for marker in (";", "--", "/*", "*/")
+    ):
+        raise ValueError(
+            "scope_filter_sql must be an internally generated SQL fragment "
+            "without statement or comment markers"
+        )
+    return value
+
+
 def build_report_query(
     start_date: date,
     end_date: date,
     prior_start_date: date,
     prior_end_date: date,
-    scope_filter_sql: str,
+    scope_filter_sql: str | TrustedScopeSql,
     scope_params: Mapping[str, Any],
     selected_store: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build the bound PostgreSQL query for all OD0002 report dimensions."""
+    # The SQL shape is trusted internal structure; all user-controlled scope
+    # values remain in scope_params and are passed to the database as binds.
+    scope_sql = _trusted_scope_value(scope_filter_sql)
     params = dict(scope_params)
     params.update(
         {
@@ -139,7 +166,27 @@ def build_report_query(
         f"WHEN '{code}' THEN '{name}'" for code, name in FLOOR_NAMES.items()
     )
     sql = f"""
-WITH base AS (
+WITH filtered_sales AS (
+  -- Apply the selective date predicate before normalized ERP dimension joins.
+  SELECT s.*
+  FROM salegoodslist s
+  WHERE (
+       s.sglhsrq BETWEEN :start_date AND :end_date
+       OR s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
+  )
+    AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
+),
+area_category_dedup AS (
+  SELECT
+    UPPER(TRIM(BOTH FROM category_code)) AS normalized_category_code,
+    MIN(TRIM(BOTH FROM category_code)) AS category_code,
+    MIN(area_code) AS area_code,
+    MIN(area_name) AS area_name,
+    MIN(category_name) AS category_name
+  FROM area_category
+  GROUP BY UPPER(TRIM(BOTH FROM category_code))
+),
+base AS (
   SELECT
     s.sglmarket::text AS store_code,
     st.store_name AS store_name,
@@ -164,29 +211,21 @@ WITH base AS (
              THEN COALESCE(s.sglxssr, 0) ELSE 0 END) AS sales_prior,
     SUM(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
              THEN COALESCE(s.sgln2, 0) ELSE 0 END) AS profit_prior
-  FROM salegoodslist s
+  FROM filtered_sales s
   JOIN manaframe mf
     ON UPPER(TRIM(COALESCE(s.sglmfid, ''))) = UPPER(TRIM(COALESCE(mf.mfcode, '')))
   LEFT JOIN manaframe dept
     ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
-  LEFT JOIN area_category ac
-    ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = UPPER(TRIM(COALESCE(ac.category_code, '')))
+  LEFT JOIN area_category_dedup ac
+    ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = ac.normalized_category_code
   LEFT JOIN stores st
     ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = s.sglmarket::text
-  WHERE (
-       s.sglhsrq BETWEEN :start_date AND :end_date
-       OR s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
-  )
-    AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
-    AND (mf.mflc IS NULL OR mf.mflc <> '00')
+  WHERE (mf.mflc IS NULL OR mf.mflc <> '00')
     AND COALESCE(dept.mfcode, '') <> ALL(:excluded_department_codes)
     AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
-    {scope_filter_sql}
+    {scope_sql}
     {selected_store_sql}
-  GROUP BY
-    store_code, store_name, dept.mfcode, department_name,
-    ac.area_code, area_name, ac.category_code, category_name,
-    mf.mfcode, group_name, mf.mflc, floor_name
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 ),
 stores AS (
   SELECT 'stores' AS dimension_type, store_code, store_name,
@@ -229,6 +268,25 @@ floors AS (
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, floor_code, floor_name
+),
+quality AS (
+  SELECT 'quality' AS dimension_type, NULL::text AS store_code, NULL::text AS store_name,
+         'unmatched_area_category' AS dimension_code,
+         '未匹配区域品类' AS dimension_name,
+         COALESCE(SUM(sales_current), 0) AS sales_current,
+         COUNT(DISTINCT (store_code, group_code))::numeric AS profit_current,
+         COALESCE(SUM(sales_prior), 0) AS sales_prior,
+         0::numeric AS profit_prior
+  FROM base
+  WHERE category_code IS NULL
+  UNION ALL
+  SELECT 'quality', NULL::text, NULL::text,
+         'unmatched_floor', '未匹配楼层',
+         COALESCE(SUM(sales_current), 0),
+         COUNT(DISTINCT (store_code, group_code))::numeric,
+         COALESCE(SUM(sales_prior), 0), 0::numeric
+  FROM base
+  WHERE floor_name = '未匹配'
 )
 SELECT * FROM stores
 UNION ALL SELECT * FROM departments
@@ -236,6 +294,7 @@ UNION ALL SELECT * FROM areas
 UNION ALL SELECT * FROM categories
 UNION ALL SELECT * FROM groups
 UNION ALL SELECT * FROM floors
+UNION ALL SELECT * FROM quality
 ORDER BY dimension_type, store_code, dimension_code
 """
     return sql, params
@@ -249,15 +308,37 @@ def _row_dict(row: Mapping[str, Any] | Any) -> dict[str, Any]:
 
 def normalize_rows(
     rows: Iterable[Mapping[str, Any] | Any],
-) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int | float]]:
     """Group database rows by dimension and attach derived metric triplets."""
     dimensions: dict[str, list[dict[str, Any]]] = {
         dimension_type: [] for dimension_type in DIMENSION_TYPES
     }
-    quality = {"unmatched_areas": 0, "unmatched_floors": 0}
+    quality: dict[str, int | float] = {
+        "unmatched_area_category_group_count": 0,
+        "unmatched_floor_group_count": 0,
+        "unmatched_area_category_sales_current": 0.0,
+        "unmatched_floor_sales_current": 0.0,
+    }
     for source_row in rows:
         row = _row_dict(source_row)
         dimension_type = str(row["dimension_type"])
+        if dimension_type == "quality":
+            code = row.get("dimension_code")
+            if code == "unmatched_area_category":
+                quality["unmatched_area_category_group_count"] = int(
+                    _number(row.get("profit_current"))
+                )
+                quality["unmatched_area_category_sales_current"] = _number(
+                    row.get("sales_current")
+                )
+            elif code == "unmatched_floor":
+                quality["unmatched_floor_group_count"] = int(
+                    _number(row.get("profit_current"))
+                )
+                quality["unmatched_floor_sales_current"] = _number(
+                    row.get("sales_current")
+                )
+            continue
         if dimension_type not in dimensions:
             continue
         normalized = {
@@ -273,11 +354,6 @@ def normalize_rows(
             ),
         }
         dimensions[dimension_type].append(normalized)
-        if normalized["dimension_name"] == "未匹配":
-            if dimension_type == "areas":
-                quality["unmatched_areas"] += 1
-            elif dimension_type == "floors":
-                quality["unmatched_floors"] += 1
     return dimensions, quality
 
 

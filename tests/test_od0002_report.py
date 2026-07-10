@@ -1,10 +1,13 @@
+import os
 from datetime import date
 
 import pytest
+from sqlalchemy import create_engine, text
 
 from python_app.services.od0002_report import (
     EXCLUDED_DEPARTMENT_CODES,
     FLOOR_NAMES,
+    TrustedScopeSql,
     build_report_query,
     compare_period,
     metric_triplet,
@@ -118,7 +121,7 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert "s.sgln2" in compact
     assert "join manaframe mf" in compact
     assert "join manaframe dept" in compact
-    assert "join area_category ac" in compact
+    assert "join area_category_dedup ac" in compact
     assert "join stores st" in compact
     assert "s.sglmfid" in compact and "mf.mfcode" in compact
     assert "mf.mfpcode" in compact and "dept.mfcode" in compact
@@ -135,6 +138,42 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert set(EXCLUDED_DEPARTMENT_CODES).issubset(set(params["excluded_department_codes"]))
     assert params["scope_deny_store"] == ["602"]
     assert params["selected_store"] == "601"
+
+
+def test_build_report_query_deduplicates_area_category_deterministically():
+    sql, _ = build_report_query(
+        date(2026, 1, 1), date(2026, 1, 31),
+        date(2025, 1, 1), date(2025, 1, 31), TrustedScopeSql(""), {},
+    )
+    compact = " ".join(sql.split()).lower()
+
+    assert "area_category_dedup as" in compact
+    assert "from area_category" in compact
+    assert "group by upper(trim(both from category_code))" in compact
+    assert "min(" in compact  # deterministic representative for duplicate dictionary rows
+    assert "join area_category_dedup ac" in compact
+
+
+@pytest.mark.parametrize("unsafe", [" AND 1=1; DROP TABLE stores", " AND 1=1 -- x", "/*x*/ AND 1=1"])
+def test_build_report_query_rejects_untrusted_scope_sql_markers(unsafe):
+    with pytest.raises(ValueError, match="scope_filter_sql"):
+        build_report_query(
+            date(2026, 1, 1), date(2026, 1, 31),
+            date(2025, 1, 1), date(2025, 1, 31), unsafe, {},
+        )
+
+
+def test_build_report_query_filters_sales_dates_before_dimension_joins():
+    sql, _ = build_report_query(
+        date(2026, 1, 1), date(2026, 1, 31),
+        date(2025, 1, 1), date(2025, 1, 31), "", {},
+    )
+    compact = " ".join(sql.split()).lower()
+
+    assert "filtered_sales as" in compact
+    filtered_sales = compact.split("filtered_sales as", 1)[1].split("),", 1)[0]
+    assert "from salegoodslist s" in filtered_sales
+    assert "sglhsrq between :start_date and :end_date" in filtered_sales
 
 
 def test_build_report_query_contains_six_dimensions_and_store_grouping():
@@ -174,24 +213,81 @@ def test_normalize_rows_keeps_same_department_separate_by_store_and_builds_metri
         ("601", "女装"), ("602", "女装")
     ]
     assert dimensions["departments"][0]["metrics"] == metric_triplet(120, 24, 100, 15)
-    assert quality == {"unmatched_areas": 0, "unmatched_floors": 0}
+    assert quality == {
+        "unmatched_area_category_group_count": 0,
+        "unmatched_floor_group_count": 0,
+        "unmatched_area_category_sales_current": 0.0,
+        "unmatched_floor_sales_current": 0.0,
+    }
 
 
 def test_normalize_rows_reports_unmatched_area_and_floor_counts():
     rows = [
-        {"dimension_type": "areas", "store_code": "601", "store_name": "一店",
-         "dimension_code": None, "dimension_name": "未匹配", "sales_current": 1,
-         "profit_current": 0, "sales_prior": 0, "profit_prior": 0},
-        {"dimension_type": "floors", "store_code": "601", "store_name": "一店",
-         "dimension_code": "99", "dimension_name": "未匹配", "sales_current": 2,
-         "profit_current": 0, "sales_prior": 0, "profit_prior": 0},
+        {"dimension_type": "quality", "store_code": None, "store_name": None,
+         "dimension_code": "unmatched_area_category", "dimension_name": "未匹配区域品类",
+         "sales_current": 31, "profit_current": 2, "sales_prior": 0, "profit_prior": 0},
+        FakeMapping({"dimension_type": "quality", "store_code": None, "store_name": None,
+         "dimension_code": "unmatched_floor", "dimension_name": "未匹配楼层",
+         "sales_current": 17, "profit_current": 3, "sales_prior": 0, "profit_prior": 0}),
     ]
 
     dimensions, quality = normalize_rows(rows)
 
-    assert dimensions["areas"][0]["dimension_name"] == "未匹配"
-    assert dimensions["floors"][0]["dimension_name"] == "未匹配"
-    assert quality == {"unmatched_areas": 1, "unmatched_floors": 1}
+    assert all(not values for values in dimensions.values())
+    assert quality == {
+        "unmatched_area_category_group_count": 2,
+        "unmatched_floor_group_count": 3,
+        "unmatched_area_category_sales_current": 31.0,
+        "unmatched_floor_sales_current": 17.0,
+    }
+
+
+@pytest.mark.skipif(
+    not os.getenv("OD0002_TEST_DATABASE_URL"),
+    reason="OD0002_TEST_DATABASE_URL is not configured",
+)
+def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
+    engine = create_engine(os.environ["OD0002_TEST_DATABASE_URL"])
+    with engine.connect() as connection, connection.begin():
+        connection.execute(text("""
+            CREATE TEMP TABLE salegoodslist (
+              sglmarket integer, sglmfid text, sglhsrq date, sglxssr numeric,
+              sgln2 numeric, sglwmid text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE manaframe (
+              mfcode text, mfcname text, mfpcode text, mfchr1 text, mflc text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE area_category (
+              area_code text, area_name text, category_code text, category_name text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE stores (store_code text, store_name text) ON COMMIT DROP;
+        """))
+        connection.execute(text("""
+            INSERT INTO stores VALUES ('601', '一店'), ('602', '二店');
+            INSERT INTO manaframe VALUES
+              ('D1', '部门一', '0', NULL, NULL), ('D2', '部门二', '0', NULL, NULL),
+              ('G1', '柜组一', 'D1', 'C1', '02'), ('G2', '柜组二', 'D2', 'C1', '02');
+            INSERT INTO area_category VALUES
+              ('A1', '区域一', 'C1', '品类一'), ('A9', '重复区域', ' C1 ', '重复品类');
+            INSERT INTO salegoodslist VALUES
+              (601, 'G1', DATE '2026-01-10', 100, 20, '1'),
+              (602, 'G2', DATE '2026-01-10', 200, 40, '1');
+        """))
+        sql, params = build_report_query(
+            date(2026, 1, 1), date(2026, 1, 31),
+            date(2025, 1, 1), date(2025, 1, 31),
+            TrustedScopeSql(" AND s.sglmarket::text = ANY(:allowed_stores)"),
+            {"allowed_stores": ["601", "602"]},
+        )
+        rows = connection.execute(text(sql), params).mappings().all()
+
+    dimensions, _ = normalize_rows(rows)
+    expected = {"601": 100.0, "602": 200.0}
+    for dimension_type in ("stores", "departments", "areas", "categories", "groups", "floors"):
+        totals = {}
+        for row in dimensions[dimension_type]:
+            totals[row["store_code"]] = totals.get(row["store_code"], 0) + row["metrics"]["sales_current"]
+        assert totals == expected
 
 
 class FakeMapping:
