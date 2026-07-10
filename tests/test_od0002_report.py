@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import date
 
@@ -11,6 +12,7 @@ from python_app.services.od0002_report import (
     build_report_query,
     compare_period,
     metric_triplet,
+    load_od0002_report,
     normalize_rows,
 )
 
@@ -310,3 +312,124 @@ class FakeMapping:
 
     def __getitem__(self, key):
         return self._values[key]
+
+
+class FakeDbResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class FakeDb:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def execute(self, statement, params):
+        self.calls.append((str(statement), params))
+        return FakeDbResult(self.rows)
+
+
+def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
+    rows = [
+        {"dimension_type": "stores", "store_code": "601", "store_name": "一店",
+         "dimension_code": "601", "dimension_name": "一店", "sales_current": 100,
+         "profit_current": 10, "sales_prior": 80, "profit_prior": 8},
+        {"dimension_type": "stores", "store_code": "602", "store_name": "二店",
+         "dimension_code": "602", "dimension_name": "二店", "sales_current": 300,
+         "profit_current": 60, "sales_prior": 120, "profit_prior": 12},
+    ]
+    db = FakeDb(rows)
+
+    payload = load_od0002_report(
+        db,
+        TrustedScopeSql(" AND s.sglmarket::text = ANY(:scope_allow_store)"),
+        {"scope_allow_store": ["601", "602"]},
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        prior_start_date=date(2025, 1, 1),
+        prior_end_date=date(2025, 1, 31),
+        selected_store=None,
+    )
+
+    assert len(db.calls) == 1
+    sql, params = db.calls[0]
+    assert ":start_date" in sql and ":scope_allow_store" in sql
+    assert params["start_date"] == date(2026, 1, 1)
+    assert params["scope_allow_store"] == ["601", "602"]
+    assert payload["dates"] == {
+        "start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31),
+        "prior_start_date": date(2025, 1, 1), "prior_end_date": date(2025, 1, 31),
+    }
+    assert set(payload["dimensions"]) == set(("stores", "departments", "areas", "categories", "groups", "floors"))
+    assert payload["totals"]["stores"] == metric_triplet(400, 70, 200, 20)
+    assert all(row["total"] == payload["totals"]["stores"] for row in payload["dimensions"]["stores"])
+    assert payload["selected_store"] is None
+    assert payload["quality"]["unmatched_floor_group_count"] == 0
+    assert payload["generated_at"]
+
+
+def test_od0002_route_requires_permission_scope_and_builds_expected_alias_scope(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {}
+    scope = DataScope(all_access=False, allow={"store": {"601"}})
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda db, user, **kwargs: (calls.setdefault("scope_kwargs", kwargs), scope)[1])
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
+    monkeypatch.setattr(sales, "load_od0002_report", lambda db, scope_sql, params, **kwargs: {
+        "scope_sql": scope_sql.value, "params": params, "kwargs": kwargs
+    })
+
+    result = asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), None, object(), object()))
+
+    assert calls["permission"] == "sales.view"
+    assert calls["scope_kwargs"] == {"fallback_resource_code": "sales"}
+    assert calls["filter_kwargs"] == {
+        "prefix": "od0002", "store_expr": "s.sglmarket::text",
+        "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
+        "group_expr": "mf.mfcode", "category_code_expr": "ac.category_code",
+        "category_name_expr": "ac.category_name", "floor_expr": "mf.mflc",
+    }
+    assert result["scope_sql"] == " AND 1=1"
+    assert result["kwargs"]["prior_start_date"] == date(2025, 1, 1)
+
+
+def test_od0002_route_rejects_end_before_start_with_422():
+    from fastapi import HTTPException
+    from python_app.routers import sales
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sales.od0002_report(date(2026, 2, 1), date(2026, 1, 31), None, object(), object()))
+    assert exc.value.status_code == 422
+
+
+def test_od0002_route_rejects_selected_store_outside_scope(monkeypatch):
+    from fastapi import HTTPException
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"601"}}))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), "602", object(), object()))
+    assert exc.value.status_code == 403
+
+
+def test_load_od0002_report_returns_complete_empty_structure():
+    payload = load_od0002_report(
+        FakeDb([]), TrustedScopeSql(""), {}, start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31), prior_start_date=date(2025, 1, 1),
+        prior_end_date=date(2025, 1, 31), selected_store="601",
+    )
+
+    assert payload["selected_store"] == "601"
+    assert all(rows == [] for rows in payload["dimensions"].values())
+    assert all(total == metric_triplet(0, 0, 0, 0) for total in payload["totals"].values())

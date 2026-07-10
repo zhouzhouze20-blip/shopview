@@ -19,6 +19,7 @@ from models.models import User
 from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
 from services.sales_analysis import analyze_group_sales
+from services.od0002_report import TrustedScopeSql, compare_period, load_od0002_report
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
@@ -259,6 +260,7 @@ def _business_scope_filter_sql(
     brand_name_expr: str | None = None,
     category_code_expr: str | None = None,
     category_name_expr: str | None = None,
+    floor_expr: str | None = None,
 ) -> str:
     """Translate business data scope to SQL so LIMIT is applied after permissions."""
     if "__all__" in scope.deny:
@@ -272,6 +274,7 @@ def _business_scope_filter_sql(
         "supplier": [expr for expr in [supplier_expr] if expr],
         "brand": [expr for expr in [brand_code_expr, brand_name_expr] if expr],
         "category": [expr for expr in [category_code_expr, category_name_expr] if expr],
+        "floor": [expr for expr in [floor_expr] if expr],
     }
 
     for dimension, expressions in dimensions.items():
@@ -297,6 +300,55 @@ def _business_scope_filter_sql(
     else:
         clauses.append("AND (" + " OR ".join(allow_clauses) + ")")
     return " " + " ".join(clauses)
+
+
+@router.get("/reports/od0002")
+async def od0002_report(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """OD0002 sales and gross-profit comparison report."""
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    require_permission(db, current_user, "sales.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    if store_id is not None and not scope_allows_business(scope, store_id=store_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    prior_start_date, prior_end_date = compare_period(start_date, end_date)
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="od0002",
+        store_expr="s.sglmarket::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    return load_od0002_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        start_date=start_date,
+        end_date=end_date,
+        prior_start_date=prior_start_date,
+        prior_end_date=prior_end_date,
+        selected_store=store_id,
+    )
 
 
 def _prior_year_same_period(start_date: str | None, end_date: str | None) -> tuple[str | None, str | None]:

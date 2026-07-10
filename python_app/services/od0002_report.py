@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from collections.abc import Iterable, Mapping
 from typing import Any
+
+from sqlalchemy import text
 
 
 EXCLUDED_DEPARTMENT_CODES = frozenset(
@@ -376,4 +378,53 @@ def build_report_payload(
         "selected_store": selected_store,
         "dimensions": dimensions,
         "quality": quality,
+    }
+
+
+def load_od0002_report(
+    db: Any,
+    scope_filter_sql: TrustedScopeSql,
+    scope_params: Mapping[str, Any],
+    *,
+    start_date: date,
+    end_date: date,
+    prior_start_date: date,
+    prior_end_date: date,
+    selected_store: str | None = None,
+) -> dict[str, Any]:
+    """Execute the bound OD0002 query and assemble its API payload."""
+    sql, params = build_report_query(
+        start_date,
+        end_date,
+        prior_start_date,
+        prior_end_date,
+        scope_filter_sql,
+        scope_params,
+        selected_store,
+    )
+    rows = db.execute(text(sql), params).mappings().all()
+    dimensions, quality = normalize_rows(rows)
+    totals: dict[str, dict[str, float | None]] = {}
+    for dimension_type, dimension_rows in dimensions.items():
+        sales_current = sum(row["metrics"]["sales_current"] for row in dimension_rows)
+        profit_current = sum(row["metrics"]["profit_current"] for row in dimension_rows)
+        sales_prior = sum(row["metrics"]["sales_prior"] for row in dimension_rows)
+        profit_prior = sum(row["metrics"]["profit_prior"] for row in dimension_rows)
+        total = metric_triplet(sales_current, profit_current, sales_prior, profit_prior)
+        totals[dimension_type] = total
+        for row in dimension_rows:
+            row["total"] = total
+
+    return {
+        "dates": {
+            "start_date": start_date,
+            "end_date": end_date,
+            "prior_start_date": prior_start_date,
+            "prior_end_date": prior_end_date,
+        },
+        "selected_store": selected_store,
+        "dimensions": dimensions,
+        "totals": totals,
+        "quality": quality,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
