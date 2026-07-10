@@ -177,14 +177,14 @@ WITH filtered_sales AS (
     AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
 ),
 area_category_dedup AS (
-  SELECT
+  SELECT DISTINCT ON (UPPER(TRIM(BOTH FROM category_code)))
     UPPER(TRIM(BOTH FROM category_code)) AS normalized_category_code,
-    MIN(TRIM(BOTH FROM category_code)) AS category_code,
-    MIN(area_code) AS area_code,
-    MIN(area_name) AS area_name,
-    MIN(category_name) AS category_name
+    TRIM(BOTH FROM category_code) AS category_code,
+    area_code,
+    area_name,
+    category_name
   FROM area_category
-  GROUP BY UPPER(TRIM(BOTH FROM category_code))
+  ORDER BY UPPER(TRIM(BOTH FROM category_code)), area_code, area_name, category_name
 ),
 base AS (
   SELECT

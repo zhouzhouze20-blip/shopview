@@ -149,8 +149,9 @@ def test_build_report_query_deduplicates_area_category_deterministically():
 
     assert "area_category_dedup as" in compact
     assert "from area_category" in compact
-    assert "group by upper(trim(both from category_code))" in compact
-    assert "min(" in compact  # deterministic representative for duplicate dictionary rows
+    assert "distinct on (upper(trim(both from category_code)))" in compact
+    assert "order by upper(trim(both from category_code)), area_code, area_name, category_name" in compact
+    assert "min(" not in compact  # never synthesize a dictionary row from independent minima
     assert "join area_category_dedup ac" in compact
 
 
@@ -268,7 +269,7 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
               ('D1', '部门一', '0', NULL, NULL), ('D2', '部门二', '0', NULL, NULL),
               ('G1', '柜组一', 'D1', 'C1', '02'), ('G2', '柜组二', 'D2', 'C1', '02');
             INSERT INTO area_category VALUES
-              ('A1', '区域一', 'C1', '品类一'), ('A9', '重复区域', ' C1 ', '重复品类');
+              ('A1', 'Z区域', 'C1', 'Z品类'), ('A9', 'A区域', ' C1 ', 'A品类');
             INSERT INTO salegoodslist VALUES
               (601, 'G1', DATE '2026-01-10', 100, 20, '1'),
               (602, 'G2', DATE '2026-01-10', 200, 40, '1');
@@ -288,6 +289,14 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
         for row in dimensions[dimension_type]:
             totals[row["store_code"]] = totals.get(row["store_code"], 0) + row["metrics"]["sales_current"]
         assert totals == expected
+    assert {
+        (row["dimension_code"], row["dimension_name"])
+        for row in dimensions["areas"]
+    } == {("A1", "Z区域")}
+    assert {
+        (row["dimension_code"], row["dimension_name"])
+        for row in dimensions["categories"]
+    } == {("C1", "Z品类")}
 
 
 class FakeMapping:
