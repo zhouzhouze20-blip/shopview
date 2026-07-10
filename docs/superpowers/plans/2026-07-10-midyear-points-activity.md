@@ -4,7 +4,7 @@
 
 **Goal:** Rename the points audit page to `中心年中庆活动`, enforce the `2026-07-09` activity boundary, remove the duplicate frontend query, and make the permission-scoped dashboard complete well inside its 60-second safety timeout.
 
-**Architecture:** Preserve the existing module ID, permission code, and API paths. The frontend consumes the dashboard response as the single source for filters and results; the backend normalizes dates before touching business tables, materializes one permission-scoped payment/goods set, limits all large-table work to relevant bills, and reads source-table status from PostgreSQL metadata instead of `COUNT(*)` scans.
+**Architecture:** Preserve the existing module ID, permission code, and API paths. The frontend consumes the dashboard response as the single source for filters and results; the backend normalizes dates before touching business tables, separates complete candidate rows from permission-scoped rows, uses complete rows only for relevant-bill point allocation and payment balance, projects final results back to scoped groups, and reads source-table status from PostgreSQL metadata instead of `COUNT(*)` scans.
 
 **Tech Stack:** React 18, TypeScript, TanStack Query, Node test runner, FastAPI, SQLAlchemy, PostgreSQL, Python unittest, Nginx.
 
@@ -461,6 +461,8 @@ git diff --check -- python_app/routers/activity_analysis.py test/test_activity_p
 Expected: helper changes preserve permission ordering and do not touch roles or policies.
 
 ### Task 3: Rewrite the dashboard SQL around relevant bills
+
+> **Post-review correction:** The implementation uses `all_payment_goods -> scoped_payment_goods -> scoped_bills -> relevant_payment_goods`. `point_bills`, `pay_line_balance`, `spg_rows`, and the bill denominator use the complete rows from relevant bills; final `point_rows` joins `scoped_bill_groups` on bill, market, date, and group before returning data. This supersedes the narrower Task 3 snippets below that build the denominator directly from `scoped_payment_goods`. The correction prevents mixed-scope tickets from assigning the entire ticket's points to visible groups while preserving the output permission boundary.
 
 **Files:**
 - Modify: `test/test_activity_points_rule_sql.py`

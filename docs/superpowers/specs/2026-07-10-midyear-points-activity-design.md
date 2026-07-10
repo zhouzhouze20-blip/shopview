@@ -94,29 +94,29 @@ h.rqsj >= CAST(:effective_start_date AS date)
 AND h.rqsj < CAST(:effective_end_exclusive AS date)
 ```
 
-不再在过滤条件中对 `h.rqsj` 使用 `::date`。市场 `601`、会员等级、作废单据和业务数据范围也在最早阶段应用。
+不再在过滤条件中对 `h.rqsj` 使用 `::date`。市场 `601`、作废单据和全局业务排除条件在最早阶段应用；用户业务范围先用于确定可见行和相关小票，完整相关小票仅参与积分分母与付款平衡计算。
 
-### 2. 建立权限内相关小票集合
+### 2. 分离完整小票、权限行和相关小票
 
-先从日期范围内的 `salehead` 取得候选小票，再连接 `sellpaygoods`、`salegoods` 和 `manaframe` 生成权限内的 `scoped_bill_groups`。该集合只保留后续计算需要的：
+先从日期范围内的 `salehead` 取得候选小票，再连接 `sellpaygoods`、`salegoods` 和 `manaframe` 形成 `all_payment_goods`。随后按业务范围生成 `scoped_payment_goods`，由其确定 `scoped_bills`；最后从完整候选行中取回这些相关小票的全部商品付款行形成 `relevant_payment_goods`。这些集合保留后续计算需要的：
 
 - 小票号、市场编码、销售时间和销售日期。
 - 会员号和会员等级。
 - 柜组、部门和门店维度。
 
-门店、部门和柜组权限继续使用 `_points_business_scope_filter_sql`，不得因为性能优化绕过或扩大范围。
+门店、部门和柜组权限继续使用 `_points_business_scope_filter_sql`。完整相关小票只用于计算整票积分分母和付款分配余额，最终 `point_rows` 必须按小票、市场、日期和柜组重新连接 `scoped_bill_groups`，不得返回无权限柜组，也不得把整票积分全部分摊给可见柜组。
 
 ### 3. 所有大表只处理相关小票
 
 - `order_point` 先与 `relevant_bills` 连接，再按相关小票汇总实际积分，不再聚合整张 `order_point`。
 - `salegoodslist` 先按相关小票号连接，再按市场、销售日期和柜组匹配会计销售额。
-- `sellpaygoods` 的付款分摊只针对相关小票聚合。
+- `sellpaygoods` 的付款分摊针对相关小票的完整商品付款行聚合，避免跨权限柜组小票产生虚假分摊不平。
 - `salegoods` 只通过相关小票和行号参与计算。
 - 积分倍率、付款方式和券种规则维持现有口径。
 
 ### 4. 一次物化，多处汇总
 
-权限内、日期内的积分结果形成一次 `base_point_rows AS MATERIALIZED`。部门、柜组、会员、小票和部门选项均从该小结果集汇总。销售等级汇总也复用已经限定日期和权限的相关小票，不再单独扫描完整日期范围。
+完整相关小票先完成积分分母、实际积分分配和付款平衡计算，再按权限柜组形成 `base_point_rows AS MATERIALIZED`。部门、柜组、会员、小票和部门选项均从该小结果集汇总。销售等级汇总只复用 `scoped_payment_goods`，不读取无权限柜组，也不再单独扫描完整日期范围。
 
 当前 `_point_rule_source_status` 会在每次响应末尾对各源表执行精确 `COUNT(*)`。优化后改为从 PostgreSQL 系统目录读取表是否存在及 `reltuples` 估算行数，不再为状态展示扫描 `salegoodslist`、`order_point` 等业务表。
 
