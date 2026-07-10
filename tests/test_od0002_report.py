@@ -423,6 +423,63 @@ def test_od0002_route_rejects_selected_store_outside_scope(monkeypatch):
     assert exc.value.status_code == 403
 
 
+@pytest.mark.parametrize(
+    ("dimension", "value"),
+    [
+        ("department", "D01"),
+        ("group", "G01"),
+        ("category", "C01"),
+        ("floor", "02"),
+    ],
+)
+def test_od0002_route_allows_store_selection_for_non_store_scopes(
+    monkeypatch, dimension, value
+):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(
+        sales,
+        "load_business_scope",
+        lambda *args, **kwargs: DataScope(allow={dimension: {value}}),
+    )
+    monkeypatch.setattr(
+        sales,
+        "load_od0002_report",
+        lambda *args, **kwargs: {"selected_store": kwargs["selected_store"]},
+    )
+
+    result = asyncio.run(
+        sales.od0002_report(
+            date(2026, 1, 1), date(2026, 1, 31), "601", object(), object()
+        )
+    )
+
+    assert result == {"selected_store": "601"}
+
+
+def test_od0002_route_rejects_explicitly_denied_store(monkeypatch):
+    from fastapi import HTTPException
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(
+        sales,
+        "load_business_scope",
+        lambda *args, **kwargs: DataScope(all_access=True, deny={"store": {"602"}}),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            sales.od0002_report(
+                date(2026, 1, 1), date(2026, 1, 31), "602", object(), object()
+            )
+        )
+    assert exc.value.status_code == 403
+
+
 def test_load_od0002_report_returns_complete_empty_structure():
     payload = load_od0002_report(
         FakeDb([]), TrustedScopeSql(""), {}, start_date=date(2026, 1, 1),

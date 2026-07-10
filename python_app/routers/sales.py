@@ -302,6 +302,18 @@ def _business_scope_filter_sql(
     return " " + " ".join(clauses)
 
 
+def _scope_explicitly_rejects_store(scope, store_id: str) -> bool:
+    """Preflight only explicit store constraints; other dimensions need row context."""
+    if "__all__" in scope.deny:
+        return True
+    normalized_store = str(store_id).strip().upper()
+    denied_stores = {str(value).strip().upper() for value in scope.deny.get("store", set())}
+    if normalized_store in denied_stores:
+        return True
+    allowed_stores = {str(value).strip().upper() for value in scope.allow.get("store", set())}
+    return bool(allowed_stores) and normalized_store not in allowed_stores
+
+
 @router.get("/reports/od0002")
 async def od0002_report(
     start_date: date,
@@ -319,7 +331,7 @@ async def od0002_report(
 
     require_permission(db, current_user, "sales.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
-    if store_id is not None and not scope_allows_business(scope, store_id=store_id):
+    if store_id is not None and _scope_explicitly_rejects_store(scope, store_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无该门店数据权限",
