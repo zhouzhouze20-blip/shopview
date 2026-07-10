@@ -61,7 +61,7 @@ test("frontend model declares every backend response key", async () => {
     "sales_current", "sales_prior", "sales_yoy",
     "profit_current", "profit_prior", "profit_yoy",
     "margin_current", "margin_prior", "margin_change",
-    "store_code", "store_name", "dimension_code", "dimension_name", "metrics",
+    "store_code", "store_name", "dimension_code", "dimension_name", "metrics", "total",
     "unmatched_area_category_group_count", "unmatched_floor_group_count",
     "unmatched_area_category_sales_current", "unmatched_floor_sales_current",
     "dates", "selected_store", "dimensions", "totals", "quality", "generated_at",

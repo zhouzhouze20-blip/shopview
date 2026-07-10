@@ -26,6 +26,7 @@ export interface Od0002Row {
   dimension_code: string | null;
   dimension_name: string | null;
   metrics: Od0002Metric;
+  total: Od0002Metric;
 }
 
 export interface Od0002Quality {
