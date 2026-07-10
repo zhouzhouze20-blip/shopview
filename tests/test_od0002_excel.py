@@ -1,0 +1,136 @@
+import asyncio
+from datetime import date
+from io import BytesIO
+
+from openpyxl import load_workbook
+
+
+def sample_report(*, empty=False):
+    metrics = {
+        "sales_current": 120000.0,
+        "sales_prior": 100000.0,
+        "sales_yoy": 0.2,
+        "profit_current": 24000.0,
+        "profit_prior": 15000.0,
+        "profit_yoy": 0.6,
+        "margin_current": 0.2,
+        "margin_prior": 0.15,
+        "margin_change": 0.05,
+    }
+    dimensions = {}
+    totals = {}
+    for key in ("stores", "departments", "areas", "categories", "groups", "floors"):
+        dimensions[key] = [] if empty else [{
+            "store_code": "601",
+            "store_name": "一店",
+            "dimension_code": "D01" if key != "stores" else "601",
+            "dimension_name": "女装" if key != "stores" else "一店",
+            "metrics": dict(metrics),
+        }]
+        totals[key] = dict(metrics)
+    if not empty:
+        dimensions["departments"].append({
+            "store_code": "602", "store_name": "二店",
+            "dimension_code": "D02", "dimension_name": "男装",
+            "metrics": dict(metrics),
+        })
+    return {
+        "dates": {
+            "start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31),
+            "prior_start_date": date(2025, 1, 1), "prior_end_date": date(2025, 1, 31),
+        },
+        "selected_store": None,
+        "dimensions": dimensions,
+        "totals": totals,
+        "scope_description": "当前用户权限范围：门店 601、602",
+    }
+
+
+def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    payload = build_od0002_workbook(sample_report())
+    assert isinstance(payload, bytes)
+    workbook = load_workbook(BytesIO(payload))
+    assert workbook.sheetnames == ["分店", "部门", "区域", "品类", "柜组", "楼层", "报表说明"]
+
+    sheet = workbook["部门"]
+    assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（部门）"
+    assert "2026-01-01" in sheet["A2"].value and "2026-01-31" in sheet["A2"].value
+    assert "2025-01-01" in sheet["A3"].value and "2025-01-31" in sheet["A3"].value
+    assert sheet.freeze_panes == "A8"
+    assert sheet["A5"].fill.fgColor.rgb.endswith("4472C4")
+    assert sheet["A5"].font.color.type == "rgb" and sheet["A5"].font.color.rgb.endswith("FFFFFF")
+    assert sheet["E8"].value == 12
+    assert sheet["E8"].number_format == "0.00"
+    assert sheet["G8"].number_format == "0.00%"
+    assert sheet["A10"].value == "合计"
+    assert sheet["E10"].value == 12
+    assert sheet["G10"].value == 0.2
+    assert sheet["A10"].border.bottom.style is not None
+
+    notes = workbook["报表说明"]["B2"].value
+    for text in ("sglhsrq", "sglxssr", "sgln2", "sglwmid=5", "楼层00", "16部门", "当前用户权限范围", "大类暂不提供"):
+        assert text in notes
+
+
+def test_workbook_keeps_store_columns_for_multiple_store_rows():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
+    sheet = workbook["部门"]
+    assert [sheet.cell(8, column).value for column in range(1, 5)] == ["601", "一店", "D01", "女装"]
+    assert [sheet.cell(9, column).value for column in range(1, 5)] == ["602", "二店", "D02", "男装"]
+
+
+def test_empty_report_still_has_valid_headers_and_notes():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report(empty=True))))
+    assert workbook["部门"]["A5"].value == "维度"
+    assert workbook["部门"]["A8"].value == "合计"
+    assert "大类暂不提供" in workbook["报表说明"]["B2"].value
+
+
+def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {"load": 0}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"601"}}))
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: " AND 1=1")
+    def fake_load(*args, **kwargs):
+        calls["load"] += 1
+        calls["selected_store"] = kwargs["selected_store"]
+        return sample_report()
+    monkeypatch.setattr(sales, "load_od0002_report", fake_load)
+    monkeypatch.setattr(sales, "build_od0002_workbook", lambda report: b"xlsx")
+
+    response = asyncio.run(sales.od0002_export(
+        date(2026, 1, 1), date(2026, 1, 31), " 601 ", object(), object()
+    ))
+
+    assert calls == {"load": 1, "permission": "sales.view", "selected_store": "601"}
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    disposition = response.headers["content-disposition"]
+    assert "filename*=UTF-8''" in disposition
+    assert "OD0002_%E9%97%A8%E5%BA%97%E9%94%80%E5%94%AE%E6%AF%9B%E5%88%A9%E6%B1%87%E6%80%BB%E8%A1%A8_2026-01-01_2026-01-31.xlsx" in disposition
+
+
+def test_query_and_export_each_load_report_once(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = []
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True))
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda *args, **kwargs: "")
+    monkeypatch.setattr(sales, "load_od0002_report", lambda *args, **kwargs: calls.append(kwargs) or sample_report())
+    monkeypatch.setattr(sales, "build_od0002_workbook", lambda report: b"xlsx")
+
+    asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), None, object(), object()))
+    assert len(calls) == 1
+    calls.clear()
+    asyncio.run(sales.od0002_export(date(2026, 1, 1), date(2026, 1, 31), None, object(), object()))
+    assert len(calls) == 1

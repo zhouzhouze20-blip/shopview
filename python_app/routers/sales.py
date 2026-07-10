@@ -7,9 +7,12 @@
 
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from typing import Any, Iterable
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -20,6 +23,7 @@ from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
 from services.sales_analysis import analyze_group_sales
 from services.od0002_report import TrustedScopeSql, compare_period, load_od0002_report
+from services.od0002_excel import build_od0002_workbook
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
@@ -333,6 +337,19 @@ async def od0002_report(
     current_user: User = Depends(get_current_user),
 ):
     """OD0002 sales and gross-profit comparison report."""
+    report, _ = _load_od0002_for_request(
+        start_date, end_date, store_id, db, current_user
+    )
+    return report
+
+
+def _load_od0002_for_request(
+    start_date: date,
+    end_date: date,
+    store_id: str | None,
+    db: Session,
+    current_user: User,
+) -> tuple[dict[str, Any], Any]:
     if end_date < start_date:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -363,7 +380,7 @@ async def od0002_report(
         category_name_expr="ac.category_name",
         floor_expr="mf.mflc",
     )
-    return load_od0002_report(
+    report = load_od0002_report(
         db,
         TrustedScopeSql(scope_filter_sql),
         scope_params,
@@ -372,6 +389,49 @@ async def od0002_report(
         prior_start_date=prior_start_date,
         prior_end_date=prior_end_date,
         selected_store=selected_store,
+    )
+    return report, scope
+
+
+def _od0002_scope_description(scope: Any) -> str:
+    if scope.all_access:
+        base = "全部业务数据"
+    elif scope.allow:
+        parts = [
+            f"{dimension}=" + ",".join(sorted(values))
+            for dimension, values in sorted(scope.allow.items()) if values
+        ]
+        base = "；".join(parts) or "无授权数据"
+    else:
+        base = "无授权数据"
+    denied = [
+        f"{dimension}=" + ",".join(sorted(values))
+        for dimension, values in sorted(scope.deny.items()) if values
+    ]
+    if denied:
+        base += "；排除 " + "；".join(denied)
+    return "当前用户权限范围：" + base
+
+
+@router.get("/reports/od0002/export")
+async def od0002_export(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    report, scope = _load_od0002_for_request(
+        start_date, end_date, store_id, db, current_user
+    )
+    export_report = dict(report)
+    export_report["scope_description"] = _od0002_scope_description(scope)
+    content = build_od0002_workbook(export_report)
+    filename = f"OD0002_门店销售毛利汇总表_{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 
