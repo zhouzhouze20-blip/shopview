@@ -48,6 +48,7 @@ def sample_report(*, empty=False):
 
 def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     from python_app.services.od0002_excel import build_od0002_workbook
+    from python_app.services.od0002_report import EXCLUDED_DEPARTMENT_CODES
 
     payload = build_od0002_workbook(sample_report())
     assert isinstance(payload, bytes)
@@ -72,6 +73,10 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     notes = workbook["报表说明"]["B2"].value
     for text in ("sglhsrq", "sglxssr", "sgln2", "sglwmid=5", "楼层00", "16部门", "当前用户权限范围", "大类暂不提供"):
         assert text in notes
+    sorted_codes = sorted(EXCLUDED_DEPARTMENT_CODES)
+    assert sorted_codes[0] in notes and sorted_codes[-1] in notes
+    assert all(code in notes for code in sorted_codes)
+    assert "合计仅包含当前用户权限范围" in notes
 
 
 def test_workbook_keeps_store_columns_for_multiple_store_rows():

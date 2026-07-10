@@ -7,6 +7,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from .od0002_report import EXCLUDED_DEPARTMENT_CODES
+
 
 SHEETS = (
     ("分店", "stores"),
@@ -113,10 +115,12 @@ def _write_notes(sheet, report: dict[str, Any]) -> None:
     sheet["B1"] = "说明"
     sheet["A2"] = "OD0002 口径"
     scope = report.get("scope_description") or "当前用户权限范围：以系统数据权限为准"
+    excluded_departments = "、".join(sorted(EXCLUDED_DEPARTMENT_CODES))
     sheet["B2"] = (
         "销售日期取 sglhsrq；销售收入取 sglxssr；毛利额取 sgln2；"
         "排除租赁 sglwmid=5；排除楼层00；排除16部门；"
-        f"{scope}；大类暂不提供。"
+        f"排除部门编码：{excluded_departments}；{scope}；"
+        "合计仅包含当前用户权限范围；大类暂不提供。"
     )
     for cell in sheet[1]:
         cell.fill = PatternFill("solid", fgColor=BLUE)
