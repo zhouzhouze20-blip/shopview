@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import test from "node:test";
 import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
 
 import {
   buildOd0002Params,
+  contentDispositionFilename,
+  formatMoneyWan,
+  formatPercent,
+  getOd0002QueryMessage,
   OD0002_TABS,
+  paginateRows,
   previousYearDate,
+  visibleOd0002Columns,
 } from "./od0002-report.ts";
 
 test("previousYearDate returns the same calendar day in the previous year", () => {
@@ -61,6 +68,65 @@ test("OD0002 exposes the six approved tabs in order", () => {
     OD0002_TABS.map((tab) => tab.label),
     ["分店", "部门", "区域", "品类", "柜组", "楼层"],
   );
+});
+
+test("formatMoneyWan converts yuan to ten-thousand yuan and preserves negative values", () => {
+  assert.equal(formatMoneyWan(123456.78), "12.35");
+  assert.equal(formatMoneyWan(-12345), "-1.23");
+  assert.equal(formatMoneyWan(null), "—");
+});
+
+test("formatPercent renders ratios with two decimal places and null as dash", () => {
+  assert.equal(formatPercent(0.12345), "12.35%");
+  assert.equal(formatPercent(-0.2), "-20.00%");
+  assert.equal(formatPercent(null), "—");
+});
+
+test("visible columns show store outside the stores tab only for all-store queries", () => {
+  assert.equal(visibleOd0002Columns("departments", "all").includes("store"), true);
+  assert.equal(visibleOd0002Columns("departments", "601").includes("store"), false);
+  assert.equal(visibleOd0002Columns("stores", "all").includes("store"), false);
+  assert.equal(visibleOd0002Columns("stores", "all").includes("dimension"), true);
+});
+
+test("paginateRows returns the requested fifty-row page and clamps invalid pages", () => {
+  const rows = Array.from({ length: 121 }, (_, index) => index + 1);
+  assert.deepEqual(paginateRows(rows, 2), rows.slice(50, 100));
+  assert.deepEqual(paginateRows(rows, 99), rows.slice(100));
+  assert.deepEqual(paginateRows(rows, 0), rows.slice(0, 50));
+});
+
+test("query message distinguishes permission, generic error, and empty results", () => {
+  assert.equal(getOd0002QueryMessage({ error: new Error("API请求失败: 403 - 无功能权限") }), "无权限查看此报表");
+  assert.equal(getOd0002QueryMessage({ error: new Error("API请求失败: 500") }), "报表加载失败，请稍后重试");
+  assert.equal(getOd0002QueryMessage({ hasData: true, rowCount: 0 }), "暂无数据");
+  assert.equal(getOd0002QueryMessage({ isLoading: true }), "正在加载报表…");
+  assert.equal(getOd0002QueryMessage({ hasData: true, rowCount: 2 }), null);
+});
+
+test("contentDispositionFilename supports UTF-8 and quoted filenames safely", () => {
+  assert.equal(
+    contentDispositionFilename("attachment; filename*=UTF-8''OD0002_%E9%94%80%E5%94%AE.xlsx"),
+    "OD0002_销售.xlsx",
+  );
+  assert.equal(contentDispositionFilename('attachment; filename="OD0002 report.xlsx"'), "OD0002 report.xlsx");
+  assert.equal(contentDispositionFilename(null), null);
+});
+
+test("OD0002 page source contains the endpoint, controls, states, quality hints, and authenticated export", async () => {
+  const source = await readFile(new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url), "utf8");
+  assert.match(source, /OD0002 门店销售毛利汇总表/);
+  assert.match(source, /\/api\/sales\/reports\/od0002\?/);
+  assert.match(source, /OD0002_TABS\.map/);
+  assert.match(source, />查询</);
+  assert.match(source, />重置</);
+  assert.match(source, /导出/);
+  assert.match(source, /无权限查看此报表|无功能权限/);
+  assert.match(source, /暂无数据/);
+  assert.match(source, /数据质量提示/);
+  assert.match(source, /credentials:\s*["']include["']/);
+  assert.match(source, /response\.ok/);
+  assert.match(source, /URL\.revokeObjectURL/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

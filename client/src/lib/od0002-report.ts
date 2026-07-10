@@ -99,3 +99,72 @@ export function buildOd0002Params(
   }
   return params;
 }
+
+export type Od0002VisibleColumn = "store" | "dimension" | "sales" | "profit" | "margin";
+
+export function formatMoneyWan(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return (value / 10_000).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return `${(value * 100).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
+export function visibleOd0002Columns(
+  tab: Od0002DimensionKey,
+  storeId: string,
+): Od0002VisibleColumn[] {
+  return [
+    ...(tab !== "stores" && storeId === OD0002_ALL_STORES ? (["store"] as const) : []),
+    "dimension",
+    "sales",
+    "profit",
+    "margin",
+  ];
+}
+
+export function paginateRows<T>(rows: readonly T[], page: number, pageSize = 50): T[] {
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(totalPages, Math.max(1, Math.trunc(page) || 1));
+  return rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+}
+
+export function getOd0002QueryMessage(state: {
+  isLoading?: boolean;
+  error?: unknown;
+  hasData?: boolean;
+  rowCount?: number;
+}): string | null {
+  if (state.isLoading) return "正在加载报表…";
+  if (state.error) {
+    const message = state.error instanceof Error ? state.error.message : String(state.error);
+    return /403|无功能权限|无权限/.test(message)
+      ? "无权限查看此报表"
+      : "报表加载失败，请稍后重试";
+  }
+  if (state.hasData && state.rowCount === 0) return "暂无数据";
+  return null;
+}
+
+export function contentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded.trim()).split(/[\\/]/).pop() || null;
+    } catch {
+      return null;
+    }
+  }
+  const plain = /filename\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(header);
+  const filename = (plain?.[1] ?? plain?.[2])?.trim();
+  return filename?.split(/[\\/]/).pop() || null;
+}
