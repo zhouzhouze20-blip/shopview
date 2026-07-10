@@ -5,7 +5,10 @@ import test from "node:test";
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
 test("OD0002 is a sales report sibling with its own sales permission", async () => {
-  const navigation = await read("../components/navigation-sidebar.tsx");
+  const sidebar = await read("../components/navigation-sidebar.tsx");
+  const navigation = sidebar.includes('from "@/lib/navigation-items"')
+    ? await read("./navigation-items.ts")
+    : sidebar;
   const permissions = await read("./module-permissions.ts");
 
   assert.match(
