@@ -174,6 +174,10 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /数据质量提示/);
   assert.match(source, /response\.ok/);
   assert.match(source, /scheduleObjectUrlRevoke\(/);
+  assert.match(source, /reportQuery\.data\?\.totals\[activeTab\]/);
+  assert.match(source, /<TableFooter>/);
+  assert.match(source, />合计</);
+  assert.match(source, /metricCells\(activeTotal\)/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

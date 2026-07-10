@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiRequest } from "@/lib/api";
@@ -26,6 +26,7 @@ import {
   syncOd0002DraftFromGlobalStore,
   visibleOd0002Columns,
   type Od0002DimensionKey,
+  type Od0002Metric,
   type Od0002Response,
   type Od0002Row,
 } from "@/lib/od0002-report";
@@ -45,16 +46,16 @@ function defaultFilters(): Filters {
   return { start: localIsoDate(start), end: localIsoDate(end), storeId: OD0002_ALL_STORES };
 }
 
-const metricCells = (row: Od0002Row) => [
-  formatMoneyWan(row.metrics.sales_current),
-  formatMoneyWan(row.metrics.sales_prior),
-  formatPercent(row.metrics.sales_yoy),
-  formatMoneyWan(row.metrics.profit_current),
-  formatMoneyWan(row.metrics.profit_prior),
-  formatPercent(row.metrics.profit_yoy),
-  formatPercent(row.metrics.margin_current),
-  formatPercent(row.metrics.margin_prior),
-  formatPercent(row.metrics.margin_change),
+const metricCells = (metrics: Od0002Metric) => [
+  formatMoneyWan(metrics.sales_current),
+  formatMoneyWan(metrics.sales_prior),
+  formatPercent(metrics.sales_yoy),
+  formatMoneyWan(metrics.profit_current),
+  formatMoneyWan(metrics.profit_prior),
+  formatPercent(metrics.profit_yoy),
+  formatPercent(metrics.margin_current),
+  formatPercent(metrics.margin_prior),
+  formatPercent(metrics.margin_change),
 ];
 
 export default function Od0002SalesGrossProfitPage() {
@@ -94,6 +95,7 @@ export default function Od0002SalesGrossProfitPage() {
 
   const rows = hasSubmitted ? reportQuery.data?.dimensions[activeTab] ?? [] : [];
   const pagedRows = activeTab === "groups" ? paginateRows(rows, page) : rows;
+  const activeTotal = hasSubmitted ? reportQuery.data?.totals[activeTab] : undefined;
   const pages = Math.max(1, Math.ceil(rows.length / 50));
   const visible = visibleOd0002Columns(activeTab, submitted.storeId);
   const message = getOd0002QueryMessage({
@@ -248,10 +250,19 @@ export default function Od0002SalesGrossProfitPage() {
                     <TableRow key={`${row.store_code ?? "all"}-${row.dimension_code ?? row.dimension_name ?? index}`}>
                       {visible.includes("store") && <TableCell>{row.store_name || row.store_code || "—"}</TableCell>}
                       <TableCell><div className="font-medium">{row.dimension_name || "未匹配"}</div><div className="text-xs text-muted-foreground">{row.dimension_code || "—"}</div></TableCell>
-                      {metricCells(row).map((value, cellIndex) => <TableCell key={cellIndex} className={value.startsWith("-") ? "text-right tabular-nums text-red-600" : "text-right tabular-nums"}>{value}</TableCell>)}
+                      {metricCells(row.metrics).map((value, cellIndex) => <TableCell key={cellIndex} className={value.startsWith("-") ? "text-right tabular-nums text-red-600" : "text-right tabular-nums"}>{value}</TableCell>)}
                     </TableRow>
                   ))}
                 </TableBody>
+                {activeTotal && rows.length > 0 && (
+                  <TableFooter>
+                    <TableRow>
+                      {visible.includes("store") && <TableCell />}
+                      <TableCell>合计</TableCell>
+                      {metricCells(activeTotal).map((value, cellIndex) => <TableCell key={cellIndex} className={value.startsWith("-") ? "text-right tabular-nums text-red-600" : "text-right tabular-nums"}>{value}</TableCell>)}
+                    </TableRow>
+                  </TableFooter>
+                )}
               </Table>
             </div>
           )}

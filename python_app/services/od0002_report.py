@@ -163,7 +163,7 @@ LEFT JOIN manaframe dept
 LEFT JOIN area_category ac
   ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = UPPER(TRIM(COALESCE(ac.category_code, '')))
 WHERE st.is_active IS TRUE
-  AND (mf.mflc IS NULL OR mf.mflc <> '00')
+  AND TRIM(BOTH FROM COALESCE(mf.mflc, '')) <> '00'
   {scope_sql}
 ORDER BY store_code, st.store_id
 """
@@ -236,16 +236,16 @@ base AS (
   SELECT
     s.sglmarket::text AS store_code,
     st.store_name AS store_name,
-    dept.mfcode AS department_code,
+    TRIM(BOTH FROM COALESCE(dept.mfcode, '')) AS department_code,
     COALESCE(NULLIF(TRIM(BOTH FROM dept.mfcname), ''), '未匹配') AS department_name,
     ac.area_code,
     COALESCE(NULLIF(TRIM(BOTH FROM ac.area_name), ''), '未匹配') AS area_name,
     ac.category_code,
     COALESCE(NULLIF(TRIM(BOTH FROM ac.category_name), ''), '未匹配') AS category_name,
-    mf.mfcode AS group_code,
+    TRIM(BOTH FROM COALESCE(mf.mfcode, '')) AS group_code,
     COALESCE(NULLIF(TRIM(BOTH FROM mf.mfcname), ''), '未匹配') AS group_name,
-    mf.mflc AS floor_code,
-    CASE mf.mflc
+    TRIM(BOTH FROM COALESCE(mf.mflc, '')) AS floor_code,
+    CASE TRIM(BOTH FROM COALESCE(mf.mflc, ''))
       {floor_cases}
       ELSE '未匹配'
     END AS floor_name,
@@ -266,8 +266,8 @@ base AS (
     ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = ac.normalized_category_code
   LEFT JOIN stores st
     ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = s.sglmarket::text
-  WHERE (mf.mflc IS NULL OR mf.mflc <> '00')
-    AND COALESCE(dept.mfcode, '') <> ALL(:excluded_department_codes)
+  WHERE TRIM(BOTH FROM COALESCE(mf.mflc, '')) <> '00'
+    AND TRIM(BOTH FROM COALESCE(dept.mfcode, '')) <> ALL(:excluded_department_codes)
     AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
     {scope_sql}
     {selected_store_sql}

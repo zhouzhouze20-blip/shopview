@@ -69,8 +69,31 @@ def test_od0002_stores_endpoint_requires_permission_and_scope_aliases(monkeypatc
     assert calls["filter_kwargs"]["category_code_expr"] == "ac.category_code"
     assert calls["filter_kwargs"]["category_name_expr"] == "ac.category_name"
     assert calls["filter_kwargs"]["floor_expr"] == "mf.mflc"
-    assert "mf.mfcode" in calls["filter_kwargs"]["store_expr"]
+    assert calls["filter_kwargs"]["store_expr"] == "st.store_id::text"
     assert result[0]["store_name"] == "零销售授权店"
+
+
+def test_selected_store_code_is_resolved_to_active_store_id_with_bound_parameter():
+    from python_app.routers import sales
+
+    class Result:
+        def first(self):
+            return (1,)
+
+    class Db:
+        def __init__(self):
+            self.call = None
+
+        def execute(self, statement, params):
+            self.call = (str(statement), params)
+            return Result()
+
+    db = Db()
+    assert sales._od0002_store_id_for_code(db, "601") == "1"
+    sql, params = db.call
+    assert "st.is_active IS TRUE" in sql
+    assert "= :store_code" in sql
+    assert params == {"store_code": "601"}
 
 
 def test_compare_period_uses_same_dates_in_previous_year():
@@ -161,7 +184,7 @@ def test_report_constants_match_the_design():
 
 
 def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
-    scope_sql = " AND NOT (s.sglmarket::text = ANY(:scope_deny_store))"
+    scope_sql = " AND NOT (st.store_id::text = ANY(:scope_deny_store))"
     sql, params = build_report_query(
         date(2026, 5, 29),
         date(2026, 6, 28),
@@ -185,7 +208,7 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert "mf.mfpcode" in compact and "dept.mfcode" in compact
     assert "mf.mfchr1" in compact and "ac.category_code" in compact
     assert "s.sglwmid <> '5'" in compact
-    assert "mf.mflc <> '00'" in compact
+    assert "trim(both from coalesce(mf.mflc, '')) <> '00'" in compact
     assert "trim(both from coalesce(ac.area_name, '')) <> '其他类别区域'" in compact
     assert "replace(coalesce(ac.area_name" not in compact
     assert scope_sql in sql
@@ -196,6 +219,21 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert set(EXCLUDED_DEPARTMENT_CODES).issubset(set(params["excluded_department_codes"]))
     assert params["scope_deny_store"] == ["602"]
     assert params["selected_store"] == "601"
+
+
+def test_report_query_normalizes_erp_codes_before_output_filters_and_floor_mapping():
+    sql, _ = build_report_query(
+        date(2026, 1, 1), date(2026, 1, 31),
+        date(2025, 1, 1), date(2025, 1, 31), TrustedScopeSql(""), {},
+    )
+    compact = " ".join(sql.split()).lower()
+
+    assert "trim(both from coalesce(dept.mfcode, '')) as department_code" in compact
+    assert "trim(both from coalesce(mf.mfcode, '')) as group_code" in compact
+    assert "trim(both from coalesce(mf.mflc, '')) as floor_code" in compact
+    assert "case trim(both from coalesce(mf.mflc, ''))" in compact
+    assert "trim(both from coalesce(mf.mflc, '')) <> '00'" in compact
+    assert "trim(both from coalesce(dept.mfcode, '')) <> all(:excluded_department_codes)" in compact
 
 
 def test_build_report_query_deduplicates_area_category_deterministically():
@@ -448,7 +486,7 @@ def test_od0002_route_requires_permission_scope_and_builds_expected_alias_scope(
     assert calls["permission"] == "sales.view"
     assert calls["scope_kwargs"] == {"fallback_resource_code": "sales"}
     assert calls["filter_kwargs"] == {
-        "prefix": "od0002", "store_expr": "s.sglmarket::text",
+        "prefix": "od0002", "store_expr": "st.store_id::text",
         "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
         "group_expr": "mf.mfcode", "category_code_expr": "ac.category_code",
         "category_name_expr": "ac.category_name", "floor_expr": "mf.mflc",
@@ -473,10 +511,27 @@ def test_od0002_route_rejects_selected_store_outside_scope(monkeypatch):
 
     monkeypatch.setattr(sales, "require_permission", lambda *args: None)
     monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"601"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "2")
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), "602", object(), object()))
     assert exc.value.status_code == 403
+
+
+def test_od0002_route_allows_selected_store_when_store_id_is_explicitly_allowed(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"1"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "1")
+    monkeypatch.setattr(sales, "load_od0002_report", lambda *args, **kwargs: {"selected_store": kwargs["selected_store"]})
+
+    result = asyncio.run(
+        sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), "601", object(), object())
+    )
+
+    assert result == {"selected_store": "601"}
 
 
 @pytest.mark.parametrize(
@@ -495,6 +550,7 @@ def test_od0002_route_allows_store_selection_for_non_store_scopes(
     from python_app.routers.authz import DataScope
 
     monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "1")
     monkeypatch.setattr(
         sales,
         "load_business_scope",
@@ -524,13 +580,14 @@ def test_od0002_route_rejects_explicitly_denied_store(monkeypatch):
     monkeypatch.setattr(
         sales,
         "load_business_scope",
-        lambda *args, **kwargs: DataScope(all_access=True, deny={"store": {"602"}}),
+        lambda *args, **kwargs: DataScope(all_access=True, deny={"store": {"1"}}),
     )
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "1")
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             sales.od0002_report(
-                date(2026, 1, 1), date(2026, 1, 31), "602", object(), object()
+                date(2026, 1, 1), date(2026, 1, 31), "601", object(), object()
             )
         )
     assert exc.value.status_code == 403
@@ -543,11 +600,12 @@ def test_od0002_route_preserves_union_semantics_for_mixed_store_and_department_a
     from python_app.routers.authz import DataScope
 
     monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "2")
     monkeypatch.setattr(
         sales,
         "load_business_scope",
         lambda *args, **kwargs: DataScope(
-            allow={"store": {"601"}, "department": {"D01"}}
+            allow={"store": {"1"}, "department": {"D01"}}
         ),
     )
     monkeypatch.setattr(

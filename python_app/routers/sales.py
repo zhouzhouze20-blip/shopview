@@ -334,11 +334,19 @@ def _scope_explicitly_rejects_store(scope, store_id: str) -> bool:
     )
 
 
-OD0002_MANAFRAME_STORE_EXPR = """CASE
-  WHEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) ~ '^[0-9]{3}$'
-  THEN SUBSTRING(TRIM(BOTH FROM mf.mfcode) FROM 1 FOR 3)
-  ELSE NULL
-END"""
+def _od0002_store_id_for_code(db: Session, store_code: str) -> str | None:
+    row = db.execute(
+        text("""
+            SELECT st.store_id::text
+            FROM stores st
+            WHERE st.is_active IS TRUE
+              AND TRIM(BOTH FROM COALESCE(st.store_code, '')) = :store_code
+            ORDER BY st.store_id
+            LIMIT 1
+        """),
+        {"store_code": store_code},
+    ).first()
+    return str(row[0]) if row is not None else None
 
 
 @router.get("/reports/od0002/stores")
@@ -354,7 +362,7 @@ async def od0002_stores(
         scope,
         scope_params,
         prefix="od0002_stores",
-        store_expr=OD0002_MANAFRAME_STORE_EXPR,
+        store_expr="st.store_id::text",
         department_code_expr="dept.mfcode",
         department_name_expr="dept.mfcname",
         group_expr="mf.mfcode",
@@ -401,7 +409,19 @@ def _load_od0002_for_request(
 
     require_permission(db, current_user, "sales.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
-    if selected_store is not None and _scope_explicitly_rejects_store(scope, selected_store):
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无该门店数据权限",
@@ -413,7 +433,7 @@ def _load_od0002_for_request(
         scope,
         scope_params,
         prefix="od0002",
-        store_expr="s.sglmarket::text",
+        store_expr="st.store_id::text",
         department_code_expr="dept.mfcode",
         department_name_expr="dept.mfcname",
         group_expr="mf.mfcode",

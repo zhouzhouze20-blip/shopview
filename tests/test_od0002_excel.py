@@ -136,6 +136,7 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
     calls = {"load": 0}
     monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
     monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"601"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "601")
     monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: " AND 1=1")
     def fake_load(*args, **kwargs):
         calls["load"] += 1
