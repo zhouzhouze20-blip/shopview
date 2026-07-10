@@ -168,3 +168,52 @@ export function contentDispositionFilename(header: string | null): string | null
   const filename = (plain?.[1] ?? plain?.[2])?.trim();
   return filename?.split(/[\\/]/).pop() || null;
 }
+
+export function buildOd0002StoreSummaryParams(start: string, end: string): URLSearchParams {
+  return new URLSearchParams({
+    start_date: start,
+    end_date: end,
+    prior_start_date: previousYearDate(start),
+    prior_end_date: previousYearDate(end),
+  });
+}
+
+export type Od0002DraftFilters = { start: string; end: string; storeId: string };
+
+export function syncOd0002DraftFromGlobalStore<T extends Od0002DraftFilters>(
+  draft: T,
+  globalStoreId: number | null,
+  dirty: boolean,
+): T {
+  if (dirty) return draft;
+  return {
+    ...draft,
+    storeId: globalStoreId === null ? OD0002_ALL_STORES : String(globalStoreId),
+  };
+}
+
+export type Od0002StoreOption = { value: string; label: string };
+
+export function normalizeOd0002StoreOptions(
+  permissionRows: ReadonlyArray<{ store_id: string | number; store_name?: string | null }>,
+  scopedReportRows: ReadonlyArray<{ store_code: string | null; store_name: string | null }> = [],
+): Od0002StoreOption[] {
+  const options = new Map<string, string>();
+  permissionRows.forEach((row) => {
+    const value = String(row.store_id).trim();
+    if (value) options.set(value, row.store_name?.trim() || value);
+  });
+  scopedReportRows.forEach((row) => {
+    const value = row.store_code?.trim();
+    if (value && !options.has(value)) options.set(value, row.store_name?.trim() || value);
+  });
+  return Array.from(options, ([value, label]) => ({ value, label }));
+}
+
+export function scheduleObjectUrlRevoke(
+  url: string,
+  revoke: (url: string) => void = URL.revokeObjectURL,
+  schedule: (callback: () => void, delay: number) => unknown = setTimeout,
+): void {
+  schedule(() => revoke(url), 0);
+}

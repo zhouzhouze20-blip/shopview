@@ -7,12 +7,16 @@ import { readFile } from "node:fs/promises";
 import {
   buildOd0002Params,
   contentDispositionFilename,
+  buildOd0002StoreSummaryParams,
   formatMoneyWan,
   formatPercent,
   getOd0002QueryMessage,
   OD0002_TABS,
   paginateRows,
   previousYearDate,
+  normalizeOd0002StoreOptions,
+  scheduleObjectUrlRevoke,
+  syncOd0002DraftFromGlobalStore,
   visibleOd0002Columns,
 } from "./od0002-report.ts";
 
@@ -113,10 +117,54 @@ test("contentDispositionFilename supports UTF-8 and quoted filenames safely", ()
   assert.equal(contentDispositionFilename(null), null);
 });
 
+test("store summary request uses current and previous-year date parameters", () => {
+  assert.equal(
+    buildOd0002StoreSummaryParams("2026-07-01", "2026-07-09").toString(),
+    "start_date=2026-07-01&end_date=2026-07-09&prior_start_date=2025-07-01&prior_end_date=2025-07-09",
+  );
+});
+
+test("global store sync handles cold start and later changes without overwriting dirty drafts", () => {
+  const draft = { start: "2026-07-01", end: "2026-07-09", storeId: "all" };
+  assert.deepEqual(syncOd0002DraftFromGlobalStore(draft, 601, false), { ...draft, storeId: "601" });
+  assert.deepEqual(syncOd0002DraftFromGlobalStore({ ...draft, storeId: "601" }, 602, false), { ...draft, storeId: "602" });
+  assert.deepEqual(syncOd0002DraftFromGlobalStore({ ...draft, storeId: "601" }, 602, true), { ...draft, storeId: "601" });
+  assert.deepEqual(syncOd0002DraftFromGlobalStore({ ...draft, storeId: "601" }, null, false), draft);
+});
+
+test("store options normalize the permission summary and only supplement from scoped report rows", () => {
+  assert.deepEqual(
+    normalizeOd0002StoreOptions(
+      [{ store_id: "601", store_name: "一店" }],
+      [
+        { store_code: "601", store_name: "一店重复" },
+        { store_code: "602", store_name: "二店" },
+      ],
+    ),
+    [
+      { value: "601", label: "一店" },
+      { value: "602", label: "二店" },
+    ],
+  );
+});
+
+test("object URL cleanup is deferred to allow the browser download to start", () => {
+  const calls = [];
+  scheduleObjectUrlRevoke("blob:test", (url) => calls.push(["revoke", url]), (fn, delay) => {
+    calls.push(["schedule", delay]);
+    fn();
+    return 1;
+  });
+  assert.deepEqual(calls, [["schedule", 0], ["revoke", "blob:test"]]);
+});
+
 test("OD0002 page source contains the endpoint, controls, states, quality hints, and authenticated export", async () => {
   const source = await readFile(new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url), "utf8");
   assert.match(source, /OD0002 门店销售毛利汇总表/);
   assert.match(source, /\/api\/sales\/reports\/od0002\?/);
+  assert.match(source, /\/api\/sales\/summary\/stores\?/);
+  assert.match(source, /import\s*\{[^}]*apiRequest[^}]*\}\s*from\s*["']@\/lib\/api["']/s);
+  assert.match(source, /apiRequest\(`\/api\/sales\/reports\/od0002\/export\?/);
   assert.match(source, /OD0002_TABS\.map/);
   assert.match(source, />查询</);
   assert.match(source, />重置</);
@@ -124,9 +172,9 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /无权限查看此报表|无功能权限/);
   assert.match(source, /暂无数据/);
   assert.match(source, /数据质量提示/);
-  assert.match(source, /credentials:\s*["']include["']/);
   assert.match(source, /response\.ok/);
   assert.match(source, /URL\.revokeObjectURL/);
+  assert.match(source, /setTimeout/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

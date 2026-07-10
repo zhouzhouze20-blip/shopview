@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Loader2, RefreshCw, Search } from "lucide-react";
 
@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore } from "@/contexts/StoreContext";
-import { apiGet, getApiUrl } from "@/lib/api";
+import { apiGet, apiRequest } from "@/lib/api";
 import {
   buildOd0002Params,
+  buildOd0002StoreSummaryParams,
   contentDispositionFilename,
   formatMoneyWan,
   formatPercent,
@@ -21,6 +22,8 @@ import {
   OD0002_TABS,
   paginateRows,
   previousYearDate,
+  normalizeOd0002StoreOptions,
+  syncOd0002DraftFromGlobalStore,
   visibleOd0002Columns,
   type Od0002DimensionKey,
   type Od0002Response,
@@ -28,6 +31,7 @@ import {
 } from "@/lib/od0002-report";
 
 type Filters = { start: string; end: string; storeId: string };
+type StoreSummary = { store_id: string; store_name: string };
 
 function localIsoDate(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -54,7 +58,7 @@ const metricCells = (row: Od0002Row) => [
 ];
 
 export default function Od0002SalesGrossProfitPage() {
-  const { stores, isLoading: storesLoading, selectedStoreId } = useStore();
+  const { selectedStoreId } = useStore();
   const initial = useMemo(() => {
     const filters = defaultFilters();
     return selectedStoreId === null ? filters : { ...filters, storeId: String(selectedStoreId) };
@@ -63,10 +67,27 @@ export default function Od0002SalesGrossProfitPage() {
   const [submitted, setSubmitted] = useState<Filters>(initial);
   const [queryVersion, setQueryVersion] = useState(0);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<Od0002DimensionKey>("stores");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft((current) => syncOd0002DraftFromGlobalStore(current, selectedStoreId, draftDirty));
+  }, [selectedStoreId]);
+
+  const storeSummaryParams = useMemo(
+    () => draft.start && draft.end && draft.start <= draft.end
+      ? buildOd0002StoreSummaryParams(draft.start, draft.end).toString()
+      : "",
+    [draft.start, draft.end],
+  );
+  const storesQuery = useQuery<StoreSummary[]>({
+    queryKey: ["/api/sales/summary/stores", storeSummaryParams],
+    queryFn: () => apiGet(`/api/sales/summary/stores?${storeSummaryParams}`),
+    enabled: Boolean(storeSummaryParams),
+  });
 
   const queryString = useMemo(
     () => buildOd0002Params(submitted.start, submitted.end, submitted.storeId).toString(),
@@ -88,19 +109,35 @@ export default function Od0002SalesGrossProfitPage() {
     hasData: hasSubmitted && Boolean(reportQuery.data),
     rowCount: rows.length,
   });
+  const storeOptions = useMemo(
+    () => normalizeOd0002StoreOptions(
+      storesQuery.data ?? [],
+      hasSubmitted && submitted.storeId === OD0002_ALL_STORES
+        ? reportQuery.data?.dimensions.stores ?? []
+        : [],
+    ),
+    [storesQuery.data, hasSubmitted, submitted.storeId, reportQuery.data],
+  );
+
+  const updateDraft = (change: Partial<Filters>) => {
+    setDraft((current) => ({ ...current, ...change }));
+    setDraftDirty(true);
+  };
 
   const submit = () => {
     if (!draft.start || !draft.end || draft.start > draft.end) return;
     setSubmitted({ ...draft });
     setQueryVersion((value) => value + 1);
     setHasSubmitted(true);
+    setDraftDirty(false);
     setPage(1);
     setExportError(null);
   };
 
   const reset = () => {
-    const next = defaultFilters();
+    const next = syncOd0002DraftFromGlobalStore(defaultFilters(), selectedStoreId, false);
     setDraft(next);
+    setDraftDirty(false);
     setHasSubmitted(false);
     setPage(1);
     setExportError(null);
@@ -109,25 +146,25 @@ export default function Od0002SalesGrossProfitPage() {
   const exportReport = async () => {
     setExporting(true);
     setExportError(null);
+    let url: string | null = null;
+    let anchor: HTMLAnchorElement | null = null;
     try {
-      const response = await fetch(`${getApiUrl()}/api/sales/reports/od0002/export?${queryString}`, {
-        credentials: "include",
-      });
+      const response = await apiRequest(`/api/sales/reports/od0002/export?${queryString}`);
       if (!response.ok) throw new Error(`导出失败（${response.status}）`);
       const blob = await response.blob();
       const filename = contentDispositionFilename(response.headers.get("Content-Disposition"))
         ?? `OD0002_门店销售毛利汇总表_${submitted.start}_${submitted.end}.xlsx`;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
+      url = URL.createObjectURL(blob);
+      anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : "导出失败，请稍后重试");
     } finally {
+      anchor?.remove();
+      if (url) setTimeout(() => URL.revokeObjectURL(url!), 0);
       setExporting(false);
     }
   };
@@ -147,27 +184,27 @@ export default function Od0002SalesGrossProfitPage() {
           <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
             <div className="space-y-2">
               <Label htmlFor="od0002-start">本期开始</Label>
-              <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => setDraft({ ...draft, start: event.target.value })} />
+              <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => updateDraft({ start: event.target.value })} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="od0002-end">本期结束</Label>
-              <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => setDraft({ ...draft, end: event.target.value })} />
+              <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => updateDraft({ end: event.target.value })} />
             </div>
             <div className="space-y-2">
-              <Label>同期开始（自动）</Label>
-              <Input readOnly value={draft.start ? previousYearDate(draft.start) : ""} />
+              <Label htmlFor="od0002-prior-start">同期开始（自动）</Label>
+              <Input id="od0002-prior-start" readOnly value={draft.start ? previousYearDate(draft.start) : ""} />
             </div>
             <div className="space-y-2">
-              <Label>同期结束（自动）</Label>
-              <Input readOnly value={draft.end ? previousYearDate(draft.end) : ""} />
+              <Label htmlFor="od0002-prior-end">同期结束（自动）</Label>
+              <Input id="od0002-prior-end" readOnly value={draft.end ? previousYearDate(draft.end) : ""} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="od0002-store">门店</Label>
-              <Select value={draft.storeId} onValueChange={(storeId) => setDraft({ ...draft, storeId })} disabled={storesLoading}>
+              <Select value={draft.storeId} onValueChange={(storeId) => updateDraft({ storeId })} disabled={storesQuery.isLoading}>
                 <SelectTrigger id="od0002-store"><SelectValue placeholder="权限内全部门店" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={OD0002_ALL_STORES}>权限内全部门店</SelectItem>
-                  {stores.map((store) => <SelectItem key={store.storeId} value={String(store.storeId)}>{store.storeName}</SelectItem>)}
+                  {storeOptions.map((store) => <SelectItem key={store.value} value={store.value}>{store.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -196,11 +233,13 @@ export default function Od0002SalesGrossProfitPage() {
           </Tabs>
 
           {!hasSubmitted ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">请设置条件后点击查询</div>
+            <div role="status" className="py-16 text-center text-sm text-muted-foreground">请设置条件后点击查询</div>
           ) : message ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">
-              {message === "无权限查看此报表" ? "无权限查看此报表" : message === "暂无数据" ? "暂无数据" : message}
-            </div>
+            message === "无权限查看此报表" || message === "报表加载失败，请稍后重试" ? (
+              <div role="alert" className="py-16 text-center text-sm text-red-600">{message}</div>
+            ) : (
+              <div role="status" className="py-16 text-center text-sm text-muted-foreground">{message === "暂无数据" ? "暂无数据" : message}</div>
+            )
           ) : (
             <div className="max-h-[65vh] overflow-auto rounded-md border">
               <Table>
