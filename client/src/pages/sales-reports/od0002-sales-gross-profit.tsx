@@ -13,7 +13,6 @@ import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiRequest } from "@/lib/api";
 import {
   buildOd0002Params,
-  buildOd0002StoreSummaryParams,
   contentDispositionFilename,
   formatMoneyWan,
   formatPercent,
@@ -23,6 +22,7 @@ import {
   paginateRows,
   previousYearDate,
   normalizeOd0002StoreOptions,
+  scheduleObjectUrlRevoke,
   syncOd0002DraftFromGlobalStore,
   visibleOd0002Columns,
   type Od0002DimensionKey,
@@ -31,7 +31,7 @@ import {
 } from "@/lib/od0002-report";
 
 type Filters = { start: string; end: string; storeId: string };
-type StoreSummary = { store_id: string; store_name: string };
+type AuthorizedStore = { store_id: string | number; store_code: string; store_name: string };
 
 function localIsoDate(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -59,10 +59,7 @@ const metricCells = (row: Od0002Row) => [
 
 export default function Od0002SalesGrossProfitPage() {
   const { selectedStoreId } = useStore();
-  const initial = useMemo(() => {
-    const filters = defaultFilters();
-    return selectedStoreId === null ? filters : { ...filters, storeId: String(selectedStoreId) };
-  }, []);
+  const initial = useMemo(() => defaultFilters(), []);
   const [draft, setDraft] = useState<Filters>(initial);
   const [submitted, setSubmitted] = useState<Filters>(initial);
   const [queryVersion, setQueryVersion] = useState(0);
@@ -73,21 +70,17 @@ export default function Od0002SalesGrossProfitPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setDraft((current) => syncOd0002DraftFromGlobalStore(current, selectedStoreId, draftDirty));
-  }, [selectedStoreId]);
-
-  const storeSummaryParams = useMemo(
-    () => draft.start && draft.end && draft.start <= draft.end
-      ? buildOd0002StoreSummaryParams(draft.start, draft.end).toString()
-      : "",
-    [draft.start, draft.end],
-  );
-  const storesQuery = useQuery<StoreSummary[]>({
-    queryKey: ["/api/sales/summary/stores", storeSummaryParams],
-    queryFn: () => apiGet(`/api/sales/summary/stores?${storeSummaryParams}`),
-    enabled: Boolean(storeSummaryParams),
+  const storesQuery = useQuery<AuthorizedStore[]>({
+    queryKey: ["/api/sales/reports/od0002/stores"],
+    queryFn: () => apiGet("/api/sales/reports/od0002/stores"),
   });
+  const globalStoreCode = selectedStoreId === null
+    ? null
+    : storesQuery.data?.find((store) => String(store.store_id) === String(selectedStoreId))?.store_code ?? null;
+
+  useEffect(() => {
+    setDraft((current) => syncOd0002DraftFromGlobalStore(current, globalStoreCode, draftDirty));
+  }, [globalStoreCode]);
 
   const queryString = useMemo(
     () => buildOd0002Params(submitted.start, submitted.end, submitted.storeId).toString(),
@@ -110,13 +103,8 @@ export default function Od0002SalesGrossProfitPage() {
     rowCount: rows.length,
   });
   const storeOptions = useMemo(
-    () => normalizeOd0002StoreOptions(
-      storesQuery.data ?? [],
-      hasSubmitted && submitted.storeId === OD0002_ALL_STORES
-        ? reportQuery.data?.dimensions.stores ?? []
-        : [],
-    ),
-    [storesQuery.data, hasSubmitted, submitted.storeId, reportQuery.data],
+    () => normalizeOd0002StoreOptions(storesQuery.data ?? []),
+    [storesQuery.data],
   );
 
   const updateDraft = (change: Partial<Filters>) => {
@@ -135,7 +123,7 @@ export default function Od0002SalesGrossProfitPage() {
   };
 
   const reset = () => {
-    const next = syncOd0002DraftFromGlobalStore(defaultFilters(), selectedStoreId, false);
+    const next = syncOd0002DraftFromGlobalStore(defaultFilters(), globalStoreCode, false);
     setDraft(next);
     setDraftDirty(false);
     setHasSubmitted(false);
@@ -164,7 +152,7 @@ export default function Od0002SalesGrossProfitPage() {
       setExportError(error instanceof Error ? error.message : "导出失败，请稍后重试");
     } finally {
       anchor?.remove();
-      if (url) setTimeout(() => URL.revokeObjectURL(url!), 0);
+      if (url) scheduleObjectUrlRevoke(url);
       setExporting(false);
     }
   };

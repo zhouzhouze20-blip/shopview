@@ -9,12 +9,68 @@ from python_app.services.od0002_report import (
     EXCLUDED_DEPARTMENT_CODES,
     FLOOR_NAMES,
     TrustedScopeSql,
+    build_authorized_stores_query,
     build_report_query,
     compare_period,
     metric_triplet,
     load_od0002_report,
+    load_od0002_authorized_stores,
     normalize_rows,
 )
+
+
+def test_authorized_store_query_uses_master_dimensions_without_sales_or_dates():
+    sql, params = build_authorized_stores_query(
+        TrustedScopeSql(" AND upper(trim(COALESCE((dept.mfcode)::varchar, ''))) = ANY(:stores_allow_department)"),
+        {"stores_allow_department": ["60101"]},
+    )
+    compact = " ".join(sql.split()).lower()
+
+    assert "salegoodslist" not in compact
+    assert "start_date" not in compact and "end_date" not in compact
+    assert "from stores st" in compact
+    assert "join manaframe mf" in compact
+    assert "left join manaframe dept" in compact
+    assert "left join area_category" in compact
+    assert "mf.mflc" in compact
+    assert ":stores_allow_department" in sql
+    assert params == {"stores_allow_department": ["60101"]}
+
+
+def test_load_authorized_stores_returns_scoped_store_without_sales():
+    db = FakeDb([{"store_id": 601, "store_code": "601", "store_name": "零销售授权店"}])
+
+    rows = load_od0002_authorized_stores(
+        db,
+        TrustedScopeSql(" AND 1=1"),
+        {},
+    )
+
+    assert rows == [{"store_id": 601, "store_code": "601", "store_name": "零销售授权店"}]
+    assert "salegoodslist" not in db.calls[0][0].lower()
+
+
+def test_od0002_stores_endpoint_requires_permission_and_scope_aliases(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda db, user, **kwargs: DataScope(allow={"department": {"60101"}}))
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
+    monkeypatch.setattr(sales, "load_od0002_authorized_stores", lambda db, scope_sql, params: [{"store_id": 601, "store_code": "601", "store_name": "零销售授权店"}])
+
+    result = asyncio.run(sales.od0002_stores(object(), object()))
+
+    assert calls["permission"] == "sales.view"
+    assert calls["filter_kwargs"]["department_code_expr"] == "dept.mfcode"
+    assert calls["filter_kwargs"]["department_name_expr"] == "dept.mfcname"
+    assert calls["filter_kwargs"]["group_expr"] == "mf.mfcode"
+    assert calls["filter_kwargs"]["category_code_expr"] == "ac.category_code"
+    assert calls["filter_kwargs"]["category_name_expr"] == "ac.category_name"
+    assert calls["filter_kwargs"]["floor_expr"] == "mf.mflc"
+    assert "mf.mfcode" in calls["filter_kwargs"]["store_expr"]
+    assert result[0]["store_name"] == "零销售授权店"
 
 
 def test_compare_period_uses_same_dates_in_previous_year():

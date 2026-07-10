@@ -7,7 +7,6 @@ import { readFile } from "node:fs/promises";
 import {
   buildOd0002Params,
   contentDispositionFilename,
-  buildOd0002StoreSummaryParams,
   formatMoneyWan,
   formatPercent,
   getOd0002QueryMessage,
@@ -117,10 +116,10 @@ test("contentDispositionFilename supports UTF-8 and quoted filenames safely", ()
   assert.equal(contentDispositionFilename(null), null);
 });
 
-test("store summary request uses current and previous-year date parameters", () => {
-  assert.equal(
-    buildOd0002StoreSummaryParams("2026-07-01", "2026-07-09").toString(),
-    "start_date=2026-07-01&end_date=2026-07-09&prior_start_date=2025-07-01&prior_end_date=2025-07-09",
+test("authorized store options use store codes accepted by the report endpoint", () => {
+  assert.deepEqual(
+    normalizeOd0002StoreOptions([{ store_id: 1, store_code: "601", store_name: "一店" }]),
+    [{ value: "601", label: "一店" }],
   );
 });
 
@@ -135,7 +134,7 @@ test("global store sync handles cold start and later changes without overwriting
 test("store options normalize the permission summary and only supplement from scoped report rows", () => {
   assert.deepEqual(
     normalizeOd0002StoreOptions(
-      [{ store_id: "601", store_name: "一店" }],
+      [{ store_id: 1, store_code: "601", store_name: "一店" }],
       [
         { store_code: "601", store_name: "一店重复" },
         { store_code: "602", store_name: "二店" },
@@ -162,7 +161,8 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   const source = await readFile(new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url), "utf8");
   assert.match(source, /OD0002 门店销售毛利汇总表/);
   assert.match(source, /\/api\/sales\/reports\/od0002\?/);
-  assert.match(source, /\/api\/sales\/summary\/stores\?/);
+  assert.match(source, /\/api\/sales\/reports\/od0002\/stores/);
+  assert.doesNotMatch(source, /\/api\/sales\/summary\/stores/);
   assert.match(source, /import\s*\{[^}]*apiRequest[^}]*\}\s*from\s*["']@\/lib\/api["']/s);
   assert.match(source, /apiRequest\(`\/api\/sales\/reports\/od0002\/export\?/);
   assert.match(source, /OD0002_TABS\.map/);
@@ -173,8 +173,7 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /暂无数据/);
   assert.match(source, /数据质量提示/);
   assert.match(source, /response\.ok/);
-  assert.match(source, /URL\.revokeObjectURL/);
-  assert.match(source, /setTimeout/);
+  assert.match(source, /scheduleObjectUrlRevoke\(/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

@@ -23,7 +23,12 @@ from models.models import User
 from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
 from services.sales_analysis import analyze_group_sales
-from services.od0002_report import TrustedScopeSql, compare_period, load_od0002_report
+from services.od0002_report import (
+    TrustedScopeSql,
+    compare_period,
+    load_od0002_authorized_stores,
+    load_od0002_report,
+)
 from services.od0002_excel import build_od0002_workbook_file
 
 
@@ -326,6 +331,41 @@ def _scope_explicitly_rejects_store(scope, store_id: str) -> bool:
         bool(allowed_stores)
         and not other_allow_dimensions
         and normalized_store not in allowed_stores
+    )
+
+
+OD0002_MANAFRAME_STORE_EXPR = """CASE
+  WHEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) ~ '^[0-9]{3}$'
+  THEN SUBSTRING(TRIM(BOTH FROM mf.mfcode) FROM 1 FOR 3)
+  ELSE NULL
+END"""
+
+
+@router.get("/reports/od0002/stores")
+async def od0002_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every store visible to OD0002, independent of sales dates."""
+    require_permission(db, current_user, "sales.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="od0002_stores",
+        store_expr=OD0002_MANAFRAME_STORE_EXPR,
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    return load_od0002_authorized_stores(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
     )
 
 

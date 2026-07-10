@@ -136,6 +136,50 @@ def _trusted_scope_value(scope_filter_sql: str | TrustedScopeSql) -> str:
     return value
 
 
+def build_authorized_stores_query(
+    scope_filter_sql: str | TrustedScopeSql,
+    scope_params: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Build the dimension-backed OD0002 store selector query.
+
+    This deliberately avoids salegoodslist so an authorized store remains
+    selectable when it has no sales in the requested report period.
+    """
+    scope_sql = _trusted_scope_value(scope_filter_sql)
+    sql = f"""
+SELECT DISTINCT
+  st.store_id,
+  TRIM(BOTH FROM st.store_code) AS store_code,
+  st.store_name
+FROM stores st
+JOIN manaframe mf
+  ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = CASE
+    WHEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) ~ '^[0-9]{{3}}$'
+    THEN SUBSTRING(TRIM(BOTH FROM mf.mfcode) FROM 1 FOR 3)
+    ELSE NULL
+  END
+LEFT JOIN manaframe dept
+  ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+LEFT JOIN area_category ac
+  ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = UPPER(TRIM(COALESCE(ac.category_code, '')))
+WHERE st.is_active IS TRUE
+  AND (mf.mflc IS NULL OR mf.mflc <> '00')
+  {scope_sql}
+ORDER BY store_code, st.store_id
+"""
+    return sql, dict(scope_params)
+
+
+def load_od0002_authorized_stores(
+    db: Any,
+    scope_filter_sql: str | TrustedScopeSql,
+    scope_params: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    sql, params = build_authorized_stores_query(scope_filter_sql, scope_params)
+    rows = db.execute(text(sql), params).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def build_report_query(
     start_date: date,
     end_date: date,

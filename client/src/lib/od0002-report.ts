@@ -169,20 +169,11 @@ export function contentDispositionFilename(header: string | null): string | null
   return filename?.split(/[\\/]/).pop() || null;
 }
 
-export function buildOd0002StoreSummaryParams(start: string, end: string): URLSearchParams {
-  return new URLSearchParams({
-    start_date: start,
-    end_date: end,
-    prior_start_date: previousYearDate(start),
-    prior_end_date: previousYearDate(end),
-  });
-}
-
 export type Od0002DraftFilters = { start: string; end: string; storeId: string };
 
 export function syncOd0002DraftFromGlobalStore<T extends Od0002DraftFilters>(
   draft: T,
-  globalStoreId: number | null,
+  globalStoreId: string | number | null,
   dirty: boolean,
 ): T {
   if (dirty) return draft;
@@ -195,12 +186,12 @@ export function syncOd0002DraftFromGlobalStore<T extends Od0002DraftFilters>(
 export type Od0002StoreOption = { value: string; label: string };
 
 export function normalizeOd0002StoreOptions(
-  permissionRows: ReadonlyArray<{ store_id: string | number; store_name?: string | null }>,
+  permissionRows: ReadonlyArray<{ store_id: string | number; store_code: string; store_name?: string | null }>,
   scopedReportRows: ReadonlyArray<{ store_code: string | null; store_name: string | null }> = [],
 ): Od0002StoreOption[] {
   const options = new Map<string, string>();
   permissionRows.forEach((row) => {
-    const value = String(row.store_id).trim();
+    const value = row.store_code.trim();
     if (value) options.set(value, row.store_name?.trim() || value);
   });
   scopedReportRows.forEach((row) => {
