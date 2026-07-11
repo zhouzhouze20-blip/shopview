@@ -143,6 +143,21 @@ def _contract_type_name_select_sql(enabled: bool) -> str:
     return "cmt.cmtypename AS contract_type_name,"
 
 
+def _charge_item_join_sql(enabled: bool, item_code_expr: str, alias: str = "gk") -> str:
+    if not enabled:
+        return ""
+    return (
+        f"LEFT JOIN codecharge {alias} "
+        f"ON upper(trim(COALESCE({item_code_expr}, ''))) = upper(trim(COALESCE({alias}.cccode::varchar, '')))"
+    )
+
+
+def _charge_item_name_select_sql(enabled: bool, alias: str = "gk") -> str:
+    if not enabled:
+        return "NULL::varchar AS cclitemname,"
+    return f"{alias}.ccname AS cclitemname,"
+
+
 def _counter_group_scope_join_sql(enabled: bool, code_expr: str, alias: str = "cg") -> str:
     if not enabled:
         return ""
@@ -259,6 +274,21 @@ def _contract_list_row_allowed(scope, row: dict[str, Any]) -> bool:
         )
         for group_code in group_codes
     )
+
+
+def _contract_department_options_from_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    options: dict[str, str] = {}
+    for item in items:
+        codes = _split_codes(item.get("department_codes"))
+        names = _split_codes(item.get("department_names"))
+        for index, code in enumerate(codes):
+            if not code:
+                continue
+            options.setdefault(code, names[index] if index < len(names) else "")
+    return [
+        {"department_code": code, "department_name": name}
+        for code, name in sorted(options.items(), key=lambda entry: entry[0])
+    ]
 
 
 def _append_contract_scope_filter(sql: str, params: dict[str, Any], scope, has_counter_groups: bool) -> str:
@@ -393,6 +423,7 @@ def _load_contract_list_items(
     keyword: str | None = None,
     status_filter: str | None = None,
     group_code: str | None = None,
+    department_code: str | None = None,
     supplier_code: str | None = None,
     skip: int = 0,
     limit: int | None = 100,
@@ -407,6 +438,7 @@ def _load_contract_list_items(
     has_counter_groups = _table_exists(db, "manaframe")
     has_contbd = _table_exists(db, "contbd")
     has_contmaintype = _table_exists(db, "contmaintype")
+    has_unit_bindings = _table_exists(db, "business_unit_binding") and _table_exists(db, "business_units")
 
     supplier_join = _supplier_join_sql(has_supplierbase)
     supplier_select = _supplier_name_select_sql(has_supplierbase)
@@ -414,6 +446,8 @@ def _load_contract_list_items(
     contract_type_select = _contract_type_name_select_sql(has_contmaintype)
     cmf_name_join = _manaframe_join_sql(has_manaframe, "cmf.cmfmfid")
     cmf_name_expr = "COALESCE(mf.mfcname, '')" if has_manaframe else "''"
+    department_code_expr = "COALESCE(cg_scope.department_code, '')" if has_counter_groups else "''"
+    department_name_expr = "COALESCE(cg_scope.department_name, '')" if has_counter_groups else "''"
     cg_join = _counter_group_scope_join_sql(has_counter_groups, "cmf_primary.cmfmfid", "cg")
     cmf_scope_join = _counter_group_scope_join_sql(has_counter_groups, "cmf.cmfmfid", "cg_scope")
     scope_entry_expr = (
@@ -449,6 +483,30 @@ def _load_contract_list_items(
             )
             """
     )
+    unit_cte = (
+        """
+            , unit_summary AS (
+              SELECT
+                b.contract_id,
+                string_agg(DISTINCT NULLIF(trim(COALESCE(bu.unit_code, '')), ''), ',' ORDER BY NULLIF(trim(COALESCE(bu.unit_code, '')), '')) AS unit_codes,
+                string_agg(DISTINCT NULLIF(upper(trim(COALESCE(bu.contract_mode, ''))), ''), ',' ORDER BY NULLIF(upper(trim(COALESCE(bu.contract_mode, ''))), '')) AS contract_modes
+              FROM business_unit_binding b
+              LEFT JOIN business_units bu ON bu.id = b.shop_unit_id
+              WHERE upper(trim(COALESCE(b.status, 'ACTIVE'))) IN ('ACTIVE', 'HISTORY')
+              GROUP BY b.contract_id
+            )
+            """
+        if has_unit_bindings
+        else """
+            , unit_summary AS (
+              SELECT
+                NULL::varchar AS contract_id,
+                NULL::text AS unit_codes,
+                NULL::text AS contract_modes
+              WHERE false
+            )
+            """
+    )
 
     sql = f"""
             WITH cmf_summary AS (
@@ -456,6 +514,8 @@ def _load_contract_list_items(
                 cmf.cmfcontno,
                 string_agg(DISTINCT NULLIF(trim(COALESCE(cmf.cmfmfid, '')), ''), ',' ORDER BY NULLIF(trim(COALESCE(cmf.cmfmfid, '')), '')) AS group_codes,
                 string_agg(DISTINCT NULLIF(trim({cmf_name_expr}), ''), ',' ORDER BY NULLIF(trim({cmf_name_expr}), '')) AS group_names,
+                string_agg(DISTINCT NULLIF(trim({department_code_expr}), ''), ',' ORDER BY NULLIF(trim({department_code_expr}), '')) AS department_codes,
+                string_agg(DISTINCT NULLIF(trim({department_name_expr}), ''), ',' ORDER BY NULLIF(trim({department_name_expr}), '')) AS department_names,
                 string_agg(DISTINCT {scope_entry_expr}, ';;' ORDER BY {scope_entry_expr}) AS scope_entries,
                 string_agg(DISTINCT NULLIF(trim(COALESCE(cmf.cmfbrand, '')), ''), ',' ORDER BY NULLIF(trim(COALESCE(cmf.cmfbrand, '')), '')) AS range_brands,
                 MIN(cmf.cmfeffdate) AS range_start_date,
@@ -474,6 +534,7 @@ def _load_contract_list_items(
               ORDER BY cmfcontno, cmfeffdate DESC NULLS LAST, cmfmfid ASC
             )
             {bd_cte}
+            {unit_cte}
             SELECT
               cm.cmcontno,
               cm.cmstatus,
@@ -498,8 +559,12 @@ def _load_contract_list_items(
               cm.cmauditor,
               cm.cmauditdate,
               cm.cmchar9,
+              unit_summary.unit_codes,
+              unit_summary.contract_modes,
               cmf_summary.group_codes,
               cmf_summary.group_names,
+              cmf_summary.department_codes,
+              cmf_summary.department_names,
               cmf_summary.scope_entries,
               cmf_summary.range_brands,
               cmf_summary.range_start_date,
@@ -509,11 +574,22 @@ def _load_contract_list_items(
               bd_summary.clear_flags,
               bd_summary.bottom_amount,
               bd_summary.bottom_profit,
+              (
+                upper(trim(COALESCE(cm.cmstatus, ''))) = 'Y'
+                AND COALESCE(cm.cmeffdate::date, DATE '1900-01-01') <= CURRENT_DATE
+                AND COALESCE(cm.cmlapdate::date, DATE '9999-12-31') >= CURRENT_DATE
+              ) AS is_current_contract,
+              (COALESCE(unit_summary.contract_modes, '') LIKE '%SHARED%') AS is_shared_contract,
+              (
+                upper(trim(COALESCE(cm.cmstatus, ''))) = 'Q'
+                OR COALESCE(cm.cmlapdate::date, DATE '9999-12-31') < CURRENT_DATE
+              ) AS is_expired_contract,
               {_counter_group_scope_select_sql(has_counter_groups, "COALESCE(cmf_primary.cmfmfid, cm.cmchar9)", "cg")}
             FROM contmain cm
             LEFT JOIN cmf_summary ON cmf_summary.cmfcontno = cm.cmcontno
             LEFT JOIN cmf_primary ON cmf_primary.cmfcontno = cm.cmcontno
             LEFT JOIN bd_summary ON bd_summary.cbcontno = cm.cmcontno
+            LEFT JOIN unit_summary ON upper(trim(COALESCE(unit_summary.contract_id, ''))) = upper(trim(COALESCE(cm.cmcontno, '')))
             {supplier_join}
             {contract_type_join}
             {cg_join}
@@ -536,6 +612,9 @@ def _load_contract_list_items(
                 OR upper(trim(COALESCE(cm.cmsupid, ''))) LIKE upper(:keyword)
                 OR upper(trim(COALESCE(cmf_summary.group_codes, ''))) LIKE upper(:keyword)
                 OR upper(trim(COALESCE(cmf_summary.group_names, ''))) LIKE upper(:keyword)
+                OR upper(trim(COALESCE(cmf_summary.department_codes, ''))) LIKE upper(:keyword)
+                OR upper(trim(COALESCE(cmf_summary.department_names, ''))) LIKE upper(:keyword)
+                OR upper(trim(COALESCE(unit_summary.unit_codes, ''))) LIKE upper(:keyword)
               )
             """
         params["keyword"] = f"%{normalized_keyword}%"
@@ -557,12 +636,35 @@ def _load_contract_list_items(
             """
         params["group_code"] = normalized_group
 
+    normalized_department = (department_code or "").strip()
+    if normalized_department and normalized_department != "ALL":
+        if has_counter_groups:
+            sql += f"""
+                  AND EXISTS (
+                    SELECT 1
+                    FROM contmanaframe cmf_department_filter
+                    {_counter_group_scope_join_sql(has_counter_groups, "cmf_department_filter.cmfmfid", "cg_department_filter")}
+                    WHERE cmf_department_filter.cmfcontno = cm.cmcontno
+                      AND upper(trim(COALESCE(cg_department_filter.department_code, ''))) = upper(trim(:department_code))
+                  )
+                """
+            params["department_code"] = normalized_department
+        else:
+            sql += " AND 1=0"
+
     normalized_supplier = (supplier_code or "").strip()
     if normalized_supplier:
         sql += " AND upper(trim(COALESCE(cm.cmsupid, ''))) = upper(trim(:supplier_code))"
         params["supplier_code"] = normalized_supplier
 
-    sql += " ORDER BY cm.cmeffdate DESC NULLS LAST, cm.cmcontno DESC"
+    sql += """
+        ORDER BY
+          is_expired_contract ASC,
+          is_current_contract DESC,
+          is_shared_contract DESC,
+          cm.cmeffdate DESC NULLS LAST,
+          cm.cmcontno DESC
+    """
     if limit is not None:
         sql += " LIMIT :limit OFFSET :skip"
 
@@ -592,6 +694,7 @@ async def list_contracts(
     keyword: str | None = Query(None, description="合同号/主题/供应商/品牌/柜组搜索"),
     status_filter: str | None = Query(None, alias="status", description="合同状态"),
     group_code: str | None = Query(None, description="柜组编码"),
+    department_code: str | None = Query(None, description="部门编码"),
     supplier_code: str | None = Query(None, description="供应商编码"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -608,6 +711,7 @@ async def list_contracts(
             keyword=keyword,
             status_filter=status_filter,
             group_code=group_code,
+            department_code=department_code,
             supplier_code=supplier_code,
             skip=skip,
             limit=limit,
@@ -624,6 +728,26 @@ async def list_contracts(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取合同台账失败: {str(e)}",
+        )
+
+
+@router.get("/departments")
+async def list_contract_departments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """合同台账部门筛选项：按当前用户合同数据范围返回可选部门。"""
+    try:
+        require_permission(db, current_user, "contract.view")
+        contract_scope = load_business_scope(db, current_user, fallback_resource_code="contract")
+        items = _load_contract_list_items(db, contract_scope, limit=None)
+        return {"items": _contract_department_options_from_items(items)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取合同部门筛选项失败: {str(e)}",
         )
 
 
@@ -1105,6 +1229,7 @@ async def get_contract_detail(
         has_counter_groups = _table_exists(db, "manaframe")
         has_contmaintype = _table_exists(db, "contmaintype")
         has_contbd_xs = _table_exists(db, "contbd_xs")
+        has_codecharge = _table_exists(db, "codecharge")
         if "contmain" not in existing_tables and "contmanaframe" not in existing_tables:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1279,6 +1404,7 @@ async def get_contract_detail(
                   ccleffdate,
                   ccllapdate,
                   cclitemid,
+                  {_charge_item_name_select_sql(has_codecharge)}
                   cclitemunit,
                   cclitemprice,
                   cclsumamount,
@@ -1290,6 +1416,7 @@ async def get_contract_detail(
                   {_counter_group_scope_select_sql(has_counter_groups, "ccl.cclmfid")}
                 FROM contcyclist ccl
                 {_manaframe_join_sql(has_manaframe, "ccl.cclmfid")}
+                {_charge_item_join_sql(has_codecharge, "ccl.cclitemid")}
                 {_counter_group_scope_join_sql(has_counter_groups, "ccl.cclmfid")}
                 WHERE upper(trim(cclcontno)) = upper(trim(:contract_no))
                 ORDER BY cclseqno ASC

@@ -1,114 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, Users, FileText, CreditCard, BarChart3, Settings, ChevronLeft, Truck, HardHat, FileSpreadsheet, Activity, TicketPercent, Shield, CircleDollarSign, Target, Eye, Search } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check, ChevronDown, ChevronLeft, Eye, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { APP_BRAND } from "@/lib/app-branding";
 import { filterAccessibleModuleTree, isAdminUser } from "@/lib/module-permissions";
-
-export interface NavigationItem {
-  id: string;
-  name: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
-  subItems?: NavigationItem[];
-}
-
-export const navigationItems: NavigationItem[] = [
-  {
-    id: "dashboard",
-    name: "经营概览",
-    icon: BarChart3,
-    badge: "主页"
-  },
-  {
-    id: "decoration-management",
-    name: "装修管理",
-    icon: HardHat,
-    subItems: [
-      { id: "decorations", name: "装修项目", icon: HardHat },
-      { id: "decorations-todos", name: "装修待办", icon: FileText }
-    ]
-  },
-  {
-    id: "tenant-management",
-    name: "品牌/商户管理",
-    icon: Users,
-    subItems: [
-      { id: "manaframe", name: "柜位定义", icon: Building2 },
-      { id: "suppliers", name: "供应商管理", icon: Truck }
-    ]
-  },
-  {
-    id: "contract-management",
-    name: "合同管理",
-    icon: FileText,
-    subItems: [
-      { id: "contracts", name: "合同台账", icon: FileText },
-      { id: "contract-unit-bindings", name: "合同柜位绑定", icon: Building2 }
-    ]
-  },
-  {
-    id: "sales-management",
-    name: "销售管理",
-    icon: BarChart3,
-    subItems: [
-      { id: "sales-dashboard", name: "销售看板", icon: BarChart3 },
-      {
-        id: "activity-analysis-group",
-        name: "活动分析",
-        icon: TicketPercent,
-        subItems: [
-          { id: "activity-analysis", name: "通用活动分析", icon: TicketPercent },
-          { id: "voucher-match", name: "凭证匹配", icon: FileSpreadsheet },
-          { id: "star-diamond-analysis", name: "中心星钻会员", icon: Users },
-        ],
-      },
-      {
-        id: "sales-reports",
-        name: "报表",
-        icon: BarChart3,
-        subItems: [
-          { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
-          { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
-        ],
-      },
-    ],
-  },
-  {
-    id: "financial-management",
-    name: "财务管理",
-    icon: CreditCard,
-    subItems: [
-      { id: "merchant-planning", name: "招商规划", icon: Target },
-      { id: "revenue-map", name: "收益地图", icon: CircleDollarSign },
-      { id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet },
-    ]
-  },
-  {
-    id: "system-management",
-    name: "系统管理",
-    icon: Settings,
-    subItems: [
-      {
-        id: "floor-base-definitions",
-        name: "楼层基础定义",
-        icon: Building2,
-        subItems: [
-          { id: "floors", name: "楼层定义", icon: Building2 },
-          { id: "base-maps", name: "底图管理", icon: Building2 },
-          { id: "unit-map-versions", name: "柜位图版本", icon: Building2 },
-          { id: "business-units", name: "经营单元设置", icon: Building2 },
-          { id: "floor-area-report", name: "楼层面积报表", icon: BarChart3 },
-        ],
-      },
-      { id: "user-role-scope", name: "用户角色及范围定义", icon: Users },
-      { id: "wecom-rules", name: "企微授权规则", icon: Shield },
-      { id: "audit-logs", name: "日志查询", icon: Activity }
-    ]
-  }
-];
+import { filterAdminViewUsers, getNextAdminViewSearchState } from "@/lib/admin-view-search";
+import { navigationItems } from "@/lib/navigation-items";
 
 interface NavigationSidebarProps {
   activeModule?: string;
@@ -120,7 +21,10 @@ interface NavigationSidebarProps {
 
 export default function NavigationSidebar({ activeModule = "dashboard", onModuleChange, isCollapsed = false, onToggleCollapse, className }: NavigationSidebarProps) {
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
-  const [adminViewSearch, setAdminViewSearch] = useState("");
+  const [adminViewSearchInput, setAdminViewSearchInput] = useState("");
+  const [adminViewSearchKeyword, setAdminViewSearchKeyword] = useState("");
+  const [adminViewOpen, setAdminViewOpen] = useState(false);
+  const adminViewSearchComposingRef = useRef(false);
   const { user, menuUser, adminViewUsers, adminViewUser, adminViewLoading, setAdminViewUserId } = useAuth();
   const visibleNavigationItems = useMemo(() => filterAccessibleModuleTree(navigationItems, menuUser), [menuUser]);
   const canUseAdminView = isAdminUser(user);
@@ -129,18 +33,31 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
     [adminViewUsers, user?.user_id],
   );
   const filteredAdminViewOptions = useMemo(() => {
-    const keyword = adminViewSearch.trim().toLowerCase();
-    if (!keyword) return adminViewOptions;
-    return adminViewOptions.filter((candidate) =>
-      [
-        candidate.username,
-        candidate.real_name,
-        candidate.employee_no,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(keyword)),
-    );
-  }, [adminViewOptions, adminViewSearch]);
+    return filterAdminViewUsers(adminViewOptions, adminViewSearchKeyword);
+  }, [adminViewOptions, adminViewSearchKeyword]);
+
+  const selectedAdminViewLabel = adminViewUser
+    ? adminViewUser.real_name || adminViewUser.username
+    : "退出代看，查看管理员菜单";
+
+  const handleAdminViewSearchChange = (value: string) => {
+    setAdminViewSearchKeyword((currentKeyword) => {
+      const next = getNextAdminViewSearchState({
+        currentKeyword,
+        inputValue: value,
+        isComposing: adminViewSearchComposingRef.current,
+      });
+      setAdminViewSearchInput(next.inputText);
+      return next.keyword;
+    });
+  };
+
+  const handleAdminViewSelect = (userId: number | null) => {
+    setAdminViewUserId(userId);
+    setAdminViewOpen(false);
+    setAdminViewSearchInput("");
+    setAdminViewSearchKeyword("");
+  };
 
   const toggleExpanded = (itemId: string) => {
     setExpandedItems(prev => 
@@ -196,10 +113,10 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-white" data-testid="text-system-title">
-              百货柜位管理系统
+              {APP_BRAND.zhName}
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              Department Store Management
+              {APP_BRAND.enName}
             </p>
           </div>
           {onToggleCollapse && (
@@ -309,40 +226,78 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
               <Eye className="h-3.5 w-3.5" />
               <span>管理员代看</span>
             </div>
-            <Select
-              value={adminViewUser ? String(adminViewUser.user_id) : "__self__"}
-              onValueChange={(value) => setAdminViewUserId(value === "__self__" ? null : Number(value))}
-              disabled={adminViewLoading}
-            >
-              <SelectTrigger className="h-9 border-slate-700 bg-slate-950 text-xs text-slate-100">
-                <SelectValue placeholder={adminViewLoading ? "加载用户..." : "选择代看用户"} />
-              </SelectTrigger>
-              <SelectContent>
-                <div className="sticky top-0 z-10 bg-white p-2">
+            <Popover open={adminViewOpen} onOpenChange={setAdminViewOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={adminViewLoading}
+                  className="h-9 w-full justify-between border-slate-700 bg-slate-950 px-3 text-left text-xs font-normal text-slate-100 hover:bg-slate-900 hover:text-white disabled:opacity-60"
+                  aria-label="选择代看用户"
+                >
+                  <span className="truncate">{adminViewLoading ? "加载用户..." : selectedAdminViewLabel}</span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[var(--radix-popover-trigger-width)] border border-slate-200 bg-white p-0 text-slate-900 shadow-xl"
+              >
+                <div className="border-b border-slate-200 p-2">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                     <Input
-                      value={adminViewSearch}
-                      onChange={(event) => setAdminViewSearch(event.target.value)}
-                      onKeyDown={(event) => event.stopPropagation()}
+                      value={adminViewSearchInput}
+                      onChange={(event) => handleAdminViewSearchChange(event.target.value)}
+                      onCompositionStart={() => {
+                        adminViewSearchComposingRef.current = true;
+                      }}
+                      onCompositionEnd={(event) => {
+                        adminViewSearchComposingRef.current = false;
+                        handleAdminViewSearchChange(event.currentTarget.value);
+                      }}
                       placeholder="搜索用户名/姓名"
                       className="h-8 pl-8 text-xs"
                     />
                   </div>
                 </div>
-                <SelectItem value="__self__">退出代看，查看管理员菜单</SelectItem>
-                {filteredAdminViewOptions.map((candidate) => (
-                  <SelectItem key={candidate.user_id} value={String(candidate.user_id)}>
-                    {candidate.real_name || candidate.username}
-                    {candidate.real_name && candidate.username ? ` (${candidate.username})` : ""}
-                    {candidate.role_names?.length ? ` / ${candidate.role_names.join("、")}` : ""}
-                  </SelectItem>
-                ))}
-                {!filteredAdminViewOptions.length ? (
-                  <div className="px-8 py-2 text-xs text-slate-500">没有匹配用户</div>
-                ) : null}
-              </SelectContent>
-            </Select>
+                <div className="max-h-64 overflow-y-auto p-1">
+                  <button
+                    type="button"
+                    onClick={() => handleAdminViewSelect(null)}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-xs text-slate-900 outline-none hover:bg-slate-100 focus:bg-slate-100"
+                  >
+                    <Check className={cn("h-3.5 w-3.5", !adminViewUser ? "opacity-100" : "opacity-0")} />
+                    <span className="truncate">退出代看，查看管理员菜单</span>
+                  </button>
+                  {filteredAdminViewOptions.map((candidate) => {
+                    const label = candidate.real_name || candidate.username;
+                    const meta = [
+                      candidate.real_name && candidate.username ? candidate.username : null,
+                      candidate.role_names?.length ? candidate.role_names.join("、") : null,
+                    ].filter(Boolean).join(" / ");
+
+                    return (
+                      <button
+                        key={candidate.user_id}
+                        type="button"
+                        onClick={() => handleAdminViewSelect(candidate.user_id)}
+                        className="flex w-full items-start gap-2 rounded-sm px-2 py-2 text-left text-xs text-slate-900 outline-none hover:bg-slate-100 focus:bg-slate-100"
+                      >
+                        <Check className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", adminViewUser?.user_id === candidate.user_id ? "opacity-100" : "opacity-0")} />
+                        <span className="min-w-0">
+                          <span className="block truncate">{label}</span>
+                          {meta ? <span className="block truncate text-[11px] text-slate-500">{meta}</span> : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {!filteredAdminViewOptions.length ? (
+                    <div className="px-8 py-3 text-xs text-slate-500">没有匹配用户</div>
+                  ) : null}
+                </div>
+              </PopoverContent>
+            </Popover>
             {adminViewUser ? (
               <div className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1.5 text-[11px] leading-4 text-amber-100">
                 菜单和数据范围按 {adminViewUser.real_name || adminViewUser.username} 计算，登录身份仍为管理员。

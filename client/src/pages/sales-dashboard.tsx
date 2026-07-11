@@ -11,6 +11,14 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, apiPost } from "@/lib/api";
 import {
+  buildProductTicketParams,
+  getReceiptProductDisplay,
+  getDepartmentDrilldownTab,
+  getGroupDrilldownTab,
+  isCenterCosmeticsRetailPriceScope,
+  isSupermarketDepartment,
+} from "@/lib/sales-dashboard-drilldown";
+import {
   exportDepartmentsToExcel,
   exportDepartmentGoodsToExcel,
   exportDepartmentSuppliersToExcel,
@@ -64,6 +72,7 @@ type GroupSummary = {
   ticket_count: number;
   line_count: number;
   quantity: number;
+  priced_sales_amount: number;
   gross_sales: number;
   effective_sales: number;
   net_profit: number;
@@ -125,6 +134,8 @@ type TicketSummary = {
   line_count: number;
   /** 商品件数：salegoodslist 汇总 sglsl */
   quantity: number;
+  /** 零售价：salegoodslist 汇总 sglsjje */
+  priced_sales_amount: number;
   /** 销售收入：salegoodslist 汇总 sglxssr */
   effective_sales: number;
   /** 毛利：salegoodslist 汇总 sgln2 */
@@ -453,12 +464,6 @@ function isUnassignedDepartmentRow(d: DepartmentSummary): boolean {
   return code === "" && (name === "未归属部门" || name === "");
 }
 
-function isSupermarketDepartment(d: DepartmentSummary): boolean {
-  const code = String(d.department_code ?? "").trim();
-  const name = String(d.department_name ?? "").trim();
-  return /超市|生鲜/.test(name) || /^601010[46]/.test(code);
-}
-
 const todayDateString = () => {
   const now = new Date();
   const timezoneOffset = now.getTimezoneOffset() * 60000;
@@ -483,12 +488,14 @@ export default function SalesDashboardPage() {
   const [selectedStore, setSelectedStore] = useState<StoreSummary | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSummary | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GroupSummary | null>(null);
+  const [selectedDepartmentProduct, setSelectedDepartmentProduct] = useState<DepartmentGoodsSummary | null>(null);
   const [selectedBillno, setSelectedBillno] = useState<string | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<SalesAnalysisResult | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   /** 小票列表用本期日期或上年同期日期（与「同期小票数」下钻一致） */
   const [ticketsViewMode, setTicketsViewMode] = useState<"current" | "prior">("current");
+  const showPricedSalesAmount = isCenterCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
 
   const commonParams = useMemo(
     () => ({
@@ -563,6 +570,7 @@ export default function SalesDashboardPage() {
       selectedStore?.store_id,
       selectedDepartment?.department_code,
       groupsUnassigned,
+      selectedGroup?.group_code,
       departmentProductKeyword,
       departmentProductSupplierCode,
     ],
@@ -573,6 +581,7 @@ export default function SalesDashboardPage() {
           store_id: selectedStore?.store_id,
           department_code: groupsUnassigned ? undefined : selectedDepartment?.department_code,
           unassigned_department: groupsUnassigned ? true : undefined,
+          group_code: selectedGroup?.group_code,
           supplier_code: departmentProductSupplierCode || undefined,
           keyword: departmentProductKeyword,
           limit: 500,
@@ -604,10 +613,26 @@ export default function SalesDashboardPage() {
     enabled: activeTab === "department-products" && departmentProductView === "suppliers" && Boolean(selectedDepartment),
   });
 
+  const selectedProductTicketParams = useMemo(
+    () => buildProductTicketParams(selectedDepartmentProduct),
+    [selectedDepartmentProduct],
+  );
+
   const ticketsQuery = useQuery<TicketSummary[]>({
-    queryKey: ["/api/sales/groups/tickets", selectedGroup?.group_code, ticketsQueryParams, ticketsViewMode],
+    queryKey: [
+      "/api/sales/groups/tickets",
+      selectedGroup?.group_code,
+      ticketsQueryParams,
+      ticketsViewMode,
+      selectedProductTicketParams,
+    ],
     queryFn: () =>
-      apiGet(`/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets${buildQuery(ticketsQueryParams)}`),
+      apiGet(
+        `/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets${buildQuery({
+          ...ticketsQueryParams,
+          ...selectedProductTicketParams,
+        })}`,
+      ),
     enabled: Boolean(selectedGroup?.group_code),
   });
 
@@ -819,6 +844,7 @@ export default function SalesDashboardPage() {
       (acc, row) => ({
         ticket_count: acc.ticket_count + Number(row.ticket_count || 0),
         quantity: acc.quantity + Number(row.quantity || 0),
+        priced_sales_amount: acc.priced_sales_amount + Number(row.priced_sales_amount || 0),
         effective_sales: acc.effective_sales + Number(row.effective_sales || 0),
         net_profit: acc.net_profit + Number(row.net_profit || 0),
         same_period_ticket_count: acc.same_period_ticket_count + Number(row.same_period_ticket_count || 0),
@@ -828,6 +854,7 @@ export default function SalesDashboardPage() {
       {
         ticket_count: 0,
         quantity: 0,
+        priced_sales_amount: 0,
         effective_sales: 0,
         net_profit: 0,
         same_period_ticket_count: 0,
@@ -911,7 +938,7 @@ export default function SalesDashboardPage() {
     const rows = ticketsQuery.data ?? [];
     return rows.reduce(
       (acc, row) => ({
-        quantity: acc.quantity + Number(row.quantity || 0),
+        priced_sales_amount: acc.priced_sales_amount + Number(row.priced_sales_amount || 0),
         effective_sales: acc.effective_sales + Number(row.effective_sales || 0),
         net_profit: acc.net_profit + Number(row.net_profit || 0),
         authorized_discount: acc.authorized_discount + Number(row.authorized_discount ?? 0),
@@ -922,7 +949,7 @@ export default function SalesDashboardPage() {
           acc.birthday_month_member_point + Number(row.birthday_month_member_point ?? 0),
       }),
       {
-        quantity: 0,
+        priced_sales_amount: 0,
         effective_sales: 0,
         net_profit: 0,
         authorized_discount: 0,
@@ -953,6 +980,7 @@ export default function SalesDashboardPage() {
     setSelectedStore(store);
     setSelectedDepartment(null);
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setDepartmentProductSupplierCode(null);
     setActiveTab("departments");
   };
@@ -960,13 +988,39 @@ export default function SalesDashboardPage() {
   const drillToDepartment = (department: DepartmentSummary) => {
     setSelectedDepartment(department);
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setDepartmentProductSupplierCode(null);
     setDepartmentProductView("goods");
-    setActiveTab(isSupermarketDepartment(department) ? "department-products" : "groups");
+    setActiveTab(getDepartmentDrilldownTab(department));
   };
 
   const drillToGroup = (group: GroupSummary) => {
     setSelectedGroup(group);
+    setSelectedDepartmentProduct(null);
+    setTicketsViewMode("current");
+    setDepartmentProductView("goods");
+    setActiveTab(getGroupDrilldownTab(selectedDepartment));
+  };
+
+  const drillToDepartmentProduct = (product: DepartmentGoodsSummary) => {
+    if (product.group_code && (!selectedGroup || selectedGroup.group_code !== product.group_code)) {
+      setSelectedGroup({
+        group_code: product.group_code,
+        group_name: product.group_name,
+        department_code: selectedDepartment?.department_code,
+        department_name: selectedDepartment?.department_name,
+        ticket_count: 0,
+        line_count: 0,
+        quantity: 0,
+        priced_sales_amount: 0,
+        gross_sales: 0,
+        effective_sales: 0,
+        net_profit: 0,
+        net_margin: 0,
+        ticket_margin: 0,
+      });
+    }
+    setSelectedDepartmentProduct(product);
     setTicketsViewMode("current");
     setActiveTab("tickets");
   };
@@ -975,6 +1029,7 @@ export default function SalesDashboardPage() {
     event.stopPropagation();
     if (!Number(group.same_period_ticket_count ?? 0)) return;
     setSelectedGroup(group);
+    setSelectedDepartmentProduct(null);
     setTicketsViewMode("prior");
     setActiveTab("tickets");
   };
@@ -983,6 +1038,7 @@ export default function SalesDashboardPage() {
     setSelectedStore(null);
     setSelectedDepartment(null);
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setDepartmentProductSupplierCode(null);
     setTicketsViewMode("current");
     setActiveTab("stores");
@@ -992,6 +1048,7 @@ export default function SalesDashboardPage() {
     setSelectedStore(null);
     setSelectedDepartment(null);
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setDepartmentProductSupplierCode(null);
     setTicketsViewMode("current");
     setActiveTab("stores");
@@ -1000,6 +1057,7 @@ export default function SalesDashboardPage() {
   const backToDepartments = () => {
     setSelectedDepartment(null);
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setDepartmentProductSupplierCode(null);
     setTicketsViewMode("current");
     setActiveTab("departments");
@@ -1007,8 +1065,19 @@ export default function SalesDashboardPage() {
 
   const backToGroups = () => {
     setSelectedGroup(null);
+    setSelectedDepartmentProduct(null);
     setTicketsViewMode("current");
     setActiveTab("groups");
+  };
+
+  const backFromTickets = () => {
+    setTicketsViewMode("current");
+    if (selectedDepartmentProduct && isSupermarketDepartment(selectedDepartment)) {
+      setSelectedDepartmentProduct(null);
+      setActiveTab("department-products");
+      return;
+    }
+    backToGroups();
   };
 
   const handleExportStores = () => {
@@ -1054,7 +1123,9 @@ export default function SalesDashboardPage() {
       return;
     }
     try {
-      exportGroupsToExcel(rows, currentStartDate, currentEndDate);
+      exportGroupsToExcel(rows, currentStartDate, currentEndDate, {
+        includePricedSalesAmount: showPricedSalesAmount,
+      });
       toast({ title: "已导出 Excel" });
     } catch (err) {
       toast({
@@ -1165,6 +1236,7 @@ export default function SalesDashboardPage() {
         groupCode: selectedGroup.group_code,
         groupName: selectedGroup.group_name,
         viewMode: ticketsViewMode,
+        includePricedSalesAmount: showPricedSalesAmount,
       });
       toast({ title: "已导出 Excel" });
     } catch (err) {
@@ -1294,8 +1366,19 @@ export default function SalesDashboardPage() {
         {selectedGroup && (
           <>
             <ChevronRight className="h-4 w-4 text-slate-400" />
-            <button className="font-medium text-slate-900 hover:text-blue-700" onClick={() => setActiveTab("tickets")}>
+            <button
+              className="font-medium text-slate-900 hover:text-blue-700"
+              onClick={() => setActiveTab(getGroupDrilldownTab(selectedDepartment))}
+            >
               {selectedGroup.group_name || selectedGroup.group_code}
+            </button>
+          </>
+        )}
+        {selectedDepartmentProduct && (
+          <>
+            <ChevronRight className="h-4 w-4 text-slate-400" />
+            <button className="font-medium text-slate-900 hover:text-blue-700" onClick={() => setActiveTab("tickets")}>
+              {selectedDepartmentProduct.goods_name || selectedDepartmentProduct.goods_code}
             </button>
           </>
         )}
@@ -1476,6 +1559,7 @@ export default function SalesDashboardPage() {
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {selectedStore && <Badge variant="outline">{selectedStore.store_name || selectedStore.store_id}</Badge>}
                   {selectedDepartment && <Badge variant="outline">{selectedDepartment.department_name}</Badge>}
+                  {selectedGroup && <Badge variant="outline">{selectedGroup.group_name || selectedGroup.group_code}</Badge>}
                   {departmentProductSupplierCode && (
                     <Badge variant="secondary" className="font-normal">
                       供应商 {departmentProductSupplierCode}
@@ -1489,6 +1573,7 @@ export default function SalesDashboardPage() {
                     size="sm"
                     onClick={() => {
                       setSelectedGroup(null);
+                      setSelectedDepartmentProduct(null);
                       setActiveTab("groups");
                     }}
                   >
@@ -1646,7 +1731,11 @@ export default function SalesDashboardPage() {
                       />
                     ) : (
                       (departmentGoodsQuery.data ?? []).map((row) => (
-                        <TableRow key={`${row.group_code}-${row.goods_code}-${row.barcode}-${row.supplier_code}-${row.operation_method}`} className="hover:bg-slate-50">
+                        <TableRow
+                          key={`${row.group_code}-${row.goods_code}-${row.barcode}-${row.supplier_code}-${row.operation_method}`}
+                          className="cursor-pointer hover:bg-slate-50"
+                          onClick={() => drillToDepartmentProduct(row)}
+                        >
                           <TableCell className="py-2">
                             <div className="truncate font-medium" title={row.goods_name || row.goods_code}>{row.goods_name || row.goods_code}</div>
                             <div className="text-xs text-slate-500">{row.goods_code}{row.barcode ? ` / ${row.barcode}` : ""}</div>
@@ -1748,6 +1837,7 @@ export default function SalesDashboardPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>柜组</TableHead>
+                    {showPricedSalesAmount && <TableHead className="text-right">零售价</TableHead>}
                     <TableHead className="text-right">本期销售收入</TableHead>
                     <TableHead className="text-right">同期销售收入</TableHead>
                     <TableHead className="text-right">销售收入同比</TableHead>
@@ -1761,7 +1851,7 @@ export default function SalesDashboardPage() {
                 <TableBody>
                   {groupsInitialLoading || (groupsQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
-                      colSpan={9}
+                      colSpan={showPricedSalesAmount ? 10 : 9}
                       loading={groupsInitialLoading}
                       emptyText="当前筛选条件下暂无柜组销售数据。"
                     />
@@ -1772,6 +1862,9 @@ export default function SalesDashboardPage() {
                           <div className="font-medium">{row.group_name || row.group_code}</div>
                           <div className="text-xs text-slate-500">{row.group_code}</div>
                         </TableCell>
+                        {showPricedSalesAmount && (
+                          <TableCell className="py-2 text-right">{money(row.priced_sales_amount)}</TableCell>
+                        )}
                         <TableCell className="py-2 text-right">{money(row.effective_sales)}</TableCell>
                         <TableCell className="py-2 text-right">{money(row.same_period_effective_sales)}</TableCell>
                         <SalesYoYTableCell effectiveSales={Number(row.effective_sales)} samePeriodSales={Number(row.same_period_effective_sales ?? 0)} />
@@ -1800,6 +1893,11 @@ export default function SalesDashboardPage() {
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold">合计</TableCell>
+                      {showPricedSalesAmount && (
+                        <TableCell className="py-2 text-right font-semibold tabular-nums">
+                          {money(groupsTableTotals.priced_sales_amount)}
+                        </TableCell>
+                      )}
                       <TableCell className="py-2 text-right font-semibold tabular-nums">{money(groupsTableTotals.effective_sales)}</TableCell>
                       <TableCell className="py-2 text-right font-semibold tabular-nums">{money(groupsTableTotals.same_period_effective_sales)}</TableCell>
                       <SalesYoYTableCell
@@ -1829,10 +1927,20 @@ export default function SalesDashboardPage() {
                   {ticketsViewMode === "prior" && (
                     <span className="ml-2 text-base font-normal text-amber-700">（上年同期明细）</span>
                   )}
+                  {selectedDepartmentProduct && (
+                    <span className="ml-2 text-base font-normal text-slate-600">
+                      · {selectedDepartmentProduct.goods_name || selectedDepartmentProduct.goods_code}
+                    </span>
+                  )}
                 </CardTitle>
                 {selectedGroup && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{selectedGroup.group_code}</Badge>
+                    {selectedDepartmentProduct && (
+                      <Badge variant="secondary" className="font-normal">
+                        商品 {selectedDepartmentProduct.goods_code}
+                      </Badge>
+                    )}
                     {ticketsViewMode === "prior" && (
                       <Badge variant="secondary" className="font-normal">
                         {priorStartDate} ~ {priorEndDate}
@@ -1843,8 +1951,8 @@ export default function SalesDashboardPage() {
                         查看本期小票
                       </Button>
                     )}
-                    <Button variant="ghost" size="sm" onClick={backToGroups}>
-                      返回柜组
+                    <Button variant="ghost" size="sm" onClick={backFromTickets}>
+                      {selectedDepartmentProduct && isSupermarketDepartment(selectedDepartment) ? "返回商品" : "返回柜组"}
                     </Button>
                   </div>
                 )}
@@ -1865,7 +1973,7 @@ export default function SalesDashboardPage() {
                     <TableHead>销售类型</TableHead>
                     <TableHead>小票号</TableHead>
                     <TableHead>收银员</TableHead>
-                    <TableHead className="text-right">商品数</TableHead>
+                    {showPricedSalesAmount && <TableHead className="text-right">零售价</TableHead>}
                     <TableHead className="text-right">销售收入</TableHead>
                     <TableHead className="text-right">毛利</TableHead>
                     <TableHead className="text-right">毛利率</TableHead>
@@ -1879,7 +1987,7 @@ export default function SalesDashboardPage() {
                 <TableBody>
                   {ticketsInitialLoading || (ticketsQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
-                      colSpan={14}
+                      colSpan={showPricedSalesAmount ? 14 : 13}
                       loading={ticketsInitialLoading}
                       emptyText={
                         selectedGroup
@@ -1895,7 +2003,11 @@ export default function SalesDashboardPage() {
                         <TableCell className="py-2">{row.transaction_type?.trim() || "-"}</TableCell>
                         <TableCell className="py-2">{row.invoice_no || "-"}</TableCell>
                         <TableCell className="py-2">{row.cashier || "-"}</TableCell>
-                        <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">{number(row.quantity)}</TableCell>
+                        {showPricedSalesAmount && (
+                          <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">
+                            {money(row.priced_sales_amount)}
+                          </TableCell>
+                        )}
                         <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">{money(row.effective_sales)}</TableCell>
                         <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">{money(row.net_profit)}</TableCell>
                         <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">{percentRatio(row.ticket_margin)}%</TableCell>
@@ -1914,7 +2026,11 @@ export default function SalesDashboardPage() {
                       <TableCell className="py-2 font-semibold" colSpan={5}>
                         合计
                       </TableCell>
-                      <TableCell className="py-2 text-right font-semibold tabular-nums">{number(ticketsTableTotals.quantity)}</TableCell>
+                      {showPricedSalesAmount && (
+                        <TableCell className="py-2 text-right font-semibold tabular-nums">
+                          {money(ticketsTableTotals.priced_sales_amount)}
+                        </TableCell>
+                      )}
                       <TableCell className="py-2 text-right font-semibold tabular-nums">{money(ticketsTableTotals.effective_sales)}</TableCell>
                       <TableCell className="py-2 text-right font-semibold tabular-nums">{money(ticketsTableTotals.net_profit)}</TableCell>
                       <TableCell className="py-2 text-right font-semibold tabular-nums">{percentRatio(ticketsTableMarginTotal)}%</TableCell>
@@ -2064,20 +2180,25 @@ export default function SalesDashboardPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(ticketDetailQuery.data?.goods ?? []).map((row, index) => (
-                  <TableRow key={index}>
-                    <TableCell className="py-2">
-                      <div className="font-medium">{String(row.name || row.goods_name || row.goods_code || "-")}</div>
-                      <div className="text-xs text-slate-500">{String(row.barcode || row.code || "")}</div>
-                    </TableCell>
-                    <TableCell className="py-2">{String(row.group_code || "-")}</TableCell>
-                    <TableCell className="py-2 text-right">{number(Number(row.sl ?? row.quantity ?? 0))}</TableCell>
-                    <TableCell className="py-2 text-right">{money(Number(row.hjje ?? row.effective_sales ?? 0))}</TableCell>
-                    <TableCell className="py-2 text-right">{money(Number(row.cost_amount ?? 0))}</TableCell>
-                    <TableCell className="py-2 text-right">{money(Number(row.net_profit ?? 0))}</TableCell>
-                    <TableCell className="py-2 text-right">{money(Number(row.hjzk ?? 0))}</TableCell>
-                  </TableRow>
-                ))}
+                {(ticketDetailQuery.data?.goods ?? []).map((row, index) => {
+                  const productDisplay = getReceiptProductDisplay(row);
+                  return (
+                    <TableRow key={index}>
+                      <TableCell className="py-2">
+                        <div className="font-medium">{productDisplay.name}</div>
+                        {productDisplay.identifiers.map((identifier) => (
+                          <div key={identifier} className="text-xs text-slate-500">{identifier}</div>
+                        ))}
+                      </TableCell>
+                      <TableCell className="py-2">{String(row.group_code || "-")}</TableCell>
+                      <TableCell className="py-2 text-right">{number(Number(row.sl ?? row.quantity ?? 0))}</TableCell>
+                      <TableCell className="py-2 text-right">{money(Number(row.hjje ?? row.effective_sales ?? 0))}</TableCell>
+                      <TableCell className="py-2 text-right">{money(Number(row.cost_amount ?? 0))}</TableCell>
+                      <TableCell className="py-2 text-right">{money(Number(row.net_profit ?? 0))}</TableCell>
+                      <TableCell className="py-2 text-right">{money(Number(row.hjzk ?? 0))}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             {(ticketDetailQuery.data?.payments?.length ?? 0) > 0 && (

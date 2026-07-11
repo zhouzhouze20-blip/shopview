@@ -197,6 +197,7 @@ export type GroupSummaryExport = {
   department_name?: string | null;
   ticket_count: number;
   quantity: number;
+  priced_sales_amount: number;
   effective_sales: number;
   net_profit: number;
   ticket_margin: number;
@@ -207,8 +208,11 @@ export type GroupSummaryExport = {
   same_period_margin?: number;
 };
 
-export function exportGroupsToExcel(rows: GroupSummaryExport[], startDate: string, endDate: string): void {
-  const header = [
+export function buildGroupExportTable(
+  rows: GroupSummaryExport[],
+  includePricedSalesAmount = false,
+): (string | number)[][] {
+  const header: (string | number)[] = [
     "柜组名称",
     "柜组编码",
     "本期销售收入",
@@ -220,31 +224,36 @@ export function exportGroupsToExcel(rows: GroupSummaryExport[], startDate: strin
     "同期毛利率(%)",
     "同期小票数",
   ];
-  const body = rows.map((row) => [
-    row.group_name || row.group_code,
-    row.group_code,
-    n(row.effective_sales),
-    n(row.same_period_effective_sales),
-    yoyDisplay(n(row.effective_sales), n(row.same_period_effective_sales)),
-    n(row.net_profit),
-    n(row.same_period_net_profit),
-    marginPctDisplay(row.ticket_margin ?? row.net_margin),
-    marginPctDisplay(row.same_period_margin),
-    n(row.same_period_ticket_count),
-  ]);
+  if (includePricedSalesAmount) header.splice(2, 0, "零售价");
 
+  let totPriced = 0;
   let totEff = 0;
   let totSameEff = 0;
   let totProfit = 0;
   let totSameTicket = 0;
   let totSameProfit = 0;
-  for (const row of rows) {
+  const body = rows.map((row) => {
+    totPriced += n(row.priced_sales_amount);
     totEff += n(row.effective_sales);
     totSameEff += n(row.same_period_effective_sales);
     totProfit += n(row.net_profit);
     totSameTicket += n(row.same_period_ticket_count);
     totSameProfit += n(row.same_period_net_profit);
-  }
+    const values: (string | number)[] = [
+      row.group_name || row.group_code,
+      row.group_code,
+      n(row.effective_sales),
+      n(row.same_period_effective_sales),
+      yoyDisplay(n(row.effective_sales), n(row.same_period_effective_sales)),
+      n(row.net_profit),
+      n(row.same_period_net_profit),
+      marginPctDisplay(row.ticket_margin ?? row.net_margin),
+      marginPctDisplay(row.same_period_margin),
+      n(row.same_period_ticket_count),
+    ];
+    if (includePricedSalesAmount) values.splice(2, 0, n(row.priced_sales_amount));
+    return values;
+  });
   const marginTotal = totEff > 0 ? (totProfit / totEff) * 100 : 0;
   const sameMarginTotal = totSameEff > 0 ? (totSameProfit / totSameEff) * 100 : 0;
   const footer: (string | number)[] = [
@@ -259,8 +268,21 @@ export function exportGroupsToExcel(rows: GroupSummaryExport[], startDate: strin
     Math.round(sameMarginTotal * 100) / 100,
     totSameTicket,
   ];
+  if (includePricedSalesAmount) footer.splice(2, 0, totPriced);
+  return [header, ...body, footer];
+}
 
-  writeWorkbook("柜组销售汇总", [header, ...body, footer], buildFilename("柜组", startDate, endDate));
+export function exportGroupsToExcel(
+  rows: GroupSummaryExport[],
+  startDate: string,
+  endDate: string,
+  options: { includePricedSalesAmount?: boolean } = {},
+): void {
+  writeWorkbook(
+    "柜组销售汇总",
+    buildGroupExportTable(rows, Boolean(options.includePricedSalesAmount)),
+    buildFilename("柜组", startDate, endDate),
+  );
 }
 
 // --- 部门商品分析 ---
@@ -449,6 +471,7 @@ export type TicketSummaryExport = {
   invoice_no?: string | number | null;
   cashier?: string | null;
   quantity: number;
+  priced_sales_amount: number;
   effective_sales: number;
   net_profit: number;
   ticket_margin: number;
@@ -461,24 +484,16 @@ export type TicketSummaryExport = {
   transaction_type?: string | null;
 };
 
-export function exportTicketsToExcel(
+export function buildTicketExportTable(
   rows: TicketSummaryExport[],
-  options: {
-    startDate: string;
-    endDate: string;
-    groupCode: string;
-    groupName?: string | null;
-    viewMode: "current" | "prior";
-  },
-): void {
-  const modeLabel = options.viewMode === "prior" ? "上年同期" : "本期";
-  const header = [
+  includePricedSalesAmount = false,
+): (string | number)[][] {
+  const header: (string | number)[] = [
     "单据号",
     "日期",
     "销售类型",
     "小票号",
     "收银员",
-    "商品数",
     "销售收入",
     "毛利",
     "毛利率(%)",
@@ -488,24 +503,9 @@ export function exportTicketsToExcel(
     "消费加积分",
     "生日月会员加积分",
   ];
-  const body = rows.map((row) => [
-    row.billno,
-    String(row.sale_datetime || row.sale_date || "").trim() || "—",
-    String(row.transaction_type || "").trim() || "—",
-    row.invoice_no != null && `${row.invoice_no}` !== "" ? row.invoice_no : "—",
-    row.cashier || "—",
-    n(row.quantity),
-    n(row.effective_sales),
-    n(row.net_profit),
-    marginPctDisplay(row.ticket_margin),
-    n(row.authorized_discount),
-    n(row.mzk),
-    n(row.lq),
-    n(row.consumption_point),
-    n(row.birthday_month_member_point),
-  ]);
+  if (includePricedSalesAmount) header.splice(5, 0, "零售价");
 
-  let sumQty = 0;
+  let sumPriced = 0;
   let sumSales = 0;
   let sumProfit = 0;
   let sumAuthZk = 0;
@@ -513,8 +513,8 @@ export function exportTicketsToExcel(
   let sumLq = 0;
   let sumConsumptionPoint = 0;
   let sumBirthdayMonthMemberPoint = 0;
-  for (const row of rows) {
-    sumQty += n(row.quantity);
+  const body = rows.map((row) => {
+    sumPriced += n(row.priced_sales_amount);
     sumSales += n(row.effective_sales);
     sumProfit += n(row.net_profit);
     sumAuthZk += n(row.authorized_discount);
@@ -522,7 +522,24 @@ export function exportTicketsToExcel(
     sumLq += n(row.lq);
     sumConsumptionPoint += n(row.consumption_point);
     sumBirthdayMonthMemberPoint += n(row.birthday_month_member_point);
-  }
+    const values: (string | number)[] = [
+      row.billno,
+      String(row.sale_datetime || row.sale_date || "").trim() || "—",
+      String(row.transaction_type || "").trim() || "—",
+      row.invoice_no != null && `${row.invoice_no}` !== "" ? row.invoice_no : "—",
+      row.cashier || "—",
+      n(row.effective_sales),
+      n(row.net_profit),
+      marginPctDisplay(row.ticket_margin),
+      n(row.authorized_discount),
+      n(row.mzk),
+      n(row.lq),
+      n(row.consumption_point),
+      n(row.birthday_month_member_point),
+    ];
+    if (includePricedSalesAmount) values.splice(5, 0, n(row.priced_sales_amount));
+    return values;
+  });
   const marginAll = sumSales > 0 ? (sumProfit / sumSales) * 100 : 0;
   const footer: (string | number)[] = [
     "合计",
@@ -530,7 +547,6 @@ export function exportTicketsToExcel(
     "",
     "",
     "",
-    sumQty,
     sumSales,
     sumProfit,
     Math.round(marginAll * 100) / 100,
@@ -540,6 +556,22 @@ export function exportTicketsToExcel(
     sumConsumptionPoint,
     sumBirthdayMonthMemberPoint,
   ];
+  if (includePricedSalesAmount) footer.splice(5, 0, sumPriced);
+  return [header, ...body, footer];
+}
+
+export function exportTicketsToExcel(
+  rows: TicketSummaryExport[],
+  options: {
+    startDate: string;
+    endDate: string;
+    groupCode: string;
+    groupName?: string | null;
+    viewMode: "current" | "prior";
+    includePricedSalesAmount?: boolean;
+  },
+): void {
+  const modeLabel = options.viewMode === "prior" ? "上年同期" : "本期";
 
   const groupTag = options.groupName
     ? `${options.groupCode}_${options.groupName}`
@@ -551,5 +583,9 @@ export function exportTicketsToExcel(
     `${safeFilenamePart(groupTag)}_${modeLabel}`,
   );
 
-  writeWorkbook(`小票_${modeLabel}`, [header, ...body, footer], filename);
+  writeWorkbook(
+    `小票_${modeLabel}`,
+    buildTicketExportTable(rows, Boolean(options.includePricedSalesAmount)),
+    filename,
+  );
 }

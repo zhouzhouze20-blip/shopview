@@ -111,8 +111,11 @@ export interface ContractListItem {
   cmauditor?: string | null;
   cmauditdate?: string | null;
   cmchar9?: string | null;
+  unit_codes?: string | null;
   group_codes?: string | null;
   group_names?: string | null;
+  department_codes?: string | null;
+  department_names?: string | null;
   range_brands?: string | null;
   range_start_date?: string | null;
   range_end_date?: string | null;
@@ -128,6 +131,15 @@ export interface ContractListResponse {
   count: number;
   skip: number;
   limit: number;
+}
+
+export interface ContractDepartmentOption {
+  department_code: string;
+  department_name?: string | null;
+}
+
+export interface ContractDepartmentOptionsResponse {
+  items: ContractDepartmentOption[];
 }
 
 export interface ContractMainDetail {
@@ -243,6 +255,7 @@ export interface ContractCyclistDetail {
   ccleffdate?: string | null;
   ccllapdate?: string | null;
   cclitemid?: string | null;
+  cclitemname?: string | null;
   cclitemunit?: string | null;
   cclitemprice?: number | null;
   cclsumamount?: number | null;
@@ -308,6 +321,7 @@ export function useContractsList(params?: {
   keyword?: string;
   status?: string;
   groupCode?: string;
+  departmentCode?: string;
   supplierCode?: string;
   skip?: number;
   limit?: number;
@@ -319,15 +333,24 @@ export function useContractsList(params?: {
       const keyword = params?.keyword?.trim();
       const status = params?.status?.trim();
       const groupCode = params?.groupCode?.trim();
+      const departmentCode = params?.departmentCode?.trim();
       const supplierCode = params?.supplierCode?.trim();
       if (keyword) searchParams.set("keyword", keyword);
       if (status && status !== "ALL") searchParams.set("status", status);
       if (groupCode) searchParams.set("group_code", groupCode);
+      if (departmentCode && departmentCode !== "ALL") searchParams.set("department_code", departmentCode);
       if (supplierCode) searchParams.set("supplier_code", supplierCode);
       searchParams.set("skip", String(params?.skip ?? 0));
       searchParams.set("limit", String(params?.limit ?? 100));
       return apiGet<ContractListResponse>(`/api/contracts/?${searchParams.toString()}`);
     },
+  });
+}
+
+export function useContractDepartments() {
+  return useQuery({
+    queryKey: ["contract-departments"],
+    queryFn: () => apiGet<ContractDepartmentOptionsResponse>("/api/contracts/departments"),
   });
 }
 

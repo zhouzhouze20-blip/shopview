@@ -184,6 +184,96 @@ class WeComDepartmentScopeTest(unittest.TestCase):
             [(2, "department", "6010117"), (3, "department", "6010102")],
         )
 
+    def test_refresh_auto_department_scope_removes_legacy_wecom_policy_without_external_id(self):
+        user = SimpleNamespace(user_id=963, real_name="孙琴蕾")
+        legacy_policy = DataPolicy(
+            id=1,
+            subject_type="USER",
+            subject_id=963,
+            resource_code="business_scope",
+            action_code="view",
+            scope_mode="CUSTOM",
+            effect="ALLOW",
+            source_type="WECOM",
+            source_system="wecom",
+            external_scope_id=None,
+            external_scope_name="企业微信数据范围",
+            is_active=True,
+        )
+        self.add_department("6010117", "中心三部(女装)").is_active = False
+        self.add_counter_group_department("6010117", "中心三部(女装)", is_active=False)
+        self.db.add(legacy_policy)
+        self.db.add(DataPolicyItem(id=1, policy_id=1, dimension_type="store", dimension_value="1"))
+        self.db.flush()
+
+        result = refresh_auto_department_scope(
+            self.db,
+            user=user,
+            wecom_user_id="3130",
+            department_path="江苏普灵仕集团/百货条线/中心三部（女装）",
+        )
+
+        self.assertTrue(result.updated)
+        policies = self.db.query(DataPolicy).order_by(DataPolicy.id.asc()).all()
+        self.assertEqual([policy.external_scope_id for policy in policies], [f"{AUTO_SCOPE_EXTERNAL_PREFIX}:963"])
+        items = self.db.query(DataPolicyItem).order_by(DataPolicyItem.id.asc()).all()
+        self.assertEqual(
+            [(item.dimension_type, item.dimension_value) for item in items],
+            [("department", "6010117")],
+        )
+
+    def test_refresh_auto_department_scope_clears_stale_auto_policy_when_mapping_missing(self):
+        user = SimpleNamespace(user_id=963, real_name="孙琴蕾")
+        auto_policy = DataPolicy(
+            id=1,
+            subject_type="USER",
+            subject_id=963,
+            resource_code="business_scope",
+            action_code="view",
+            scope_mode="ALL",
+            effect="ALLOW",
+            source_type="WECOM",
+            source_system="wecom",
+            external_scope_id=f"{AUTO_SCOPE_EXTERNAL_PREFIX}:963",
+            external_scope_name="旧自动全量范围",
+            is_active=True,
+        )
+        manual_policy = DataPolicy(
+            id=2,
+            subject_type="USER",
+            subject_id=963,
+            resource_code="business_scope",
+            action_code="view",
+            scope_mode="CUSTOM",
+            effect="ALLOW",
+            source_type="MANUAL",
+            source_system="shopview",
+            external_scope_id="manual-extra:963",
+            external_scope_name="手工追加范围",
+            is_active=True,
+        )
+        self.db.add(auto_policy)
+        self.db.add(manual_policy)
+        self.db.add(DataPolicyItem(id=1, policy_id=2, dimension_type="department", dimension_value="6010117"))
+        self.db.flush()
+
+        result = refresh_auto_department_scope(
+            self.db,
+            user=user,
+            wecom_user_id="300354",
+            department_path="江苏普灵仕集团/百货条线/百货总经理室/购物中心店/中心三部（女装）",
+        )
+
+        self.assertFalse(result.updated)
+        self.assertEqual(result.reason, "department_mapping_missing")
+        policies = self.db.query(DataPolicy).order_by(DataPolicy.id.asc()).all()
+        self.assertEqual([policy.external_scope_id for policy in policies], ["manual-extra:963"])
+        items = self.db.query(DataPolicyItem).order_by(DataPolicyItem.id.asc()).all()
+        self.assertEqual(
+            [(item.policy_id, item.dimension_type, item.dimension_value) for item in items],
+            [(2, "department", "6010117")],
+        )
+
     def test_refresh_auto_department_scope_uses_known_assignment_fallback(self):
         user = SimpleNamespace(user_id=734, username="2269", real_name="于云")
         self.add_counter_group_department("6010113", "中心二部(女装)", is_active=False)
@@ -199,6 +289,79 @@ class WeComDepartmentScopeTest(unittest.TestCase):
         item = self.db.query(DataPolicyItem).one()
         self.assertEqual(item.dimension_type, "department")
         self.assertEqual(item.dimension_value, "6010113")
+
+    def test_refresh_auto_department_scope_maps_ding_ya_to_center_special_department(self):
+        user = SimpleNamespace(user_id=1858, username="300235", employee_no="300235", real_name="丁娅")
+        self.add_counter_group_department("6010112", "中心八部(特业)", is_active=False)
+
+        result = refresh_auto_department_scope_from_known_assignment(
+            self.db,
+            user=user,
+            wecom_user_id="300235",
+        )
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.department_code, "6010112")
+        self.assertEqual(result.department_name, "中心八部(特业)")
+        item = self.db.query(DataPolicyItem).one()
+        self.assertEqual(item.dimension_type, "department")
+        self.assertEqual(item.dimension_value, "6010112")
+
+    def test_refresh_auto_department_scope_maps_sun_qinlei_known_assignment(self):
+        user = SimpleNamespace(user_id=963, username="300354", employee_no="300354", real_name="孙琴蕾")
+        self.add_counter_group_department("6010114", "中心三部(女装)", is_active=False)
+
+        result = refresh_auto_department_scope_from_known_assignment(
+            self.db,
+            user=user,
+            wecom_user_id="300354",
+        )
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.department_code, "6010114")
+        self.assertEqual(result.department_name, "中心三部(女装)")
+        item = self.db.query(DataPolicyItem).one()
+        self.assertEqual(item.dimension_type, "department")
+        self.assertEqual(item.dimension_value, "6010114")
+
+    def test_refresh_auto_department_scope_expands_center_cosmetics_to_luxury(self):
+        user = SimpleNamespace(user_id=734, username="300111", real_name="陈晓楠")
+        self.add_counter_group_department("6010101", "中心一部(化妆)", is_active=False)
+        self.add_counter_group_department("6010199", "中心一部(名品)", is_active=False)
+
+        result = refresh_auto_department_scope(
+            self.db,
+            user=user,
+            wecom_user_id="300111",
+            department_path="江苏普灵仕集团/百货条线/中心一部(化妆)",
+        )
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.department_code, "6010101")
+        items = self.db.query(DataPolicyItem).order_by(DataPolicyItem.dimension_value.asc()).all()
+        self.assertEqual(
+            [(item.dimension_type, item.dimension_value) for item in items],
+            [("department", "6010101"), ("department", "6010199")],
+        )
+
+    def test_refresh_auto_department_scope_from_known_assignment_expands_center_luxury_to_cosmetics(self):
+        user = SimpleNamespace(user_id=735, username="300112", employee_no="300112", real_name="黄欣怡")
+        self.add_counter_group_department("6010101", "中心一部(化妆)", is_active=False)
+        self.add_counter_group_department("6010199", "中心一部(名品)", is_active=False)
+
+        result = refresh_auto_department_scope_from_known_assignment(
+            self.db,
+            user=user,
+            wecom_user_id="300112",
+        )
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.department_code, "6010199")
+        items = self.db.query(DataPolicyItem).order_by(DataPolicyItem.dimension_value.asc()).all()
+        self.assertEqual(
+            [(item.dimension_type, item.dimension_value) for item in items],
+            [("department", "6010101"), ("department", "6010199")],
+        )
 
     def test_refresh_auto_department_scope_skips_ambiguous_known_assignment(self):
         user = SimpleNamespace(user_id=788, username="2746", real_name="谈菲")

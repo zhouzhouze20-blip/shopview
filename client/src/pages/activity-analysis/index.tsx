@@ -14,34 +14,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type ActivityOption = {
-  activity_id: string;
-  activity_name: string;
-  store_id?: number | string | null;
-  store_code?: string | null;
-  store_name?: string | null;
-  start_date: string;
-  end_date: string;
-  ticket_count: number;
-  card_log_amount: number;
-  issued_log_amount: number;
-  consumed_log_amount: number;
-  coupon_pay_amount: number;
+type StoreOption = {
+  store_id: number | string;
+  store_code: string;
+  store_name: string;
 };
 
 type ActivityOverview = {
-  activity?: {
-    activity_id: string;
-    activity_name: string;
-    store_id?: number | string | null;
-    store_code?: string | null;
-    store_name?: string | null;
-    start_date: string;
-    end_date: string;
-    coupon_start_date?: string | null;
-    coupon_end_date?: string | null;
-    memo?: string | null;
-  } | null;
   summary: Record<string, number | string | null>;
   payment_methods: Array<Record<string, number | string | null>>;
   departments: Array<Record<string, number | string | null>>;
@@ -137,11 +116,10 @@ function MetricCard({
 }
 
 export default function ActivityAnalysisPage() {
-  const [keyword, setKeyword] = useState("");
-  const [activityId, setActivityId] = useState("");
   const [startDate, setStartDate] = useState(() => localDateString());
   const [endDate, setEndDate] = useState("");
   const [analysisScope, setAnalysisScope] = useState<"activity" | "standalone" | "all">("activity");
+  const [selectedStoreCode, setSelectedStoreCode] = useState("all");
   const [flowKeyword, setFlowKeyword] = useState("");
   const [issueType, setIssueType] = useState("unmatched_logs");
   const [activeTab, setActiveTab] = useState("coupon-summary");
@@ -152,91 +130,77 @@ export default function ActivityAnalysisPage() {
   const [showReconciliationPanel, setShowReconciliationPanel] = useState(false);
   const [showReconciliationDetails, setShowReconciliationDetails] = useState(false);
   const couponDrillOpen = !!selectedCoupon;
+  const selectedStoreParam = selectedStoreCode === "all" ? "" : selectedStoreCode;
 
-  const activitiesQuery = useQuery<ActivityOption[]>({
-    queryKey: ["/api/activity-analysis/activities", keyword, startDate, endDate],
-    queryFn: () => apiGet(`/api/activity-analysis/activities${buildQuery({ keyword, start_date: startDate, end_date: endDate, limit: 120 })}`),
+  const storesQuery = useQuery<StoreOption[]>({
+    queryKey: ["/api/activity-analysis/store-options"],
+    queryFn: () => apiGet("/api/activity-analysis/store-options"),
   });
-
-  const activities = activitiesQuery.data || [];
-
-  useEffect(() => {
-    if (activitiesQuery.isSuccess && activities.length === 0 && activityId) {
-      setActivityId("");
-      return;
-    }
-    if (activities.length > 0 && (!activityId || !activities.some((item) => item.activity_id === activityId))) {
-      setActivityId((activities.find((item) => Number(item.ticket_count || 0) > 0) || activities[0]).activity_id);
-    }
-  }, [activityId, activities, activitiesQuery.isSuccess]);
+  const stores = storesQuery.data || [];
 
   const overviewQuery = useQuery<ActivityOverview>({
-    queryKey: ["/api/activity-analysis/overview", activityId, analysisScope, startDate, endDate],
+    queryKey: ["/api/activity-analysis/overview", analysisScope, selectedStoreCode, startDate, endDate],
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/overview${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           limit: 30,
         })}`,
       ),
-    enabled: analysisScope !== "activity" || !!activityId,
   });
 
   const couponSummaryQuery = useQuery<RowData[]>({
-    queryKey: ["/api/activity-analysis/coupon-summary", activityId, analysisScope, startDate, endDate],
+    queryKey: ["/api/activity-analysis/coupon-summary", analysisScope, selectedStoreCode, startDate, endDate],
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/coupon-summary${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           limit: 100,
         })}`,
       ),
-    enabled: analysisScope !== "activity" || !!activityId,
   });
 
   const couponFlowsQuery = useQuery<RowData[]>({
-    queryKey: ["/api/activity-analysis/coupon-flows", activityId, analysisScope, startDate, endDate, flowKeyword],
+    queryKey: ["/api/activity-analysis/coupon-flows", analysisScope, selectedStoreCode, startDate, endDate, flowKeyword],
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/coupon-flows${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           keyword: flowKeyword,
           limit: 100,
         })}`,
       ),
-    enabled: analysisScope !== "activity" || !!activityId,
   });
 
   const qualityIssuesQuery = useQuery<RowData[]>({
-    queryKey: ["/api/activity-analysis/quality-issues", activityId, analysisScope, startDate, endDate, issueType],
+    queryKey: ["/api/activity-analysis/quality-issues", analysisScope, selectedStoreCode, startDate, endDate, issueType],
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/quality-issues${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           issue_type: issueType,
           limit: 100,
         })}`,
       ),
-    enabled: analysisScope !== "activity" || !!activityId,
   });
 
   const groupTicketsQuery = useQuery<RowData[]>({
     queryKey: [
       "/api/activity-analysis/department-tickets",
-      activityId,
       analysisScope,
+      selectedStoreCode,
       startDate,
       endDate,
       selectedGroup?.department_code,
@@ -245,8 +209,8 @@ export default function ActivityAnalysisPage() {
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/department-tickets${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           department_code: selectedGroup?.department_code,
@@ -254,14 +218,14 @@ export default function ActivityAnalysisPage() {
           limit: 200,
         })}`,
       ),
-    enabled: (analysisScope !== "activity" || !!activityId) && !!selectedGroup?.department_code && !!selectedGroup?.group_code,
+    enabled: !!selectedGroup?.department_code && !!selectedGroup?.group_code,
   });
 
   const couponDepartmentsQuery = useQuery<RowData[]>({
     queryKey: [
       "/api/activity-analysis/coupon-type-departments",
-      activityId,
       analysisScope,
+      selectedStoreCode,
       startDate,
       endDate,
       selectedCoupon?.coupon_type,
@@ -269,22 +233,22 @@ export default function ActivityAnalysisPage() {
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/coupon-type-departments${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           coupon_type: selectedCoupon?.coupon_type,
           limit: 100,
         })}`,
       ),
-    enabled: (analysisScope !== "activity" || !!activityId) && !!selectedCoupon?.coupon_type,
+    enabled: !!selectedCoupon?.coupon_type,
   });
 
   const couponGroupsQuery = useQuery<RowData[]>({
     queryKey: [
       "/api/activity-analysis/coupon-type-departments",
-      activityId,
       analysisScope,
+      selectedStoreCode,
       startDate,
       endDate,
       selectedCoupon?.coupon_type,
@@ -293,8 +257,8 @@ export default function ActivityAnalysisPage() {
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/coupon-type-departments${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           coupon_type: selectedCoupon?.coupon_type,
@@ -302,17 +266,14 @@ export default function ActivityAnalysisPage() {
           limit: 100,
         })}`,
       ),
-    enabled:
-      (analysisScope !== "activity" || !!activityId) &&
-      !!selectedCoupon?.coupon_type &&
-      !!selectedCouponDepartment?.department_code,
+    enabled: !!selectedCoupon?.coupon_type && !!selectedCouponDepartment?.department_code,
   });
 
   const couponGroupTicketsQuery = useQuery<RowData[]>({
     queryKey: [
       "/api/activity-analysis/department-tickets",
-      activityId,
       analysisScope,
+      selectedStoreCode,
       startDate,
       endDate,
       selectedCoupon?.coupon_type,
@@ -322,8 +283,8 @@ export default function ActivityAnalysisPage() {
     queryFn: () =>
       apiGet(
         `/api/activity-analysis/department-tickets${buildQuery({
-          activity_id: analysisScope === "activity" ? activityId : "",
           scope: analysisScope,
+          store_code: selectedStoreParam,
           start_date: startDate,
           end_date: endDate,
           coupon_type: selectedCoupon?.coupon_type,
@@ -333,16 +294,17 @@ export default function ActivityAnalysisPage() {
         })}`,
       ),
     enabled:
-      (analysisScope !== "activity" || !!activityId) &&
       !!selectedCoupon?.coupon_type &&
       !!selectedCouponGroup?.department_code &&
       !!selectedCouponGroup?.group_code,
   });
 
-  const selectedActivity = useMemo(
-    () => activities.find((item) => item.activity_id === activityId),
-    [activities, activityId],
-  );
+  const analysisScopeLabel =
+    analysisScope === "activity" ? "活动档期券" : analysisScope === "standalone" ? "非档期券" : "全部卡券";
+  const selectedStoreLabel =
+    selectedStoreCode === "all"
+      ? "全部有权限门店"
+      : stores.find((store) => store.store_code === selectedStoreCode)?.store_name || selectedStoreCode;
   const overview = overviewQuery.data;
   const summary = overview?.summary || {};
   const quality = overview?.quality || {};
@@ -435,7 +397,7 @@ export default function ActivityAnalysisPage() {
     setSelectedCoupon(null);
     setSelectedCouponDepartment(null);
     setSelectedCouponGroup(null);
-  }, [activityId, analysisScope, startDate, endDate]);
+  }, [analysisScope, selectedStoreCode, startDate, endDate]);
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -480,47 +442,35 @@ export default function ActivityAnalysisPage() {
               onChange={(event) => setEndDate(event.target.value)}
             />
           </div>
-          <div className="min-w-0 lg:col-span-3">
-            <Label htmlFor="activity-search">活动搜索</Label>
-            <div className="mt-1 flex gap-2">
-              <Input
-                id="activity-search"
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                placeholder="活动编码或主题"
-              />
-              <Button variant="outline" size="icon" onClick={() => activitiesQuery.refetch()} aria-label="搜索活动">
-                <Search className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-            <Label>活动档期</Label>
-            <Select value={activityId} onValueChange={setActivityId} disabled={analysisScope !== "activity"}>
+          <div className="min-w-0 sm:col-span-2 lg:col-span-3">
+            <Label>门店</Label>
+            <Select value={selectedStoreCode} onValueChange={setSelectedStoreCode} disabled={storesQuery.isLoading || storesQuery.isError}>
               <SelectTrigger className="mt-1 w-full overflow-hidden [&>span]:truncate">
-                <SelectValue placeholder="选择活动" />
+                <SelectValue placeholder={storesQuery.isLoading ? "正在加载门店" : "选择门店"} />
               </SelectTrigger>
-              <SelectContent className="max-w-[min(760px,92vw)]">
-                {activities.map((activity) => (
-                  <SelectItem key={activity.activity_id} value={activity.activity_id} className="max-w-[min(720px,88vw)]">
+              <SelectContent>
+                <SelectItem value="all">全部有权限门店</SelectItem>
+                {stores.map((store) => (
+                  <SelectItem key={store.store_code} value={store.store_code}>
                     <span className="block truncate">
-                      {activity.activity_id}｜{activity.store_name ? `${activity.store_name}｜` : ""}{activity.activity_name}
+                      {store.store_name}（{store.store_code}）
                     </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {storesQuery.isError ? <p className="mt-1 text-xs text-red-600">门店列表加载失败</p> : null}
           </div>
           <Button
             variant="outline"
             onClick={() => {
-              activitiesQuery.refetch();
+              storesQuery.refetch();
               overviewQuery.refetch();
               couponSummaryQuery.refetch();
               couponFlowsQuery.refetch();
               qualityIssuesQuery.refetch();
             }}
-            disabled={(analysisScope === "activity" && !activityId) || overviewQuery.isFetching || couponSummaryQuery.isFetching}
+            disabled={overviewQuery.isFetching || couponSummaryQuery.isFetching}
           >
             {overviewQuery.isFetching || couponSummaryQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             刷新
@@ -529,31 +479,13 @@ export default function ActivityAnalysisPage() {
         </Card>
       </div>
 
-      {analysisScope === "activity" && selectedActivity ? (
-        <Card className="rounded-lg">
-          <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{selectedActivity.activity_id}</Badge>
-                {selectedActivity.store_name ? <Badge variant="secondary">{selectedActivity.store_name}</Badge> : null}
-                <span className="font-medium text-slate-900">{selectedActivity.activity_name}</span>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                活动期：{fmtDate(selectedActivity.start_date)} 至 {fmtDate(selectedActivity.end_date)}
-              </p>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              已关联小票 {number(selectedActivity.ticket_count)}，发券日志 {money(selectedActivity.issued_log_amount)}，用券日志 {money(selectedActivity.consumed_log_amount)}
-            </div>
-          </CardContent>
-        </Card>
-      ) : analysisScope !== "activity" ? (
-        <Card className="rounded-lg">
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            当前范围：{analysisScope === "standalone" ? "非档期发券/用券，不强行归属活动档期。" : "全部卡券流水，含活动档期券与非档期券。"}
-          </CardContent>
-        </Card>
-      ) : null}
+      <Card className="rounded-lg">
+        <CardContent className="flex flex-wrap gap-x-6 gap-y-2 p-4 text-sm text-muted-foreground">
+          <span>当前范围：{analysisScopeLabel}</span>
+          <span>门店：{selectedStoreLabel}</span>
+          <span>日期：{startDate || "不限"} 至 {endDate || "不限"}</span>
+        </CardContent>
+      </Card>
 
       {overviewQuery.isLoading ? (
         <div className="flex min-h-64 items-center justify-center text-muted-foreground">
@@ -568,8 +500,8 @@ export default function ActivityAnalysisPage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetricCard title="活动销售额" value={money(summary.sales_amount)} subtitle={`小票 ${number(summary.ticket_count)} 笔`} icon={BarChart3} />
-            <MetricCard title="本档新会员" value={number(summary.new_member_count)} subtitle="入会日期在活动期内" icon={UserPlus} />
-            <MetricCard title="新会员销售" value={money(summary.new_member_sales_amount)} subtitle="本档新会员关联小票" icon={BarChart3} />
+            <MetricCard title="本期新会员" value={number(summary.new_member_count)} subtitle="入会日期在所选日期内" icon={UserPlus} />
+            <MetricCard title="新会员销售" value={money(summary.new_member_sales_amount)} subtitle="本期新会员关联小票" icon={BarChart3} />
             <MetricCard title="实际卡券付款" value={money(summary.coupon_pay_amount)} subtitle={`经营结果以此为准`} icon={CreditCard} />
             <MetricCard title="券消费日志" value={money(summary.consumed_log_amount)} subtitle={`0500 ${money(summary.pay_0500_amount)} / 0580 ${money(summary.pay_0580_amount)}`} icon={TicketPercent} />
             <MetricCard title="会员人数" value={number(summary.member_count)} subtitle={`卡券日志 ${number(summary.card_log_count)} 条`} icon={Users} />

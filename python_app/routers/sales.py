@@ -22,6 +22,7 @@ from models.database import get_db
 from models.models import User
 from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
+from services.department_display_order import department_display_sort_key
 from services.sales_analysis import analyze_group_sales
 from services.od0002_report import (
     TrustedScopeSql,
@@ -147,8 +148,9 @@ def _sql_string_list(values: Iterable[str]) -> str:
 
 
 def _sales_department_exclusion_sql(alias: str = "cg") -> str:
-    names = _sql_string_list(SALES_EXCLUDED_DEPARTMENT_NAMES)
-    return f" AND TRIM(BOTH FROM COALESCE({alias}.department_name, '')) NOT IN ({names})"
+    # Keep sales dashboards aligned with the finance/export department report:
+    # all departments are included, including operations, info, property, and planning/customer-service buckets.
+    return ""
 
 
 def _manaframe_group_source_sql(alias: str = "cg") -> str:
@@ -570,30 +572,6 @@ def _department_bucket_key(row: dict[str, Any]) -> str:
     return f"{row.get('department_code') or ''}|{row.get('department_name') or '未归属部门'}"
 
 
-def _department_display_sort_key(row: dict[str, Any]) -> tuple[int, int, str, str]:
-    name = str(row.get("department_name") or "")
-    code = str(row.get("department_code") or "")
-    if "超市" in name:
-        return (0, 0, name, code)
-    if "生鲜" in name:
-        return (0, 1, name, code)
-
-    cn_order = {
-        "一": 1,
-        "二": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6,
-        "七": 7,
-        "八": 8,
-    }
-    for cn, order in cn_order.items():
-        if f"{cn}部" in name:
-            return (1, order, name, code)
-    return (2, 999, name, code)
-
-
 def _aggregate_group_rows_to_departments(
     group_rows: Iterable[dict[str, Any]],
     scope,
@@ -622,7 +600,7 @@ def _aggregate_group_rows_to_departments(
         target["gross_sales"] += _num(row.get("gross_sales"))
         target["effective_sales"] += _num(row.get("effective_sales"))
         target["net_profit"] += _num(row.get("net_profit"))
-    result = sorted(departments.values(), key=_department_display_sort_key)
+    result = sorted(departments.values(), key=department_display_sort_key)
     for item in result:
         eff = float(item.get("effective_sales") or 0)
         item["ticket_margin"] = (float(item.get("net_profit") or 0) / eff) if eff else 0.0
@@ -666,7 +644,7 @@ def _merge_department_summaries_same_period(
                 "same_period_margin": (snp / spe) if spe else 0.0,
             }
         )
-    out.sort(key=_department_display_sort_key)
+    out.sort(key=department_display_sort_key)
     return out
 
 
@@ -700,6 +678,7 @@ def _merge_group_summaries_same_period(
                 "ticket_count": 0,
                 "line_count": 0,
                 "quantity": 0,
+                "priced_sales_amount": 0.0,
                 "gross_sales": 0.0,
                 "effective_sales": 0.0,
                 "net_profit": 0.0,
@@ -718,11 +697,45 @@ def _merge_group_summaries_same_period(
 def _date_filter_sql(params: dict[str, Any], start_date: str | None, end_date: str | None) -> str:
     filters = []
     if start_date:
-        filters.append("s.sgldate >= :start_date")
+        filters.append("s.sglhsrq::date >= CAST(:start_date AS DATE)")
         params["start_date"] = start_date
     if end_date:
-        filters.append("s.sgldate <= :end_date")
+        filters.append("s.sglhsrq::date <= CAST(:end_date AS DATE)")
         params["end_date"] = end_date
+    return (" AND " + " AND ".join(filters)) if filters else ""
+
+
+def _latest_sales_accounting_date(db: Session) -> str | None:
+    table_name = _salegoodslist_table(db)
+    rows = _fetch_mappings(
+        db,
+        f"""
+        SELECT MAX(s.sglhsrq) AS latest_date
+        FROM {table_name} s
+        WHERE s.sglhsrq <= CURRENT_DATE
+        """,
+        {},
+    )
+    return rows[0].get("latest_date") if rows and rows[0].get("latest_date") else None
+
+
+def _ticket_product_filter_sql(
+    params: dict[str, Any],
+    *,
+    goods_code: str | None,
+    barcode: str | None,
+    supplier_code: str | None,
+) -> str:
+    filters: list[str] = []
+    if goods_code and goods_code.strip():
+        filters.append("upper(trim(COALESCE(s.sglgdid, ''))) = upper(trim(:goods_code))")
+        params["goods_code"] = goods_code.strip()
+    if barcode and barcode.strip():
+        filters.append("upper(trim(COALESCE(s.sglbarcode, ''))) = upper(trim(:barcode))")
+        params["barcode"] = barcode.strip()
+    if supplier_code and supplier_code.strip():
+        filters.append("upper(trim(COALESCE(s.sglsupid, ''))) = upper(trim(:supplier_code))")
+        params["supplier_code"] = supplier_code.strip()
     return (" AND " + " AND ".join(filters)) if filters else ""
 
 
@@ -1122,6 +1135,7 @@ def _group_level_sales_rows(
           COUNT(DISTINCT s.sglbillno) AS ticket_count,
           COUNT(*) AS line_count,
           COALESCE(SUM(s.sglsl), 0) AS quantity,
+          COALESCE(SUM(s.sglsjje), 0) AS priced_sales_amount,
           COALESCE(SUM(s.sglxssr), 0) AS gross_sales,
           COALESCE(SUM(s.sglxssr), 0) AS effective_sales,
           COALESCE(SUM(s.sgln2), 0) AS net_profit,
@@ -1212,6 +1226,15 @@ def _aggregate_stores_from_group_rows(rows: list[dict[str, Any]]) -> list[dict[s
             }
         )
     return sorted(result, key=lambda x: float(x["effective_sales"]), reverse=True)
+
+
+@router.get("/summary/latest-date")
+async def latest_sales_date(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_permission(db, current_user, "sales.view")
+    return {"latest_date": _latest_sales_accounting_date(db)}
 
 
 @router.get("/summary/stores")
@@ -1807,12 +1830,16 @@ async def group_tickets(
     group_code: str,
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
+    goods_code: str | None = Query(None, description="商品编码"),
+    barcode: str | None = Query(None, description="商品条码"),
+    supplier_code: str | None = Query(None, description="供应商编码"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    按小票汇总 salegoodslist 行：销售收入=sum(sglxssr)，毛利=sum(sgln2)，小票毛利率=sum(sgln2)/sum(sglxssr)；
+    按小票汇总 salegoodslist 行：零售价=sum(sglsjje)，销售收入=sum(sglxssr)，
+    毛利=sum(sgln2)，小票毛利率=sum(sgln2)/sum(sglxssr)；
     授权折扣=sum(sglgrantzk)，面值卡(MZK)=sum(sglfcard)，礼券(LQ)=sum(sglgcert)-sum(sgltimes)。
     附带：order_point 中消费加积分与生日月会员加积分。
 
@@ -1828,6 +1855,12 @@ async def group_tickets(
     mkt_join = _stores_market_join_sql(has_stores)
     params: dict[str, Any] = {"group_code": group_code, "limit": limit}
     filters = _date_filter_sql(params, start_date, end_date)
+    filters += _ticket_product_filter_sql(
+        params,
+        goods_code=goods_code,
+        barcode=barcode,
+        supplier_code=supplier_code,
+    )
     if has_counter_groups:
         filters += _sales_department_exclusion_sql("cg")
     group_join = _counter_group_join_sql(has_counter_groups)
@@ -1864,7 +1897,7 @@ async def group_tickets(
         elif has_point_type:
             point_category_expr = "TRIM(BOTH FROM COALESCE(point_type::text, ''))"
         consumption_point_condition = (
-            f"{point_category_expr} IN ('消费加积分', '消费获得积分')"
+            f"{point_category_expr} IN ('消费加积分', '消费获得积分', '香奈儿活动补发')"
         )
         point_join = f"""
         , op_agg AS (
@@ -1911,6 +1944,7 @@ async def group_tickets(
             s.sglinvno AS invoice_no,
             s.sglchecker AS cashier,
             s.sglsl,
+            s.sglsjje,
             s.sglxssr,
             s.sgln2,
             s.sglgrantzk,
@@ -1936,6 +1970,7 @@ async def group_tickets(
             MIN(cashier) AS cashier,
             COUNT(*) AS line_count,
             COALESCE(SUM(sglsl), 0) AS quantity,
+            COALESCE(SUM(sglsjje), 0) AS priced_sales_amount,
             COALESCE(SUM(sglxssr), 0) AS effective_sales,
             COALESCE(SUM(sgln2), 0) AS net_profit,
             CASE
@@ -1964,6 +1999,7 @@ async def group_tickets(
           tr.cashier,
           tr.line_count,
           tr.quantity,
+          tr.priced_sales_amount,
           tr.effective_sales,
           tr.net_profit,
           tr.ticket_margin,
@@ -1995,8 +2031,10 @@ async def ticket_detail(
     has_salehead = _table_exists(db, "salehead")
     has_salegoods = _table_exists(db, "salegoods")
     has_salepay = _table_exists(db, "salepay")
+    has_paymode = _table_exists(db, "paymode")
     has_counter_groups = _table_exists(db, "manaframe")
     has_stores = _table_exists(db, "stores")
+    has_goodsbase = _table_exists(db, "goodsbase")
 
     if has_salehead and has_salegoods:
         goods_scope_join = (
@@ -2018,6 +2056,28 @@ async def ticket_detail(
             pos_store_expr = "COALESCE((st_mkt.store_id)::varchar, g.mkt::varchar)"
         else:
             pos_store_expr = "g.mkt::varchar"
+        goodsbase_join = (
+            """
+            LEFT JOIN LATERAL (
+              SELECT gb.gbcname
+              FROM goodsbase gb
+              WHERE upper(trim(COALESCE(gb.gbid, ''))) = upper(trim(COALESCE(g.code, '')))
+                 OR upper(trim(COALESCE(gb.gbbarcode, ''))) = upper(trim(COALESCE(g.barcode, '')))
+              ORDER BY CASE
+                WHEN upper(trim(COALESCE(gb.gbid, ''))) = upper(trim(COALESCE(g.code, ''))) THEN 0
+                ELSE 1
+              END
+              LIMIT 1
+            ) gb ON TRUE
+            """
+            if has_goodsbase
+            else ""
+        )
+        pos_goods_name_expr = (
+            "COALESCE(NULLIF(g.name, ''), NULLIF(gb.gbcname, ''), g.name)"
+            if has_goodsbase
+            else "g.name"
+        )
         scope_rows = _fetch_mappings(
             db,
             f"""
@@ -2053,31 +2113,44 @@ async def ticket_detail(
         )
         goods = _fetch_mappings(
             db,
-            """
+            f"""
             SELECT
-              rowno, mkt, yyyh, barcode, code, sptype, gz AS group_code,
-              catid, ppcode, name, unit, sl, lsj, jg, hjje, hjzk,
-              hyzke, yhzke, lszke, flag, rqsj
-            FROM salegoods
-            WHERE billno::varchar = :billno
-            ORDER BY rowno
+              g.rowno, g.mkt, g.yyyh, g.barcode, g.code, g.sptype, g.gz AS group_code,
+              g.catid, g.ppcode, {pos_goods_name_expr} AS name, g.unit, g.sl, g.lsj, g.jg, g.hjje, g.hjzk,
+              g.hyzke, g.yhzke, g.lszke, g.flag, g.rqsj
+            FROM salegoods g
+            {goodsbase_join}
+            WHERE g.billno::varchar = :billno
+            ORDER BY g.rowno
             """,
             {"billno": billno},
         )
-        pays = (
-            _fetch_mappings(
+        if has_salepay:
+            paymode_join = (
+                "LEFT JOIN paymode pm ON upper(trim(COALESCE(pm.pmcode, ''))) = upper(trim(COALESCE(p.paycode, '')))"
+                if has_paymode
+                else ""
+            )
+            payname_expr = (
+                "COALESCE(NULLIF(pm.pmname, ''), NULLIF(p.payname, ''), p.payname)"
+                if has_paymode
+                else "p.payname"
+            )
+            pays = _fetch_mappings(
                 db,
-                """
-                SELECT rowno, paycode, payname, flag, ybje, hl, je, payno, paytype, paymemo, rqsj
-                FROM salepay
-                WHERE billno::varchar = :billno
-                ORDER BY rowno
+                f"""
+                SELECT
+                  p.rowno, p.paycode, {payname_expr} AS payname, p.flag, p.ybje, p.hl, p.je,
+                  p.payno, p.paytype, p.paymemo, p.rqsj
+                FROM salepay p
+                {paymode_join}
+                WHERE p.billno::varchar = :billno
+                ORDER BY p.rowno
                 """,
                 {"billno": billno},
             )
-            if has_salepay
-            else []
-        )
+        else:
+            pays = []
         return {"source": "pos", "head": head[0] if head else None, "goods": goods, "payments": pays}
 
     table_name = _salegoodslist_table(db)

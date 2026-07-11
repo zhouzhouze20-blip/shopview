@@ -19,6 +19,10 @@ type StoreSummaryRow = {
   ticket_count: number;
 };
 
+type SalesLatestDateResponse = {
+  latest_date?: string | null;
+};
+
 function fetchStoresRange(start: string, end: string) {
   const q = new URLSearchParams();
   q.set("start_date", start);
@@ -29,7 +33,15 @@ function fetchStoresRange(start: string, end: string) {
 /** 主页驾驶舱：按财务月累计至今日 + 上年同期区间，并行请求门店汇总 */
 export function useSalesDashboardOverview(enabled = true) {
   const todayStr = localDateFromToday();
-  const meta = useMemo(() => buildHomeSalesFinancialMeta(todayStr), [todayStr]);
+  const latestDateQuery = useQuery<SalesLatestDateResponse>({
+    queryKey: ["/api/sales/summary/latest-date"],
+    queryFn: () => apiGet<SalesLatestDateResponse>("/api/sales/summary/latest-date"),
+    enabled,
+    staleTime: 60_000,
+  });
+  const latestSalesDate = latestDateQuery.data?.latest_date ?? null;
+  const meta = useMemo(() => buildHomeSalesFinancialMeta(todayStr, latestSalesDate), [todayStr, latestSalesDate]);
+  const canFetchSales = enabled && (latestDateQuery.isSuccess || latestDateQuery.isError);
 
   const results = useQueries({
     queries: [
@@ -42,7 +54,7 @@ export function useSalesDashboardOverview(enabled = true) {
           meta.periodEnd,
         ],
         queryFn: () => fetchStoresRange(meta.periodStart, meta.periodEnd),
-        enabled,
+        enabled: canFetchSales,
         staleTime: 60_000,
       },
       {
@@ -54,7 +66,7 @@ export function useSalesDashboardOverview(enabled = true) {
           meta.priorPeriodEnd,
         ],
         queryFn: () => fetchStoresRange(meta.priorPeriodStart, meta.priorPeriodEnd),
-        enabled,
+        enabled: canFetchSales,
         staleTime: 60_000,
       },
     ],
@@ -67,7 +79,8 @@ export function useSalesDashboardOverview(enabled = true) {
     todayStr,
     currentQuery,
     priorQuery,
-    isLoading: currentQuery.isLoading || priorQuery.isLoading,
+    latestDateQuery,
+    isLoading: latestDateQuery.isLoading || currentQuery.isLoading || priorQuery.isLoading,
     isError: currentQuery.isError && priorQuery.isError,
     currentError: currentQuery.isError,
     priorError: priorQuery.isError,

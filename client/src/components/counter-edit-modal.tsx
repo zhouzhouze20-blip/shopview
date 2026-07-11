@@ -46,6 +46,7 @@ interface CounterGroup {
   group_name: string;
   brand_name?: string;
   operation_method?: string;
+  is_key_brand?: boolean;
   is_active: boolean;
 }
 
@@ -304,11 +305,18 @@ export default function CounterEditModal({ counter, isOpen, onClose, onSave }: C
                               <div className="text-xs text-gray-500">品牌: {group.brand_name}</div>
                             )}
                           </div>
-                          {group.operation_method && (
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                              {formatOperationMethod(group.operation_method)}
-                            </span>
-                          )}
+                          <div className="flex flex-col items-end gap-1">
+                            {group.is_key_brand && (
+                              <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded">
+                                重点品牌
+                              </span>
+                            )}
+                            {group.operation_method && (
+                              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                {formatOperationMethod(group.operation_method)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))

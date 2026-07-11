@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import or_
+
 from models.models import CounterGroup, DataPolicy, DataPolicyItem, Department
 
 
@@ -23,12 +25,18 @@ DEPARTMENT_ALIASES: dict[str, str] = {
     "中心市场部--营运": "中心营运部",
     "中心市场部--客服": "中心企划客服部",
     "中心市场部--企划": "中心企划执行部",
+    "中心特业部": "中心八部(特业)",
     "大楼营运": "营运四部",
+}
+
+DEPARTMENT_SCOPE_EXPANSIONS: dict[str, list[str]] = {
+    "中心一部(化妆)": ["中心一部(名品)"],
+    "中心一部(名品)": ["中心一部(化妆)"],
 }
 
 KNOWN_USER_DEPARTMENTS: dict[str, list[str]] = {
     "黄莉倩": ["中心B部(超市)"],
-    "丁娅": ["中心B部(超市)"],
+    "丁娅": ["中心特业部"],
     "何蕾": ["中心B部(超市)"],
     "高敏": ["中心B部(生鲜)"],
     "陈晓楠": ["中心一部(化妆)"],
@@ -40,6 +48,7 @@ KNOWN_USER_DEPARTMENTS: dict[str, list[str]] = {
     "潘婷": ["中心二部(女装)"],
     "隆晓蓉": ["中心三部(女装)"],
     "孙琴莹": ["中心三部(女装)"],
+    "孙琴蕾": ["中心三部(女装)"],
     "陈蓉": ["中心三部(女装)"],
     "王科涵": ["中心三部(女装)"],
     "蒋佳卫": ["中心四部(男装)"],
@@ -170,6 +179,23 @@ def resolve_business_department(db, department_path: str):
     return None
 
 
+def resolve_business_departments_for_scope(db, department_path: str) -> list[Any]:
+    primary = resolve_business_department(db, department_path)
+    if not primary:
+        return []
+
+    departments = [primary]
+    seen_codes = {str(getattr(primary, "dept_code", ""))}
+    expansion_names = DEPARTMENT_SCOPE_EXPANSIONS.get(normalize_department_name(getattr(primary, "dept_name", "")), [])
+    for department_name in expansion_names:
+        department = resolve_business_department(db, department_name)
+        dept_code = str(getattr(department, "dept_code", "")) if department else ""
+        if department and dept_code and dept_code not in seen_codes:
+            departments.append(department)
+            seen_codes.add(dept_code)
+    return departments
+
+
 def _auto_external_scope_id(user_id: int) -> str:
     return f"{AUTO_SCOPE_EXTERNAL_PREFIX}:{user_id}"
 
@@ -186,7 +212,11 @@ def _delete_auto_scope(db, user_id: int) -> int:
             DataPolicy.action_code == BUSINESS_SCOPE_ACTION,
             DataPolicy.source_type == WECOM_SOURCE_TYPE,
             DataPolicy.source_system == WECOM_SOURCE_SYSTEM,
-            DataPolicy.external_scope_id == external_scope_id,
+            or_(
+                DataPolicy.external_scope_id == external_scope_id,
+                DataPolicy.external_scope_id.is_(None),
+                DataPolicy.external_scope_id == "",
+            ),
         )
         .all()
     ]
@@ -205,11 +235,13 @@ def refresh_auto_department_scope(
     wecom_user_id: str,
     department_path: str,
 ) -> DepartmentScopeRefreshResult:
-    department = resolve_business_department(db, department_path)
-    if not department:
-        return DepartmentScopeRefreshResult(updated=False, reason="department_mapping_missing")
-
     user_id = int(user.user_id)
+    departments = resolve_business_departments_for_scope(db, department_path)
+    if not departments:
+        _delete_auto_scope(db, user_id)
+        return DepartmentScopeRefreshResult(updated=False, reason="department_mapping_missing")
+    primary_department = departments[0]
+
     _delete_auto_scope(db, user_id)
     now = datetime.now()
     policy = DataPolicy(
@@ -231,19 +263,20 @@ def refresh_auto_department_scope(
     )
     db.add(policy)
     db.flush()
-    db.add(
-        DataPolicyItem(
-            policy_id=policy.id,
-            dimension_type="department",
-            dimension_value=str(department.dept_code),
-            include_children=False,
-            created_at=now,
+    for department in departments:
+        db.add(
+            DataPolicyItem(
+                policy_id=policy.id,
+                dimension_type="department",
+                dimension_value=str(department.dept_code),
+                include_children=False,
+                created_at=now,
+            )
         )
-    )
     return DepartmentScopeRefreshResult(
         updated=True,
-        department_code=str(department.dept_code),
-        department_name=str(department.dept_name),
+        department_code=str(primary_department.dept_code),
+        department_name=str(primary_department.dept_name),
     )
 
 

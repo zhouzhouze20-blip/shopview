@@ -230,6 +230,36 @@ def ensure_department_manager_wecom_rule() -> None:
     db = SessionLocal()
     try:
         _ensure_department_manager_role(db)
+        half_mountain_rule = (
+            db.query(WeComRoleScopeRule)
+            .filter(WeComRoleScopeRule.rule_name == "默认-半山品类副经理")
+            .first()
+        )
+        if not half_mountain_rule:
+            half_mountain_rule = WeComRoleScopeRule(
+                rule_name="默认-半山品类副经理",
+                priority=150,
+                match_mode="ALL",
+                wecom_userids=["300519", "500621"],
+                name_keywords=[],
+                department_keywords=[],
+                position_keywords=[],
+                role_codes=["dept_manager"],
+                scope_mode="CUSTOM",
+                scope_dimensions={"store": ["4"]},
+                is_active=True,
+                remark="吴奕雯、潘荣燕：部门经理角色，半山全店数据范围",
+            )
+            db.add(half_mountain_rule)
+        else:
+            half_mountain_rule.priority = 150
+            half_mountain_rule.match_mode = "ALL"
+            half_mountain_rule.wecom_userids = ["300519", "500621"]
+            half_mountain_rule.role_codes = ["dept_manager"]
+            half_mountain_rule.scope_mode = "CUSTOM"
+            half_mountain_rule.scope_dimensions = {"store": ["4"]}
+            half_mountain_rule.is_active = True
+            half_mountain_rule.remark = "吴奕雯、潘荣燕：部门经理角色，半山全店数据范围"
         rule = db.query(WeComRoleScopeRule).filter(WeComRoleScopeRule.rule_name == "默认-部门主管").first()
         if rule:
             keywords = [keyword for keyword in list(rule.position_keywords or []) if keyword != "经理"]

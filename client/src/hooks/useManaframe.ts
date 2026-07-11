@@ -17,6 +17,7 @@ export interface ManaframeItem {
   mfcatcode?: string | null;
   mfsubject?: string | null;
   mfmemo?: string | null;
+  is_key_brand?: boolean | null;
 }
 
 export interface ManaframeFilters {

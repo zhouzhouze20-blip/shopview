@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from models.database import get_db
+from routers.manaframe import ensure_key_brand_table
 
 
 router = APIRouter(prefix="/api/counter-groups", tags=["counter-groups"])
@@ -24,6 +25,7 @@ async def get_counter_groups(
     store_id: Optional[int] = Query(None, description="门店ID"),
     db: Session = Depends(get_db),
 ):
+    ensure_key_brand_table(db)
     sql = """
         SELECT
           ROW_NUMBER() OVER (ORDER BY mf.mfcode) AS group_id,
@@ -33,6 +35,7 @@ async def get_counter_groups(
           dept.mfcname AS department_name,
           mf.mfjyfs AS operation_method,
           mf.mfzlgh AS brand_name,
+          COALESCE(kb.is_key_brand, FALSE) AS is_key_brand,
           CASE WHEN upper(trim(COALESCE(mf.mfstatus, ''))) = 'Y' THEN TRUE ELSE FALSE END AS is_active,
           mf.mflast_modified AS erp_sync_time,
           COALESCE(mf.mflast_modified, NOW()) AS created_at,
@@ -40,6 +43,8 @@ async def get_counter_groups(
         FROM manaframe mf
         LEFT JOIN manaframe dept
           ON upper(trim(COALESCE(mf.mfpcode, ''))) = upper(trim(COALESCE(dept.mfcode, '')))
+        LEFT JOIN manaframe_key_brand kb
+          ON upper(trim(COALESCE(kb.mfcode, ''))) = upper(trim(COALESCE(mf.mfcode, '')))
         WHERE 1=1
     """
     params = {"skip": skip, "limit": limit}

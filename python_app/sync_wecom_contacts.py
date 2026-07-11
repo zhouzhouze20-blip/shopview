@@ -39,7 +39,10 @@ from models.models import (
     WeComRoleScopeRule,
 )
 from routers.auth import DEFAULT_ADMIN_PASSWORD, _hash_password
-from services.wecom_department_scope import refresh_auto_department_scope
+from services.wecom_department_scope import (
+    refresh_auto_department_scope,
+    refresh_auto_department_scope_from_known_assignment,
+)
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
 DEFAULT_TIMEOUT_SECONDS = 12
 WECOM_SOURCE_TYPE = "WECOM"
@@ -49,6 +52,19 @@ BUSINESS_SCOPE_ACTION = "view"
 DEFAULT_SYNC_ROLE_CODE = "contract_viewer"
 DEFAULT_ALLOWED_DEPARTMENT_KEYWORDS = ["百货条线", "集团总裁办"]
 DEFAULT_ROLE_SCOPE_RULES = [
+    {
+        "userids": ["300519", "500621"],
+        "role_codes": ["dept_manager"],
+        "scope_mode": "CUSTOM",
+        "scope_dimensions": {"store": ["4"]},
+        "stop_processing": True,
+    },
+    {
+        "position_keywords": ["总监"],
+        "role_codes": ["store_director"],
+        "scope_mode": "CUSTOM",
+        "scope_dimensions": {"store": ["$store_id"]},
+    },
     {
         "position_keywords": ["店长", "总经理", "门店管理员"],
         "role_codes": ["store_admin"],
@@ -535,15 +551,19 @@ def _resolve_role_scope(
                 dimension_type = str(dimension_type or "").strip()
                 if not dimension_type:
                     continue
+                if dimension_type == "department" and "store" in scope_dimensions:
+                    continue
                 for template in values or []:
                     for value in _expand_scope_value(template, store_id=store_id, member=member):
                         scope_dimensions.setdefault(dimension_type, [])
                         if value not in scope_dimensions[dimension_type]:
                             scope_dimensions[dimension_type].append(value)
+        if rule.get("stop_processing"):
+            break
 
     department_scope_values = _department_scope_values(member.department)
 
-    if department_scope_values and scope_mode != "ALL":
+    if department_scope_values and scope_mode != "ALL" and "store" not in scope_dimensions:
         scope_mode = "CUSTOM"
         scope_dimensions = {"department": department_scope_values}
 
@@ -763,6 +783,12 @@ def _sync_role_scope_for_member(
             wecom_user_id=member.userid,
             department_path=member.department,
         )
+        if not result.updated and result.reason == "department_mapping_missing":
+            result = refresh_auto_department_scope_from_known_assignment(
+                db,
+                user=user,
+                wecom_user_id=member.userid,
+            )
         if result.updated:
             stats["wecom_auto_department_scopes_refreshed"] += 1
         else:

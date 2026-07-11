@@ -13,12 +13,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatVoucherMatchMoney } from "@/lib/voucher-match-format";
 
 type RowData = Record<string, number | string | null>;
 type TableColumn = [string, string, ((value: unknown) => string)?, ((row: RowData) => ReactNode)?];
 
-const money = (value: unknown) =>
-  new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", maximumFractionDigits: 0 }).format(Number(value || 0));
+const money = formatVoucherMatchMoney;
 
 const number = (value: unknown) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(Number(value || 0));
 
@@ -124,7 +124,6 @@ export default function VoucherMatchPage() {
           match_type: String(manualRow?.match_type || "DEBIT_USE"),
           amount: toNumber(manualRow?.business_amount),
           amount_tolerance: Number(manualTolerance || 0),
-          valuename: "企划部",
           keyword: manualKeyword,
           limit: 100,
         })}`,

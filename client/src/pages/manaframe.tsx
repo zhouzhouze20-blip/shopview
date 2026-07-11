@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useManaframe } from "@/hooks/useManaframe";
-import { apiGet } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
+import { apiGet, apiPut } from "@/lib/api";
 import { formatOperationMethod } from "@/lib/operation-method";
 import { Building2 } from "lucide-react";
 
@@ -25,6 +27,8 @@ interface StoreOption {
 }
 
 export default function ManaframePage() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [storeId, setStoreId] = useState("ALL");
   const [groupCode, setGroupCode] = useState("");
   const [groupName, setGroupName] = useState("");
@@ -35,6 +39,24 @@ export default function ManaframePage() {
   });
   const rows = useMemo(() => query.data ?? [], [query.data]);
   const stores = useMemo(() => storesQuery.data ?? [], [storesQuery.data]);
+  const keyBrandMutation = useMutation({
+    mutationFn: ({ mfcode, isKeyBrand }: { mfcode: string; isKeyBrand: boolean }) =>
+      apiPut(`/api/manaframe/${encodeURIComponent(mfcode)}/key-brand`, { is_key_brand: isKeyBrand }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["manaframe"] });
+      toast({
+        title: "重点品牌标记已更新",
+        description: `${variables.mfcode} 已标记为${variables.isKeyBrand ? "重点品牌" : "非重点品牌"}`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "保存失败",
+        description: error instanceof Error ? error.message : "更新重点品牌标记时出错",
+        variant: "destructive",
+      });
+    },
+  });
 
   return (
     <div className="mx-auto w-full max-w-7xl p-4 space-y-4 text-sm" data-testid="manaframe-page">
@@ -107,6 +129,7 @@ export default function ManaframePage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="whitespace-nowrap">柜组编码</TableHead>
+                <TableHead className="whitespace-nowrap">重点品牌</TableHead>
                 <TableHead className="whitespace-nowrap">柜组名称</TableHead>
                 <TableHead className="whitespace-nowrap">经营方式</TableHead>
                 <TableHead className="whitespace-nowrap">柜位号</TableHead>
@@ -116,19 +139,19 @@ export default function ManaframePage() {
             <TableBody>
               {query.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
               ) : query.error ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-red-600">
+                  <TableCell colSpan={6} className="text-center py-8 text-red-600">
                     {query.error instanceof Error ? query.error.message : "加载失败"}
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     暂无柜位定义数据
                   </TableCell>
                 </TableRow>
@@ -136,6 +159,17 @@ export default function ManaframePage() {
                 rows.map((row) => (
                   <TableRow key={row.mfcode}>
                     <TableCell className="whitespace-nowrap font-medium">{fmtValue(row.mfcode)}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          aria-label={`${row.mfcode} 重点品牌标记`}
+                          checked={Boolean(row.is_key_brand)}
+                          disabled={keyBrandMutation.isPending}
+                          onCheckedChange={(checked) => keyBrandMutation.mutate({ mfcode: row.mfcode, isKeyBrand: checked })}
+                        />
+                        <span className="text-xs text-muted-foreground">{row.is_key_brand ? "是" : "否"}</span>
+                      </div>
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">{fmtValue(row.mfcname)}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatOperationMethod(row.mfjyfs)}</TableCell>
                     <TableCell className="whitespace-nowrap">{fmtValue(row.mfjywz)}</TableCell>

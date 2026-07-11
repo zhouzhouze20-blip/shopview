@@ -109,11 +109,13 @@ export type HomeSalesFinancialMeta = {
   priorPeriodEnd: string;
 };
 
-/** 根据「今天」生成本期与上年同期的销售查询区间（用于主页驾驶舱） */
-export function buildHomeSalesFinancialMeta(todayIso: string): HomeSalesFinancialMeta {
+/** 根据「今天」和销售数据可用截止日生成本期与上年同期查询区间（用于主页驾驶舱） */
+export function buildHomeSalesFinancialMeta(todayIso: string, latestSalesDateIso?: string | null): HomeSalesFinancialMeta {
   const window = findFinancialMonthContaining(todayIso);
   const periodStart = window.start;
-  const periodEnd = minIsoDate(todayIso, window.end);
+  const calendarEnd = minIsoDate(todayIso, window.end);
+  const periodEnd =
+    latestSalesDateIso && latestSalesDateIso >= periodStart ? minIsoDate(calendarEnd, latestSalesDateIso) : calendarEnd;
 
   const priorYearWindow = getFinancialMonthWindow(window.year - 1, window.index);
   const offset = daysOffsetFromStart(periodStart, periodEnd);

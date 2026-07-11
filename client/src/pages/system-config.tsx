@@ -14,6 +14,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Activity, FileText, Plus, RefreshCw, Shield, Users, Building2, Filter, Search } from "lucide-react";
+import {
+  buildRolePermissionTree,
+  collectPermissionTreeIds,
+  getPermissionTreeNodeState,
+  type RolePermissionTreeNode,
+} from "@/lib/role-permission-tree";
 
 interface StoreOption {
   storeId: number;
@@ -27,22 +33,6 @@ interface PermissionItem {
   module_code: string;
   action_code: string;
 }
-
-const PERMISSION_MODULE_LABELS: Record<string, string> = {
-  activity_analysis: "活动分析",
-  base_map: "底图管理",
-  business_unit: "经营单元",
-  contract: "合同管理",
-  counter: "柜位管理",
-  dashboard: "经营概览",
-  floor: "楼层管理",
-  sales: "销售管理",
-  settlement: "联营结算",
-  supplier: "供应商管理",
-  system: "系统管理",
-  tenant: "商户管理",
-  unit_map_version: "柜位图版本",
-};
 
 interface PostItem {
   id: number;
@@ -429,6 +419,76 @@ const buildPolicyItems = (form: typeof emptyPolicyForm): DataPolicyItem[] => {
   );
 };
 
+function PermissionTreeRows({
+  nodes,
+  selectedPermissionIds,
+  onToggleNode,
+  onTogglePermission,
+  depth = 0,
+}: {
+  nodes: RolePermissionTreeNode[];
+  selectedPermissionIds: Set<number>;
+  onToggleNode: (node: RolePermissionTreeNode, checked: boolean) => void;
+  onTogglePermission: (permissionId: number, checked: boolean) => void;
+  depth?: number;
+}) {
+  return (
+    <div className={depth === 0 ? "space-y-3" : "space-y-2"}>
+      {nodes.map((node) => {
+        const nodeState = getPermissionTreeNodeState(node, selectedPermissionIds);
+        const permissionCount = collectPermissionTreeIds(node).length;
+        return (
+          <div key={node.id} className={depth === 0 ? "rounded-md border border-slate-200 bg-white" : ""}>
+            <label
+              className="flex min-h-9 items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+              style={{ paddingLeft: `${8 + depth * 18}px` }}
+            >
+              <Checkbox
+                checked={nodeState}
+                onCheckedChange={(checked) => onToggleNode(node, checked === true)}
+                disabled={permissionCount === 0}
+              />
+              <span className={depth === 0 ? "font-semibold text-slate-800" : "font-medium text-slate-700"}>{node.name}</span>
+              <span className="ml-auto text-xs text-slate-400">{permissionCount} 项</span>
+            </label>
+
+            {node.permissions?.length ? (
+              <div className="space-y-1 pb-2">
+                {node.permissions.map((permission) => (
+                  <label
+                    key={permission.id}
+                    className="flex min-h-8 items-center gap-2 rounded px-2 py-1 text-sm text-slate-600 hover:bg-slate-50"
+                    style={{ paddingLeft: `${28 + (depth + 1) * 18}px` }}
+                  >
+                    <Checkbox
+                      checked={selectedPermissionIds.has(permission.id)}
+                      onCheckedChange={(checked) => onTogglePermission(permission.id, checked === true)}
+                    />
+                    <span>{permission.permission_name}</span>
+                    <span className="ml-auto text-xs text-slate-400">{permission.permission_code}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+
+            {node.children?.length ? (
+              <div className="pb-2">
+                <PermissionTreeRows
+                  nodes={node.children}
+                  selectedPermissionIds={selectedPermissionIds}
+                  onToggleNode={onToggleNode}
+                  onTogglePermission={onTogglePermission}
+                  depth={depth + 1}
+                />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function SystemConfigPage({ initialTab = "users" }: SystemConfigPageProps) {
   const [tab, setTab] = useState<SystemConfigTab>(initialTab);
   const [userDialogOpen, setUserDialogOpen] = useState(false);
@@ -555,15 +615,22 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
     enabled: tab === "audit-logs" && auditLogType === "operation",
   });
 
-  const permissionGroups = useMemo(() => {
-    const groups = new Map<string, PermissionItem[]>();
-    permissions.forEach((permission) => {
-      const list = groups.get(permission.module_code) ?? [];
-      list.push(permission);
-      groups.set(permission.module_code, list);
+  const permissionTree = useMemo(() => buildRolePermissionTree(permissions), [permissions]);
+  const selectedRolePermissionIds = useMemo(() => new Set(roleForm.permission_ids), [roleForm.permission_ids]);
+
+  const toggleRolePermissionIds = (permissionIds: number[], checked: boolean) => {
+    setRoleForm((prev) => {
+      const next = new Set(prev.permission_ids);
+      permissionIds.forEach((permissionId) => {
+        if (checked) {
+          next.add(permissionId);
+        } else {
+          next.delete(permissionId);
+        }
+      });
+      return { ...prev, permission_ids: Array.from(next).sort((a, b) => a - b) };
     });
-    return Array.from(groups.entries());
-  }, [permissions]);
+  };
 
   const normalizedUserSearchText = userSearchText.trim().toLowerCase();
 
@@ -2226,30 +2293,13 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
           </div>
           <div className="space-y-3">
             <Label>权限分配</Label>
-            <div className="space-y-4 max-h-[420px] overflow-y-auto border rounded-md p-4">
-              {permissionGroups.map(([moduleCode, items]) => (
-                <div key={moduleCode}>
-                  <div className="font-medium mb-2 text-sm text-slate-700">
-                    {PERMISSION_MODULE_LABELS[moduleCode] || moduleCode}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {items.map((permission) => (
-                      <label key={permission.id} className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={roleForm.permission_ids.includes(permission.id)}
-                          onCheckedChange={(checked) => setRoleForm((prev) => ({
-                            ...prev,
-                            permission_ids: checked
-                              ? [...prev.permission_ids, permission.id]
-                              : prev.permission_ids.filter((id) => id !== permission.id),
-                          }))}
-                        />
-                        <span>{permission.permission_name}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <div className="max-h-[520px] overflow-y-auto rounded-md border bg-slate-50 p-3">
+              <PermissionTreeRows
+                nodes={permissionTree}
+                selectedPermissionIds={selectedRolePermissionIds}
+                onToggleNode={(node, checked) => toggleRolePermissionIds(collectPermissionTreeIds(node), checked)}
+                onTogglePermission={(permissionId, checked) => toggleRolePermissionIds([permissionId], checked)}
+              />
             </div>
           </div>
           <div className="flex justify-end gap-2">

@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBaseMapsList, useFloorDictList } from "@/hooks/useBaseMaps";
 import { BusinessUnitStatus, useBusinessUnits } from "@/hooks/useBusinessUnits";
-import { useContractDetail, useContractsList, useUnitContracts, type ContractListItem } from "@/hooks/useContracts";
+import { useContractDepartments, useContractDetail, useContractsList, useUnitContracts, type ContractListItem } from "@/hooks/useContracts";
 import { useGeoElements } from "@/hooks/useGeoElements";
 import { useAlignTransform, useUnitMapVersions } from "@/hooks/useUnitMapVersions";
 import { useStore } from "@/contexts/StoreContext";
@@ -74,6 +74,19 @@ function fmtPercent(value?: number | null) {
   return `${percentValue.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}%`;
 }
 
+function fmtChargeIndicator(value?: number | null) {
+  if (value == null) return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "-";
+  if (Math.abs(numeric) < 1) {
+    return `${(numeric * 100).toLocaleString("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}%`;
+  }
+  return fmtMoney(numeric);
+}
+
 function fmtYesNo(value?: string | null) {
   const normalized = value?.trim().toUpperCase();
   if (!normalized) return "-";
@@ -85,8 +98,8 @@ function fmtYesNo(value?: string | null) {
 function fmtSettlementMethod(value?: string | null) {
   const normalized = value?.trim().toUpperCase();
   if (!normalized) return "-";
-  if (normalized === "0") return "每次";
-  if (normalized === "1") return "一次";
+  if (normalized === "0") return "一次";
+  if (normalized === "1") return "每次";
   return value;
 }
 
@@ -100,6 +113,11 @@ function fmtValue(value?: string | number | null) {
 function isFutureDate(value?: string | null) {
   if (!value) return false;
   return value.slice(0, 10) > new Date().toISOString().slice(0, 10);
+}
+
+function isPastDate(value?: string | null) {
+  if (!value) return false;
+  return value.slice(0, 10) < new Date().toISOString().slice(0, 10);
 }
 
 function renderSupplierInfo(code?: string | null, name?: string | null) {
@@ -126,6 +144,12 @@ function renderGroupInfo(code?: string | null, name?: string | null) {
       {groupName ? <div className="text-xs text-muted-foreground">{groupName}</div> : null}
     </div>
   );
+}
+
+function renderInlineInfo(code?: string | null, name?: string | null) {
+  const first = code?.trim();
+  const second = name?.trim();
+  return [first, second].filter(Boolean).join(" ") || "-";
 }
 
 function renderContractType(code?: string | null, name?: string | null) {
@@ -248,7 +272,7 @@ function DetailTable<Row>({
       <TableHeader>
         <TableRow>
           {columns.map((column) => (
-            <TableHead key={column.header} className={column.className}>
+            <TableHead key={column.header} className={cn("px-3 py-2 whitespace-nowrap", column.className)}>
               {column.header}
             </TableHead>
           ))}
@@ -259,7 +283,7 @@ function DetailTable<Row>({
           rows.map((row, index) => (
             <TableRow key={index}>
               {columns.map((column) => (
-                <TableCell key={column.header} className={column.className}>
+                <TableCell key={column.header} className={cn("px-3 py-2 align-middle whitespace-nowrap", column.className)}>
                   {column.render(row)}
                 </TableCell>
               ))}
@@ -305,7 +329,7 @@ export default function ContractsPage({
   const [counterKeyword, setCounterKeyword] = useState("");
   const [listKeyword, setListKeyword] = useState("");
   const [listStatus, setListStatus] = useState("ALL");
-  const [listGroupCode, setListGroupCode] = useState("");
+  const [listDepartmentCode, setListDepartmentCode] = useState("ALL");
   const [listPage, setListPage] = useState(0);
   const [listPageSize, setListPageSize] = useState(100);
   const [pageView, setPageView] = useState("list");
@@ -341,10 +365,11 @@ export default function ContractsPage({
   const contractsListQuery = useContractsList({
     keyword: listKeyword,
     status: listStatus,
-    groupCode: listGroupCode,
+    departmentCode: listDepartmentCode,
     skip: listPage * listPageSize,
     limit: listPageSize,
   });
+  const contractDepartmentsQuery = useContractDepartments();
   const contractDetailQuery = useContractDetail(selectedContractNo);
 
   const unitRows = useMemo(() => unitsQuery.data ?? [], [unitsQuery.data]);
@@ -568,7 +593,7 @@ export default function ContractsPage({
 
   useEffect(() => {
     setListPage(0);
-  }, [listKeyword, listStatus, listGroupCode, listPageSize]);
+  }, [listKeyword, listStatus, listDepartmentCode, listPageSize]);
 
   useEffect(() => {
     if (!baseMapOptions.length) {
@@ -617,6 +642,7 @@ export default function ContractsPage({
     [contractRows],
   );
   const contractListRows = contractsListQuery.data?.items ?? [];
+  const contractDepartmentOptions = contractDepartmentsQuery.data?.items ?? [];
   const canGoPrevPage = listPage > 0;
   const canGoNextPage = contractListRows.length >= listPageSize;
   const detailUnitStatus = detail?.unit.status ?? selectedUnitStatus;
@@ -1013,13 +1039,24 @@ export default function ContractsPage({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">柜组编码</Label>
-            <Input
-              className="h-9 text-sm"
-              value={listGroupCode}
-              onChange={(e) => setListGroupCode(e.target.value)}
-              placeholder="如 6030106076"
-            />
+            <Label className="text-xs">部门</Label>
+            <Select
+              value={listDepartmentCode}
+              onValueChange={setListDepartmentCode}
+              disabled={contractDepartmentsQuery.isLoading}
+            >
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue placeholder="全部部门" />
+              </SelectTrigger>
+              <SelectContent className="z-50 bg-white border shadow-xl">
+                <SelectItem value="ALL">全部部门</SelectItem>
+                {contractDepartmentOptions.map((department) => (
+                  <SelectItem key={department.department_code} value={department.department_code}>
+                    {renderInlineInfo(department.department_code, department.department_name)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
@@ -1052,16 +1089,14 @@ export default function ContractsPage({
                 <Table className="text-xs">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="whitespace-nowrap">状态</TableHead>
+                      <TableHead className="min-w-40">部门</TableHead>
                       <TableHead className="whitespace-nowrap">合同编号</TableHead>
-                      <TableHead className="whitespace-nowrap">合同类型</TableHead>
+                      <TableHead className="whitespace-nowrap">开始日期</TableHead>
+                      <TableHead className="whitespace-nowrap">结束日期</TableHead>
                       <TableHead className="min-w-48">供应商</TableHead>
                       <TableHead className="whitespace-nowrap">经营方式</TableHead>
-                      <TableHead className="min-w-52">主题</TableHead>
+                      <TableHead className="whitespace-nowrap">柜位号</TableHead>
                       <TableHead className="min-w-40">柜组</TableHead>
-                      <TableHead className="whitespace-nowrap">品牌</TableHead>
-                      <TableHead className="whitespace-nowrap">生效日期</TableHead>
-                      <TableHead className="whitespace-nowrap">失效日期</TableHead>
                       <TableHead className="whitespace-nowrap text-right">月目标销售额</TableHead>
                       <TableHead className="whitespace-nowrap">付款方式</TableHead>
                       <TableHead className="whitespace-nowrap">是否清算</TableHead>
@@ -1073,22 +1108,20 @@ export default function ContractsPage({
                   <TableBody>
                     {contractsListQuery.isLoading ? (
                       <TableRow>
-                        <TableCell colSpan={16} className="py-8 text-center text-muted-foreground">
+                        <TableCell colSpan={14} className="py-8 text-center text-muted-foreground">
                           加载合同列表中...
                         </TableCell>
                       </TableRow>
                     ) : contractsListQuery.error ? (
                       <TableRow>
-                        <TableCell colSpan={16} className="py-8 text-center text-red-600">
+                        <TableCell colSpan={14} className="py-8 text-center text-red-600">
                           {contractsListQuery.error instanceof Error ? contractsListQuery.error.message : "合同列表加载失败"}
                         </TableCell>
                       </TableRow>
                     ) : contractListRows.length ? (
                       contractListRows.map((item) => (
-                        <TableRow key={item.cmcontno}>
-                          <TableCell>
-                            <Badge variant={item.cmstatus === "Y" ? "default" : "secondary"}>{item.status_label || "-"}</Badge>
-                          </TableCell>
+                        <TableRow key={item.cmcontno} className={cn(isPastDate(item.cmlapdate) && "text-red-600")}>
+                          <TableCell>{renderGroupInfo(item.department_codes, item.department_names)}</TableCell>
                           <TableCell className="font-medium">
                             <Button
                               variant="link"
@@ -1098,14 +1131,12 @@ export default function ContractsPage({
                               {item.cmcontno}
                             </Button>
                           </TableCell>
-                          <TableCell>{renderContractType(item.cmtype, item.contract_type_name)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{fmtDate(item.cmeffdate)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{fmtDate(item.cmlapdate)}</TableCell>
                           <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
                           <TableCell>{formatOperationMethod(item.cmwmid)}</TableCell>
-                          <TableCell>{fmtValue(item.cmtitle)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{fmtValue(item.unit_codes)}</TableCell>
                           <TableCell>{renderGroupInfo(item.group_codes, item.group_names)}</TableCell>
-                          <TableCell>{fmtValue(item.cmppname || item.range_brands)}</TableCell>
-                          <TableCell>{fmtDate(item.cmeffdate)}</TableCell>
-                          <TableCell>{fmtDate(item.cmlapdate)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(item.cmmoney)}</TableCell>
                           <TableCell>{fmtValue(item.cmpaycode)}</TableCell>
                           <TableCell>{item.is_clear == null ? "-" : item.is_clear ? "是" : "否"}</TableCell>
@@ -1126,7 +1157,7 @@ export default function ContractsPage({
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={16} className="py-8 text-center text-muted-foreground">
+                        <TableCell colSpan={14} className="py-8 text-center text-muted-foreground">
                           未找到符合条件的合同
                         </TableCell>
                       </TableRow>
@@ -1406,7 +1437,7 @@ export default function ContractsPage({
           }
         }}
       >
-        <DialogContent className="max-w-6xl max-h-[88vh] overflow-y-auto">
+        <DialogContent className="h-[92vh] w-[94vw] max-w-[94vw] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="w-5 h-5" />
@@ -1463,62 +1494,6 @@ export default function ContractsPage({
                 </div>
               </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>主合同信息</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <div className="text-muted-foreground">经营单元编码</div>
-                    <div>{fmtValue(contractMain?.cmchar9)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">合同类型</div>
-                    <div>{renderContractType(contractMain?.cmtype, contractMain?.contract_type_name)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">经营方式</div>
-                    <div>{formatOperationMethod(contractMain?.cmwmid)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">月目标销售额</div>
-                    <div>{fmtMoney(contractMain?.cmmoney)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">结算位置</div>
-                    <div>{fmtValue(contractMain?.cmjsmkt)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">付款方式</div>
-                    <div>{fmtValue(contractMain?.cmpaycode)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">签约日期</div>
-                    <div>{fmtDate(contractMain?.signdate)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">交付日期</div>
-                    <div>{fmtDate(contractMain?.deliverydate)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">装修期</div>
-                    <div>{fmtDate(contractMain?.zxqsrq)} 至 {fmtDate(contractMain?.zxjzrq)}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">联系方式</div>
-                    <div>{fmtValue(contractMain?.cmtel || contractMain?.cmcontact)}</div>
-                  </div>
-                  <div className="md:col-span-2">
-                    <div className="text-muted-foreground">合同标的</div>
-                    <div>{fmtValue(contractMain?.cmobject)}</div>
-                  </div>
-                  <div className="md:col-span-2">
-                    <div className="text-muted-foreground">备注</div>
-                    <div>{fmtValue(contractMain?.cmmemo)}</div>
-                  </div>
-                </CardContent>
-              </Card>
-
               <Tabs defaultValue="contmanaframe" className="space-y-4">
                 <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="contmanaframe">所属柜组 {contractDetail.counts.contmanaframe}</TabsTrigger>
@@ -1532,7 +1507,7 @@ export default function ContractsPage({
                     rows={contractDetail.contmanaframe}
                     emptyText="暂无经营范围明细"
                     columns={[
-                      { header: "柜组", render: (row) => renderGroupInfo(row.cmfmfid, row.group_name) },
+                      { header: "柜组", render: (row) => renderInlineInfo(row.cmfmfid, row.group_name) },
                       { header: "门店", render: (row) => fmtValue(row.cmfmarket) },
                       { header: "品牌", render: (row) => fmtValue(row.cmfbrand) },
                       { header: "扣率1", render: (row) => fmtPercent(row.cmfnum1) },
@@ -1556,18 +1531,18 @@ export default function ContractsPage({
                     emptyText="暂无保底超额明细"
                     columns={[
                       { header: "序号", render: (row) => fmtValue(row.cbseqno) },
-                      { header: "柜组", render: (row) => renderGroupInfo(row.cbmfid, row.group_name) },
+                      { header: "柜组", render: (row) => renderInlineInfo(row.cbmfid, row.group_name) },
                       { header: "有效期", render: (row) => `${fmtDate(row.cbeffdate)} 至 ${fmtDate(row.cblapdate)}` },
                       { header: "是否保底", render: (row) => fmtYesNo(row.cbisrunbd) },
                       { header: "是否清算", render: (row) => fmtYesNo(row.cbisrunqs) },
-                      { header: "保底额", render: (row) => fmtMoney(row.cbsum) },
                       { header: "保底比率", render: (row) => fmtPercent(row.cbrate) },
+                      { header: "保底金额", render: (row) => fmtMoney(row.cbsum) },
                       { header: "保底毛利", render: (row) => fmtMoney(row.cbprofit) },
+                      { header: "完成金额", render: (row) => fmtMoney(row.xssr) },
                       { header: "租金单价", render: (row) => fmtMoney(row.cbrentprice) },
                       { header: "管理费单价", render: (row) => fmtMoney(row.cbnamaprice) },
                       { header: "推广费单价", render: (row) => fmtMoney(row.cbpopprice) },
                       { header: "销售考核", render: (row) => fmtMoney(row.cbsalekh) },
-                      { header: "完成金额", render: (row) => fmtMoney(row.xssr) },
                     ]}
                   />
                 </TabsContent>
@@ -1579,7 +1554,8 @@ export default function ContractsPage({
                     columns={[
                       { header: "序号", render: (row) => fmtValue(row.cclseqno) },
                       { header: "项目编号", render: (row) => fmtValue(row.cclitemid) },
-                      { header: "柜组", render: (row) => renderGroupInfo(row.cclmfid, row.group_name) },
+                      { header: "收费项目名称", render: (row) => fmtValue(row.cclitemname), className: "min-w-40" },
+                      { header: "柜组", render: (row) => renderInlineInfo(row.cclmfid, row.group_name) },
                       { header: "有效期", render: (row) => `${fmtDate(row.ccleffdate)} 至 ${fmtDate(row.ccllapdate)}` },
                       { header: "单位", render: (row) => fmtValue(row.cclitemunit) },
                       { header: "单价", render: (row) => fmtMoney(row.cclitemprice) },
@@ -1599,7 +1575,7 @@ export default function ContractsPage({
                       columns={[
                         { header: "行号", render: (row) => fmtValue(row.cscrowno), className: "whitespace-nowrap" },
                         { header: "ID", render: (row) => fmtValue(row.cscchargecode), className: "whitespace-nowrap" },
-                        { header: "柜组", render: (row) => renderGroupInfo(row.cscmfid, row.group_name), className: "min-w-32" },
+                        { header: "柜组", render: (row) => renderInlineInfo(row.cscmfid, row.group_name), className: "min-w-32" },
                         { header: "费用项目", render: (row) => fmtValue(row.cscchargename), className: "min-w-40 whitespace-nowrap" },
                         { header: "是否帐扣", render: (row) => fmtYesNo(row.cscisdeduct), className: "whitespace-nowrap" },
                         { header: "结算方式", render: (row) => fmtSettlementMethod(row.cscismcjs), className: "whitespace-nowrap" },
@@ -1607,7 +1583,7 @@ export default function ContractsPage({
                         { header: "返还日期", render: (row) => fmtDate(row.cscretdate), className: "whitespace-nowrap" },
                         { header: "生效日期", render: (row) => fmtDate(row.csceffdate), className: "whitespace-nowrap" },
                         { header: "失效日期", render: (row) => fmtDate(row.csclapdate), className: "whitespace-nowrap" },
-                        { header: "指标", render: (row) => fmtMoney(row.cscvalue), className: "whitespace-nowrap" },
+                        { header: "指标", render: (row) => fmtChargeIndicator(row.cscvalue), className: "whitespace-nowrap" },
                       ]}
                     />
                   </div>

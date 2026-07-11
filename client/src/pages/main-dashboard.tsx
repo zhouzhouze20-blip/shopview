@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback, Component, ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import NavigationSidebar, { navigationItems } from "@/components/navigation-sidebar";
+import NavigationSidebar from "@/components/navigation-sidebar";
+import { navigationItems } from "@/lib/navigation-items";
 import BaseMapsPage from "@/pages/base-maps";
 import UnitMapVersionsPage from "@/pages/unit-map-versions";
 import BusinessUnitsPage from "@/pages/business-units";
@@ -14,6 +15,9 @@ import ContractUnitBindingsPage from "./contract-unit-bindings";
 import SalesDashboardPage from "./sales-dashboard";
 import ActivityAnalysisPage from "./activity-analysis";
 import VoucherMatchPage from "./activity-analysis/voucher-match";
+import ConfirmedRevenueDailyPage from "./activity-analysis/confirmed-revenue-daily";
+import CouponMonthlyBalancePage from "./activity-analysis/coupon-monthly-balance";
+import PointsActivityAnalysisPage from "./activity-analysis/points";
 import StarDiamondAnalysisPage from "./activity-analysis/star-diamond";
 import CommoditySalesDetailReportPage from "./sales-reports/commodity-sales-detail";
 import Od0002SalesGrossProfitPage from "./sales-reports/od0002-sales-gross-profit";
@@ -43,6 +47,7 @@ import {
 } from "@/hooks/useHomeDashboard";
 import { cn } from "@/lib/utils";
 import { apiPost } from "@/lib/api";
+import { APP_BRAND } from "@/lib/app-branding";
 import { useStore } from "@/contexts/StoreContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -139,7 +144,10 @@ const MODULE_LABELS: Record<string, string> = {
   "contract-unit-bindings": "合同柜位绑定",
   "sales-dashboard": "销售看板",
   "activity-analysis": "活动分析",
+  "points-activity-analysis": "中心年中庆活动",
   "voucher-match": "凭证匹配",
+  "confirmed-revenue-daily": "确认收入占比",
+  "coupon-monthly-balance": "卡券月结",
   "star-diamond-analysis": "中心星钻会员分析",
   "commodity-sales-detail": "商品销售明细",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
@@ -256,7 +264,7 @@ function SystemOverview({
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-lg font-semibold">销售概览</CardTitle>
               <p className="text-xs text-muted-foreground">
-                财务月第 {meta.window.index} 期 · 本期 {meta.periodStart}～{meta.periodEnd}（按财务月口径累计至今日）
+                财务月第 {meta.window.index} 期 · 本期 {meta.periodStart}～{meta.periodEnd}（按财务月口径累计至数据截止日）
               </p>
               <p className="text-[11px] text-muted-foreground">
                 上年同期区间 {meta.priorPeriodStart}～{meta.priorPeriodEnd}（自然日天数与本期对齐）
@@ -674,8 +682,14 @@ export default function MainDashboard() {
         return <SalesDashboardPage />;
       case "activity-analysis":
         return <ActivityAnalysisPage />;
+      case "points-activity-analysis":
+        return <PointsActivityAnalysisPage />;
       case "voucher-match":
         return <VoucherMatchPage />;
+      case "confirmed-revenue-daily":
+        return <ConfirmedRevenueDailyPage />;
+      case "coupon-monthly-balance":
+        return <CouponMonthlyBalancePage />;
       case "star-diamond-analysis":
         return <StarDiamondAnalysisPage />;
       case "commodity-sales-detail":
@@ -856,7 +870,7 @@ export default function MainDashboard() {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">百货柜位管理系统</div>
+              <div className="truncate text-sm font-semibold text-slate-900">{APP_BRAND.zhName}</div>
               <div className="truncate text-xs text-muted-foreground">
                 {MODULE_LABELS[activeModule] || activeModule}
                 {adminViewUser ? ` · 代看 ${adminViewUser.real_name || adminViewUser.username}` : ""}
