@@ -21,6 +21,8 @@ const permissions = [
   { id: 12, permission_code: "activity_settlement.confirmed_revenue.view", permission_name: "查看确认收入占比", module_code: "activity_settlement", action_code: "confirmed_revenue_view" },
   { id: 13, permission_code: "activity_analysis.view", permission_name: "查看活动分析", module_code: "activity_analysis", action_code: "view" },
   { id: 14, permission_code: "activity_analysis.points.view", permission_name: "查看积分活动核对", module_code: "activity_analysis", action_code: "points_view" },
+  { id: 15, permission_code: "sales.view", permission_name: "查看销售", module_code: "sales", action_code: "view" },
+  { id: 16, permission_code: "sales.od0002.view", permission_name: "查看OD0002门店销售毛利汇总表", module_code: "sales", action_code: "od0002_view" },
 ];
 
 function findNode(nodes, id) {
@@ -92,5 +94,21 @@ test("groups activity analysis permissions by page", () => {
   assert.deepEqual(
     (pointsAnalysis.permissions ?? []).map((permission) => permission.permission_code),
     ["activity_analysis.points.view"],
+  );
+});
+
+test("shows OD0002 as a dedicated sales report permission", () => {
+  const tree = buildRolePermissionTree(permissions);
+  const salesReports = findNode(tree, "sales-reports");
+  const od0002 = findNode(tree, "od0002-sales-gross-profit");
+
+  assert.ok(salesReports);
+  assert.deepEqual((salesReports.children ?? []).map((node) => node.id), [
+    "od0002-sales-gross-profit",
+  ]);
+  assert.ok(od0002);
+  assert.deepEqual(
+    (od0002.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.od0002.view"],
   );
 });

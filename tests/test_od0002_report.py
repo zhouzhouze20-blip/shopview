@@ -9,14 +9,53 @@ from python_app.services.od0002_report import (
     EXCLUDED_DEPARTMENT_CODES,
     FLOOR_NAMES,
     TrustedScopeSql,
+    build_authorized_departments_query,
     build_authorized_stores_query,
     build_report_query,
     compare_period,
     metric_triplet,
     load_od0002_report,
     load_od0002_authorized_stores,
+    load_od0002_authorized_departments,
     normalize_rows,
 )
+
+
+def test_authorized_department_query_is_scope_and_store_filtered():
+    sql, params = build_authorized_departments_query(
+        TrustedScopeSql(" AND dept.mfcode = ANY(:allowed_departments)"),
+        {"allowed_departments": ["6030117"]},
+        selected_store="603",
+    )
+
+    assert ":allowed_departments" in sql
+    assert ":selected_store" in sql
+    assert ":excluded_department_codes" in sql
+    assert params["selected_store"] == "603"
+    assert params["allowed_departments"] == ["6030117"]
+    assert set(params["excluded_department_codes"]) == set(EXCLUDED_DEPARTMENT_CODES)
+
+
+def test_load_authorized_departments_uses_sales_dashboard_order():
+    db = FakeDb([
+        {"store_code": "603", "department_code": "6030102", "department_name": "中心四部(男装)"},
+        {"store_code": "603", "department_code": "6030117", "department_name": "中心三部(女装)"},
+    ])
+
+    rows = load_od0002_authorized_departments(db, TrustedScopeSql(" AND 1=1"), {})
+
+    assert [row["department_code"] for row in rows] == ["6030117", "6030102"]
+
+
+def test_report_query_binds_selected_department():
+    sql, params = build_report_query(
+        date(2026, 1, 1), date(2026, 1, 31),
+        date(2025, 1, 1), date(2025, 1, 31),
+        TrustedScopeSql(" AND 1=1"), {}, None, " 6030117 ",
+    )
+
+    assert ":selected_department" in sql
+    assert params["selected_department"] == "6030117"
 
 
 def test_authorized_store_query_uses_master_dimensions_without_sales_or_dates():
@@ -62,7 +101,7 @@ def test_od0002_stores_endpoint_requires_permission_and_scope_aliases(monkeypatc
 
     result = asyncio.run(sales.od0002_stores(object(), object()))
 
-    assert calls["permission"] == "sales.view"
+    assert calls["permission"] == "sales.od0002.view"
     assert calls["filter_kwargs"]["department_code_expr"] == "dept.mfcode"
     assert calls["filter_kwargs"]["department_name_expr"] == "dept.mfcname"
     assert calls["filter_kwargs"]["group_expr"] == "mf.mfcode"
@@ -71,6 +110,25 @@ def test_od0002_stores_endpoint_requires_permission_and_scope_aliases(monkeypatc
     assert calls["filter_kwargs"]["floor_expr"] == "mf.mflc"
     assert calls["filter_kwargs"]["store_expr"] == "st.store_id::text"
     assert result[0]["store_name"] == "零销售授权店"
+
+
+def test_od0002_departments_endpoint_filters_by_store_and_permission(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda db, user, **kwargs: DataScope(allow={"department": {"6030117"}}))
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: " AND 1=1")
+    monkeypatch.setattr(
+        sales,
+        "load_od0002_authorized_departments",
+        lambda db, scope_sql, params, selected_store: calls.setdefault("load", selected_store) or [],
+    )
+
+    asyncio.run(sales.od0002_departments(" 603 ", object(), object()))
+
+    assert calls == {"permission": "sales.od0002.view", "load": "603"}
 
 
 def test_selected_store_code_is_resolved_to_active_store_id_with_bound_parameter():
@@ -318,6 +376,43 @@ def test_normalize_rows_keeps_same_department_separate_by_store_and_builds_metri
     }
 
 
+def test_normalize_rows_uses_sales_dashboard_department_order_within_each_store():
+    rows = [
+        {
+            "dimension_type": "departments", "store_code": "603", "store_name": "新世纪",
+            "dimension_code": "6030102", "dimension_name": "中心四部(男装)",
+            "sales_current": 1, "profit_current": 1, "sales_prior": 1, "profit_prior": 1,
+        },
+        {
+            "dimension_type": "departments", "store_code": "603", "store_name": "新世纪",
+            "dimension_code": "6030117", "dimension_name": "中心三部(女装)",
+            "sales_current": 1, "profit_current": 1, "sales_prior": 1, "profit_prior": 1,
+        },
+        {
+            "dimension_type": "departments", "store_code": "602", "store_name": "二店",
+            "dimension_code": "6020002", "dimension_name": "二部",
+            "sales_current": 1, "profit_current": 1, "sales_prior": 1, "profit_prior": 1,
+        },
+        {
+            "dimension_type": "departments", "store_code": "602", "store_name": "二店",
+            "dimension_code": "6020001", "dimension_name": "一部",
+            "sales_current": 1, "profit_current": 1, "sales_prior": 1, "profit_prior": 1,
+        },
+    ]
+
+    dimensions, _quality = normalize_rows(rows)
+
+    assert [
+        (row["store_code"], row["dimension_code"])
+        for row in dimensions["departments"]
+    ] == [
+        ("602", "6020001"),
+        ("602", "6020002"),
+        ("603", "6030117"),
+        ("603", "6030102"),
+    ]
+
+
 def test_normalize_rows_reports_unmatched_area_and_floor_counts():
     rows = [
         {"dimension_type": "quality", "store_code": None, "store_name": None,
@@ -483,7 +578,7 @@ def test_od0002_route_requires_permission_scope_and_builds_expected_alias_scope(
 
     result = asyncio.run(sales.od0002_report(date(2026, 1, 1), date(2026, 1, 31), None, object(), object()))
 
-    assert calls["permission"] == "sales.view"
+    assert calls["permission"] == "sales.od0002.view"
     assert calls["scope_kwargs"] == {"fallback_resource_code": "sales"}
     assert calls["filter_kwargs"] == {
         "prefix": "od0002", "store_expr": "st.store_id::text",

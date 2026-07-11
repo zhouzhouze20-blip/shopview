@@ -27,6 +27,7 @@ from services.sales_analysis import analyze_group_sales
 from services.od0002_report import (
     TrustedScopeSql,
     compare_period,
+    load_od0002_authorized_departments,
     load_od0002_authorized_stores,
     load_od0002_report,
 )
@@ -357,7 +358,7 @@ async def od0002_stores(
     current_user: User = Depends(get_current_user),
 ):
     """Return every store visible to OD0002, independent of sales dates."""
-    require_permission(db, current_user, "sales.view")
+    require_permission(db, current_user, "sales.od0002.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     scope_params: dict[str, Any] = {}
     scope_filter_sql = _business_scope_filter_sql(
@@ -379,6 +380,34 @@ async def od0002_stores(
     )
 
 
+@router.get("/reports/od0002/departments")
+async def od0002_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return permission-scoped OD0002 department options."""
+    require_permission(db, current_user, "sales.od0002.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="od0002_departments",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    selected_store = (store_id or "").strip() or None
+    return load_od0002_authorized_departments(
+        db, TrustedScopeSql(scope_filter_sql), scope_params, selected_store
+    )
+
+
 @router.get("/reports/od0002")
 async def od0002_report(
     start_date: date,
@@ -386,10 +415,11 @@ async def od0002_report(
     store_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
 ):
     """OD0002 sales and gross-profit comparison report."""
     report, _ = _load_od0002_for_request(
-        start_date, end_date, store_id, db, current_user
+        start_date, end_date, store_id, db, current_user, department_id
     )
     return report
 
@@ -400,6 +430,7 @@ def _load_od0002_for_request(
     store_id: str | None,
     db: Session,
     current_user: User,
+    department_id: str | None = None,
 ) -> tuple[dict[str, Any], Any]:
     if end_date < start_date:
         raise HTTPException(
@@ -408,8 +439,9 @@ def _load_od0002_for_request(
         )
 
     selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
 
-    require_permission(db, current_user, "sales.view")
+    require_permission(db, current_user, "sales.od0002.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     has_explicit_store_scope = bool(
         scope.deny.get("store", set())
@@ -452,6 +484,7 @@ def _load_od0002_for_request(
         prior_start_date=prior_start_date,
         prior_end_date=prior_end_date,
         selected_store=selected_store,
+        selected_department=selected_department,
     )
     return report, scope
 
@@ -483,9 +516,10 @@ async def od0002_export(
     store_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
 ):
     report, scope = _load_od0002_for_request(
-        start_date, end_date, store_id, db, current_user
+        start_date, end_date, store_id, db, current_user, department_id
     )
     export_report = dict(report)
     export_report["scope_description"] = _od0002_scope_description(scope)

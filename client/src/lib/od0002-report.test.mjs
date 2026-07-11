@@ -66,6 +66,23 @@ test("buildOd0002Params trims a selected store", () => {
   );
 });
 
+test("department filter defaults to all and is reset when store changes", async () => {
+  const module = await import("./od0002-report.ts");
+  assert.equal(module.OD0002_ALL_DEPARTMENTS, "all");
+  assert.deepEqual(
+    module.changeOd0002Store(
+      { start: "2026-01-01", end: "2026-01-31", storeId: "603", departmentId: "6030117" },
+      "602",
+    ),
+    { start: "2026-01-01", end: "2026-01-31", storeId: "602", departmentId: "all" },
+  );
+});
+
+test("buildOd0002Params sends one selected department", () => {
+  const params = buildOd0002Params("2026-01-01", "2026-01-31", "603", " 6030117 ");
+  assert.equal(params.get("department_id"), "6030117");
+});
+
 test("OD0002 exposes the six approved tabs in order", () => {
   assert.deepEqual(
     OD0002_TABS.map((tab) => tab.label),
@@ -167,7 +184,13 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /apiRequest\(`\/api\/sales\/reports\/od0002\/export\?/);
   assert.match(source, /OD0002_TABS\.map/);
   assert.match(source, />查询</);
-  assert.match(source, />重置</);
+  assert.doesNotMatch(source, />重置</);
+  assert.doesNotMatch(source, /RefreshCw/);
+  assert.match(source, />统计期间</);
+  assert.match(source, />组织范围</);
+  assert.match(source, /grid gap-6 lg:grid-cols-2/);
+  assert.match(source, /\/api\/sales\/reports\/od0002\/departments/);
+  assert.match(source, />全部部门</);
   assert.match(source, /导出/);
   assert.match(source, /无权限查看此报表|无功能权限/);
   assert.match(source, /暂无数据/);
@@ -178,6 +201,17 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /<TableFooter>/);
   assert.match(source, />合计</);
   assert.match(source, /metricCells\(activeTotal\)/);
+});
+
+test("OD0002 table uses Chinese financial yoy colors and compact data rows", async () => {
+  const source = await readFile(new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /function yoyColorClass\([^)]*\)[\s\S]*value > 0[\s\S]*text-red-600[\s\S]*value < 0[\s\S]*text-green-600/);
+  assert.match(source, /isYoy:\s*true/g);
+  assert.match(source, /cell\.isYoy\s*\?\s*yoyColorClass\(cell\.rawValue\)/);
+  assert.match(source, /<TableCell[^>]*className="py-2"[^>]*>\{row\.store_name/);
+  assert.match(source, /<TableCell[^>]*className="py-2"[^>]*><div className="font-medium">/);
+  assert.match(source, /<TableFooter>[\s\S]*py-2/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

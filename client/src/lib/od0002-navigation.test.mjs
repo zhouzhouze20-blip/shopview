@@ -15,7 +15,7 @@ test("OD0002 is a sales report sibling with its own sales permission", async () 
     navigation,
     /id:\s*["']sales-reports["'][\s\S]*subItems:\s*\[[\s\S]*id:\s*["']commodity-sales-detail["'][\s\S]*id:\s*["']od0002-sales-gross-profit["'][\s\S]*name:\s*["']OD0002 门店销售毛利汇总表["'][\s\S]*icon:\s*FileSpreadsheet/,
   );
-  assert.match(permissions, /["']od0002-sales-gross-profit["']:\s*\[["']sales\.view["']\]/);
+  assert.match(permissions, /["']od0002-sales-gross-profit["']:\s*\[["']sales\.od0002\.view["']\]/);
   assert.doesNotMatch(permissions, /["']sales-reports["']\s*:/);
 });
 

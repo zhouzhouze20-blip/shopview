@@ -57,7 +57,7 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     id: "sales-management",
     name: "销售管理",
     children: [
-      { id: "sales-dashboard", name: "销售看板", moduleCodes: ["sales"] },
+      { id: "sales-dashboard", name: "销售看板", permissionCodes: ["sales.view"] },
       {
         id: "activity-analysis-group",
         name: "活动分析",
@@ -67,7 +67,18 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
           { id: "star-diamond-analysis", name: "中心星钻会员", permissionPrefixes: ["activity_analysis.star_diamond."] },
         ],
       },
-      { id: "sales-reports", name: "报表", children: [{ id: "commodity-sales-detail", name: "商品销售明细", moduleCodes: ["sales"] }] },
+      {
+        id: "sales-reports",
+        name: "报表",
+        children: [
+          { id: "commodity-sales-detail", name: "商品销售明细", permissionCodes: ["sales.view"] },
+          {
+            id: "od0002-sales-gross-profit",
+            name: "OD0002 门店销售毛利汇总表",
+            permissionCodes: ["sales.od0002.view"],
+          },
+        ],
+      },
     ],
   },
   {

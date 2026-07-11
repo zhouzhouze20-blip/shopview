@@ -9,6 +9,8 @@ from typing import Any
 
 from sqlalchemy import text
 
+from services.department_display_order import department_display_sort_key
+
 
 EXCLUDED_DEPARTMENT_CODES = frozenset(
     {
@@ -180,6 +182,60 @@ def load_od0002_authorized_stores(
     return [dict(row) for row in rows]
 
 
+def build_authorized_departments_query(
+    scope_filter_sql: str | TrustedScopeSql,
+    scope_params: Mapping[str, Any],
+    selected_store: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Build the permission-scoped OD0002 department selector query."""
+    scope_sql = _trusted_scope_value(scope_filter_sql)
+    params = dict(scope_params)
+    params["excluded_department_codes"] = sorted(EXCLUDED_DEPARTMENT_CODES)
+    selected_store_sql = ""
+    if selected_store:
+        params["selected_store"] = selected_store.strip()
+        selected_store_sql = " AND TRIM(BOTH FROM st.store_code) = :selected_store"
+    sql = f"""
+SELECT DISTINCT
+  TRIM(BOTH FROM st.store_code) AS store_code,
+  TRIM(BOTH FROM dept.mfcode) AS department_code,
+  COALESCE(NULLIF(TRIM(BOTH FROM dept.mfcname), ''), TRIM(BOTH FROM dept.mfcode)) AS department_name
+FROM stores st
+JOIN manaframe mf
+  ON TRIM(BOTH FROM st.store_code) = SUBSTRING(TRIM(BOTH FROM mf.mfcode) FROM 1 FOR 3)
+JOIN manaframe dept
+  ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+LEFT JOIN area_category ac
+  ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = UPPER(TRIM(COALESCE(ac.category_code, '')))
+WHERE st.is_active IS TRUE
+  AND TRIM(BOTH FROM COALESCE(mf.mflc, '')) <> '00'
+  AND TRIM(BOTH FROM COALESCE(dept.mfcode, '')) <> ''
+  AND TRIM(BOTH FROM dept.mfcode) <> ALL(:excluded_department_codes)
+  {scope_sql}
+  {selected_store_sql}
+"""
+    return sql, params
+
+
+def load_od0002_authorized_departments(
+    db: Any,
+    scope_filter_sql: str | TrustedScopeSql,
+    scope_params: Mapping[str, Any],
+    selected_store: str | None = None,
+) -> list[dict[str, Any]]:
+    sql, params = build_authorized_departments_query(
+        scope_filter_sql, scope_params, selected_store
+    )
+    rows = [dict(row) for row in db.execute(text(sql), params).mappings().all()]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("store_code") or ""),
+            department_display_sort_key(row),
+        )
+    )
+    return rows
+
+
 def build_report_query(
     start_date: date,
     end_date: date,
@@ -188,6 +244,7 @@ def build_report_query(
     scope_filter_sql: str | TrustedScopeSql,
     scope_params: Mapping[str, Any],
     selected_store: str | None = None,
+    selected_department: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build the bound PostgreSQL query for all OD0002 report dimensions."""
     # The SQL shape is trusted internal structure; all user-controlled scope
@@ -207,6 +264,13 @@ def build_report_query(
     if selected_store is not None:
         params["selected_store"] = selected_store
         selected_store_sql = " AND s.sglmarket::text = :selected_store"
+    selected_department_sql = ""
+    if selected_department and selected_department.strip():
+        params["selected_department"] = selected_department.strip()
+        selected_department_sql = (
+            " AND UPPER(TRIM(BOTH FROM COALESCE(dept.mfcode, ''))) "
+            "= UPPER(:selected_department)"
+        )
 
     floor_cases = "\n".join(
         f"WHEN '{code}' THEN '{name}'" for code, name in FLOOR_NAMES.items()
@@ -271,6 +335,7 @@ base AS (
     AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
     {scope_sql}
     {selected_store_sql}
+    {selected_department_sql}
   GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 ),
 stores AS (
@@ -400,6 +465,17 @@ def normalize_rows(
             ),
         }
         dimensions[dimension_type].append(normalized)
+    dimensions["departments"].sort(
+        key=lambda row: (
+            str(row.get("store_code") or ""),
+            department_display_sort_key(
+                {
+                    "department_code": row.get("dimension_code"),
+                    "department_name": row.get("dimension_name"),
+                }
+            ),
+        )
+    )
     return dimensions, quality
 
 
@@ -435,6 +511,7 @@ def load_od0002_report(
     prior_start_date: date,
     prior_end_date: date,
     selected_store: str | None = None,
+    selected_department: str | None = None,
 ) -> dict[str, Any]:
     """Execute the bound OD0002 query and assemble its API payload."""
     sql, params = build_report_query(
@@ -445,6 +522,7 @@ def load_od0002_report(
         scope_filter_sql,
         scope_params,
         selected_store,
+        selected_department,
     )
     rows = db.execute(text(sql), params).mappings().all()
     dimensions, quality = normalize_rows(rows)

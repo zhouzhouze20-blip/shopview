@@ -141,6 +141,7 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
     def fake_load(*args, **kwargs):
         calls["load"] += 1
         calls["selected_store"] = kwargs["selected_store"]
+        calls["selected_department"] = kwargs["selected_department"]
         return sample_report()
     monkeypatch.setattr(sales, "load_od0002_report", fake_load)
     export_file = SpooledTemporaryFile()
@@ -154,10 +155,15 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
     monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
 
     response = asyncio.run(sales.od0002_export(
-        date(2026, 1, 1), date(2026, 1, 31), " 601 ", object(), object()
+        date(2026, 1, 1), date(2026, 1, 31), " 601 ", object(), object(), " 6030117 "
     ))
 
-    assert calls == {"load": 1, "permission": "sales.view", "selected_store": "601"}
+    assert calls == {
+        "load": 1,
+        "permission": "sales.od0002.view",
+        "selected_store": "601",
+        "selected_department": "6030117",
+    }
     assert len(threadpool_calls) == 1
     assert threadpool_calls[0][0] is sales.build_od0002_workbook_file
     assert response.background is not None

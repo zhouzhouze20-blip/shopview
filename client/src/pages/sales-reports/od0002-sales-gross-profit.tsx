@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Loader2, RefreshCw, Search } from "lucide-react";
+import { Download, Loader2, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +13,13 @@ import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiRequest } from "@/lib/api";
 import {
   buildOd0002Params,
+  changeOd0002Store,
   contentDispositionFilename,
   formatMoneyWan,
   formatPercent,
   getOd0002QueryMessage,
   OD0002_ALL_STORES,
+  OD0002_ALL_DEPARTMENTS,
   OD0002_TABS,
   paginateRows,
   previousYearDate,
@@ -31,8 +33,9 @@ import {
   type Od0002Row,
 } from "@/lib/od0002-report";
 
-type Filters = { start: string; end: string; storeId: string };
+type Filters = { start: string; end: string; storeId: string; departmentId: string };
 type AuthorizedStore = { store_id: string | number; store_code: string; store_name: string };
+type AuthorizedDepartment = { store_code: string; department_code: string; department_name: string };
 
 function localIsoDate(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -43,19 +46,26 @@ function defaultFilters(): Filters {
   const end = new Date(now);
   end.setDate(end.getDate() - 1);
   const start = new Date(end.getFullYear(), end.getMonth(), 1);
-  return { start: localIsoDate(start), end: localIsoDate(end), storeId: OD0002_ALL_STORES };
+  return { start: localIsoDate(start), end: localIsoDate(end), storeId: OD0002_ALL_STORES, departmentId: OD0002_ALL_DEPARTMENTS };
+}
+
+function yoyColorClass(value: number | null): string {
+  if (value === null || value === 0) return "";
+  if (value > 0) return "text-red-600";
+  if (value < 0) return "text-green-600";
+  return "";
 }
 
 const metricCells = (metrics: Od0002Metric) => [
-  formatMoneyWan(metrics.sales_current),
-  formatMoneyWan(metrics.sales_prior),
-  formatPercent(metrics.sales_yoy),
-  formatMoneyWan(metrics.profit_current),
-  formatMoneyWan(metrics.profit_prior),
-  formatPercent(metrics.profit_yoy),
-  formatPercent(metrics.margin_current),
-  formatPercent(metrics.margin_prior),
-  formatPercent(metrics.margin_change),
+  { value: formatMoneyWan(metrics.sales_current), rawValue: metrics.sales_current, isYoy: false },
+  { value: formatMoneyWan(metrics.sales_prior), rawValue: metrics.sales_prior, isYoy: false },
+  { value: formatPercent(metrics.sales_yoy), rawValue: metrics.sales_yoy, isYoy: true },
+  { value: formatMoneyWan(metrics.profit_current), rawValue: metrics.profit_current, isYoy: false },
+  { value: formatMoneyWan(metrics.profit_prior), rawValue: metrics.profit_prior, isYoy: false },
+  { value: formatPercent(metrics.profit_yoy), rawValue: metrics.profit_yoy, isYoy: true },
+  { value: formatPercent(metrics.margin_current), rawValue: metrics.margin_current, isYoy: false },
+  { value: formatPercent(metrics.margin_prior), rawValue: metrics.margin_prior, isYoy: false },
+  { value: formatPercent(metrics.margin_change), rawValue: metrics.margin_change, isYoy: true },
 ];
 
 export default function Od0002SalesGrossProfitPage() {
@@ -78,13 +88,21 @@ export default function Od0002SalesGrossProfitPage() {
   const globalStoreCode = selectedStoreId === null
     ? null
     : storesQuery.data?.find((store) => String(store.store_id) === String(selectedStoreId))?.store_code ?? null;
+  const departmentStoreParam = draft.storeId === OD0002_ALL_STORES ? "" : `?store_id=${encodeURIComponent(draft.storeId)}`;
+  const departmentsQuery = useQuery<AuthorizedDepartment[]>({
+    queryKey: ["/api/sales/reports/od0002/departments", draft.storeId],
+    queryFn: () => apiGet(`/api/sales/reports/od0002/departments${departmentStoreParam}`),
+  });
 
   useEffect(() => {
-    setDraft((current) => syncOd0002DraftFromGlobalStore(current, globalStoreCode, draftDirty));
+    setDraft((current) => {
+      const next = syncOd0002DraftFromGlobalStore(current, globalStoreCode, draftDirty);
+      return next.storeId === current.storeId ? next : { ...next, departmentId: OD0002_ALL_DEPARTMENTS };
+    });
   }, [globalStoreCode]);
 
   const queryString = useMemo(
-    () => buildOd0002Params(submitted.start, submitted.end, submitted.storeId).toString(),
+    () => buildOd0002Params(submitted.start, submitted.end, submitted.storeId, submitted.departmentId).toString(),
     [submitted],
   );
   const reportQuery = useQuery<Od0002Response>({
@@ -120,15 +138,6 @@ export default function Od0002SalesGrossProfitPage() {
     setQueryVersion((value) => value + 1);
     setHasSubmitted(true);
     setDraftDirty(false);
-    setPage(1);
-    setExportError(null);
-  };
-
-  const reset = () => {
-    const next = syncOd0002DraftFromGlobalStore(defaultFilters(), globalStoreCode, false);
-    setDraft(next);
-    setDraftDirty(false);
-    setHasSubmitted(false);
     setPage(1);
     setExportError(null);
   };
@@ -171,45 +180,68 @@ export default function Od0002SalesGrossProfitPage() {
       <Card>
         <CardHeader><CardTitle className="text-base">查询条件</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
-            <div className="space-y-2">
-              <Label htmlFor="od0002-start">本期开始</Label>
-              <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => updateDraft({ start: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="od0002-end">本期结束</Label>
-              <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => updateDraft({ end: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="od0002-prior-start">同期开始（自动）</Label>
-              <Input id="od0002-prior-start" readOnly value={draft.start ? previousYearDate(draft.start) : ""} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="od0002-prior-end">同期结束（自动）</Label>
-              <Input id="od0002-prior-end" readOnly value={draft.end ? previousYearDate(draft.end) : ""} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="od0002-store">门店</Label>
-              <Select value={draft.storeId} onValueChange={(storeId) => updateDraft({ storeId })} disabled={storesQuery.isLoading}>
-                <SelectTrigger id="od0002-store"><SelectValue placeholder="权限内全部门店" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={OD0002_ALL_STORES}>权限内全部门店</SelectItem>
-                  {storeOptions.map((store) => <SelectItem key={store.value} value={store.value}>{store.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="space-y-3">
+              <h3 className="text-sm font-medium text-muted-foreground">统计期间</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-start">本期开始</Label>
+                  <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => updateDraft({ start: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-end">本期结束</Label>
+                  <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => updateDraft({ end: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-prior-start">同期开始（自动）</Label>
+                  <Input id="od0002-prior-start" readOnly value={draft.start ? previousYearDate(draft.start) : ""} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-prior-end">同期结束（自动）</Label>
+                  <Input id="od0002-prior-end" readOnly value={draft.end ? previousYearDate(draft.end) : ""} />
+                </div>
+              </div>
+            </section>
+            <section className="flex flex-col space-y-3">
+              <h3 className="text-sm font-medium text-muted-foreground">组织范围</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-store">门店</Label>
+                  <Select value={draft.storeId} onValueChange={(storeId) => { setDraft((current) => changeOd0002Store(current, storeId)); setDraftDirty(true); }} disabled={storesQuery.isLoading}>
+                    <SelectTrigger id="od0002-store"><SelectValue placeholder="权限内全部门店" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={OD0002_ALL_STORES}>权限内全部门店</SelectItem>
+                      {storeOptions.map((store) => <SelectItem key={store.value} value={store.value}>{store.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="od0002-department">部门</Label>
+                  <Select value={draft.departmentId} onValueChange={(departmentId) => updateDraft({ departmentId })} disabled={departmentsQuery.isLoading}>
+                    <SelectTrigger id="od0002-department"><SelectValue placeholder="全部部门" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={OD0002_ALL_DEPARTMENTS}>全部部门</SelectItem>
+                      {(departmentsQuery.data ?? []).map((department) => (
+                        <SelectItem key={`${department.store_code}-${department.department_code}`} value={department.department_code}>
+                          {draft.storeId === OD0002_ALL_STORES ? `${department.store_code} · ` : ""}{department.department_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="mt-auto flex flex-wrap justify-end gap-2 pt-2">
+                <Button onClick={submit} disabled={reportQuery.isFetching || draft.start > draft.end}>
+                  {reportQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}<span>查询</span>
+                </Button>
+                <Button variant="outline" onClick={exportReport} disabled={exporting || !hasSubmitted || !reportQuery.data}>
+                  {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  {exporting ? "导出中…" : "导出 Excel"}
+                </Button>
+              </div>
+            </section>
           </div>
           {draft.start > draft.end && <p className="text-sm text-red-600">本期结束日期不能早于开始日期</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={submit} disabled={reportQuery.isFetching || draft.start > draft.end}>
-              {reportQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}<span>查询</span>
-            </Button>
-            <Button variant="outline" onClick={reset}><RefreshCw className="mr-2 h-4 w-4" /><span>重置</span></Button>
-            <Button variant="outline" onClick={exportReport} disabled={exporting || !hasSubmitted || !reportQuery.data}>
-              {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-              {exporting ? "导出中…" : "导出 Excel"}
-            </Button>
-          </div>
           {exportError && <p role="alert" className="text-sm text-red-600">{exportError}</p>}
         </CardContent>
       </Card>
@@ -248,18 +280,18 @@ export default function Od0002SalesGrossProfitPage() {
                 <TableBody>
                   {pagedRows.map((row, index) => (
                     <TableRow key={`${row.store_code ?? "all"}-${row.dimension_code ?? row.dimension_name ?? index}`}>
-                      {visible.includes("store") && <TableCell>{row.store_name || row.store_code || "—"}</TableCell>}
-                      <TableCell><div className="font-medium">{row.dimension_name || "未匹配"}</div><div className="text-xs text-muted-foreground">{row.dimension_code || "—"}</div></TableCell>
-                      {metricCells(row.metrics).map((value, cellIndex) => <TableCell key={cellIndex} className={value.startsWith("-") ? "text-right tabular-nums text-red-600" : "text-right tabular-nums"}>{value}</TableCell>)}
+                      {visible.includes("store") && <TableCell className="py-2">{row.store_name || row.store_code || "—"}</TableCell>}
+                      <TableCell className="py-2"><div className="font-medium">{row.dimension_name || "未匹配"}</div><div className="text-xs text-muted-foreground">{row.dimension_code || "—"}</div></TableCell>
+                      {metricCells(row.metrics).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>
                   ))}
                 </TableBody>
                 {activeTotal && rows.length > 0 && (
                   <TableFooter>
                     <TableRow>
-                      {visible.includes("store") && <TableCell />}
-                      <TableCell>合计</TableCell>
-                      {metricCells(activeTotal).map((value, cellIndex) => <TableCell key={cellIndex} className={value.startsWith("-") ? "text-right tabular-nums text-red-600" : "text-right tabular-nums"}>{value}</TableCell>)}
+                      {visible.includes("store") && <TableCell className="py-2" />}
+                      <TableCell className="py-2">合计</TableCell>
+                      {metricCells(activeTotal).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>
                   </TableFooter>
                 )}

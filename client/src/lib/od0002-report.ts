@@ -1,4 +1,5 @@
 export const OD0002_ALL_STORES = "all";
+export const OD0002_ALL_DEPARTMENTS = "all";
 
 export type Od0002DimensionKey =
   | "stores"
@@ -91,13 +92,24 @@ export function buildOd0002Params(
   start: string,
   end: string,
   storeId: string,
+  departmentId: string = OD0002_ALL_DEPARTMENTS,
 ): URLSearchParams {
   const params = new URLSearchParams({ start_date: start, end_date: end });
   const normalizedStore = storeId.trim();
   if (normalizedStore && normalizedStore !== OD0002_ALL_STORES) {
     params.set("store_id", normalizedStore);
   }
+  const normalizedDepartment = departmentId.trim();
+  if (normalizedDepartment && normalizedDepartment !== OD0002_ALL_DEPARTMENTS) {
+    params.set("department_id", normalizedDepartment);
+  }
   return params;
+}
+
+export type Od0002DepartmentDraft = Od0002DraftFilters & { departmentId: string };
+
+export function changeOd0002Store<T extends Od0002DepartmentDraft>(draft: T, storeId: string): T {
+  return { ...draft, storeId, departmentId: OD0002_ALL_DEPARTMENTS };
 }
 
 export type Od0002VisibleColumn = "store" | "dimension" | "sales" | "profit" | "margin";
