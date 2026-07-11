@@ -89,6 +89,16 @@ def test_workbook_keeps_store_columns_for_multiple_store_rows():
     assert [sheet.cell(9, column).value for column in range(1, 5)] == ["602", "二店", "D02", "男装"]
 
 
+def test_group_sheet_uses_roomier_data_rows_without_changing_other_sheets():
+    from python_app.services.od0002_excel import GROUP_DATA_ROW_HEIGHT, build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
+    group_sheet = workbook["柜组"]
+    assert group_sheet.row_dimensions[8].height == GROUP_DATA_ROW_HEIGHT
+    assert group_sheet.row_dimensions[9].height == GROUP_DATA_ROW_HEIGHT
+    assert workbook["部门"].row_dimensions[8].height is None
+
+
 def test_workbook_escapes_formula_like_dimension_text_and_has_no_invalid_filter():
     from python_app.services.od0002_excel import build_od0002_workbook
 

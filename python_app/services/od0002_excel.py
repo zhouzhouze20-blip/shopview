@@ -22,6 +22,7 @@ BLUE = "4472C4"
 WHITE = "FFFFFF"
 THIN = Side(style="thin", color="B7B7B7")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+GROUP_DATA_ROW_HEIGHT = 24
 
 
 def _date_text(value: Any) -> str:
@@ -107,9 +108,13 @@ def _write_report_sheet(sheet, report: dict[str, Any], label: str, dimension_key
             row.get("dimension_code"), row.get("dimension_name"),
         ]
         _write_data_row(sheet, row_number, identifiers + _metric_values(row.get("metrics", {})))
+        if dimension_key == "groups":
+            sheet.row_dimensions[row_number].height = GROUP_DATA_ROW_HEIGHT
         row_number += 1
     total = report.get("totals", {}).get(dimension_key, {})
     _write_data_row(sheet, row_number, ["合计", None, None, None] + _metric_values(total), total=True)
+    if dimension_key == "groups":
+        sheet.row_dimensions[row_number].height = GROUP_DATA_ROW_HEIGHT
 
     sheet.freeze_panes = "A8"
     widths = (14, 18, 16, 24) + (14,) * 9
