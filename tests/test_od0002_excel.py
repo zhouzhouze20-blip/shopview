@@ -73,6 +73,13 @@ def sample_report(*, empty=False):
     ]
     totals["department_categories"] = dict(hierarchy_total)
     if not empty:
+        dimensions["groups"][0].update({
+            "department_code": "6010101",
+            "department_name": "一店一部(化妆)",
+            "dimension_code": "6010101005",
+            "dimension_name": "L'oreal欧莱雅厅",
+        })
+    if not empty:
         dimensions["departments"].append({
             "store_code": "602", "store_name": "二店",
             "dimension_code": "D02", "dimension_name": "男装",
@@ -156,6 +163,56 @@ def test_empty_department_category_sheet_keeps_headers_and_total():
     assert sheet["A6"].value == "门店"
     assert sheet["D6"].value == "品类"
     assert sheet["A8"].value == "合计"
+
+
+def test_group_sheet_has_department_before_group_and_fifteen_columns():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
+    sheet = workbook["柜组"]
+
+    assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（柜组）"
+    assert "A1:O1" in {str(item) for item in sheet.merged_cells.ranges}
+    assert [sheet.cell(6, column).value for column in range(1, 7)] == [
+        "门店编码", "门店名称", "部门编码", "部门名称", "柜组编码", "柜组名称",
+    ]
+    assert [sheet.cell(8, column).value for column in range(1, 7)] == [
+        "601", "一店", "6010101", "一店一部(化妆)", "6010101005", "L'oreal欧莱雅厅",
+    ]
+    assert sheet["G8"].value == 12
+    assert sheet["I8"].number_format == "0.00%"
+    assert sheet.max_column == 15
+    assert sheet.freeze_panes == "A8"
+
+
+def test_empty_group_sheet_keeps_fifteen_columns_and_total():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report(empty=True))))
+    sheet = workbook["柜组"]
+
+    assert sheet["F6"].value == "柜组名称"
+    assert sheet["A8"].value == "合计"
+    assert sheet.max_column == 15
+
+
+def test_group_sheet_escapes_formula_like_department_and_group_text():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    report = sample_report()
+    report["dimensions"]["groups"][0].update({
+        "department_code": "=1+1",
+        "department_name": "+SUM(A1:A2)",
+        "dimension_code": "-2+3",
+        "dimension_name": "@cmd",
+    })
+    workbook = load_workbook(BytesIO(build_od0002_workbook(report)), data_only=False)
+    sheet = workbook["柜组"]
+
+    for column in range(3, 7):
+        cell = sheet.cell(8, column)
+        assert cell.data_type == "s"
+        assert cell.value.startswith("'")
 
 
 def test_workbook_keeps_store_columns_for_multiple_store_rows():
