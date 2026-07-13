@@ -29,6 +29,7 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   "star-diamond-analysis": ["activity_analysis.star_diamond.view"],
   "commodity-sales-detail": ["sales.view"],
   "od0002-sales-gross-profit": ["sales.od0002.view"],
+  "hdyy01-group-operation-analysis": ["sales.hdyy01.view"],
   "merchant-planning": ["merchant_planning.view"],
   "revenue-map": ["revenue.view"],
   "joint-settlement": ["settlement.view"],

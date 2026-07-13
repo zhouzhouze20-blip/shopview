@@ -66,6 +66,7 @@ export const navigationItems: NavigationItem[] = [
         subItems: [
           { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
           { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
+          { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
         ],
       },
     ],

@@ -77,6 +77,11 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
             name: "OD0002 门店销售毛利汇总表",
             permissionCodes: ["sales.od0002.view"],
           },
+          {
+            id: "hdyy01-group-operation-analysis",
+            name: "HDYY01柜组经营分析表",
+            permissionCodes: ["sales.hdyy01.view"],
+          },
         ],
       },
     ],
