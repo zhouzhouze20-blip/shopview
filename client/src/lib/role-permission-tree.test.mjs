@@ -23,6 +23,7 @@ const permissions = [
   { id: 14, permission_code: "activity_analysis.points.view", permission_name: "查看积分活动核对", module_code: "activity_analysis", action_code: "points_view" },
   { id: 15, permission_code: "sales.view", permission_name: "查看销售", module_code: "sales", action_code: "view" },
   { id: 16, permission_code: "sales.od0002.view", permission_name: "查看OD0002门店销售毛利汇总表", module_code: "sales", action_code: "od0002_view" },
+  { id: 17, permission_code: "sales.hdyy01.view", permission_name: "查看HDYY01柜组经营分析表", module_code: "sales", action_code: "hdyy01_view" },
 ];
 
 function findNode(nodes, id) {
@@ -97,18 +98,35 @@ test("groups activity analysis permissions by page", () => {
   );
 });
 
-test("shows OD0002 as a dedicated sales report permission", () => {
+test("shows OD0002 and HDYY01 as independent sales report permissions", () => {
   const tree = buildRolePermissionTree(permissions);
   const salesReports = findNode(tree, "sales-reports");
   const od0002 = findNode(tree, "od0002-sales-gross-profit");
+  const hdyy01 = findNode(tree, "hdyy01-group-operation-analysis");
 
   assert.ok(salesReports);
   assert.deepEqual((salesReports.children ?? []).map((node) => node.id), [
     "od0002-sales-gross-profit",
+    "hdyy01-group-operation-analysis",
   ]);
   assert.ok(od0002);
   assert.deepEqual(
     (od0002.permissions ?? []).map((permission) => permission.permission_code),
     ["sales.od0002.view"],
   );
+  assert.ok(hdyy01);
+  assert.equal(hdyy01.name, "HDYY01柜组经营分析表");
+  assert.deepEqual(
+    (hdyy01.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.hdyy01.view"],
+  );
+
+  assert.deepEqual(collectPermissionTreeIds(od0002), [16]);
+  assert.deepEqual(collectPermissionTreeIds(hdyy01), [17]);
+  assert.equal(getPermissionTreeNodeState(od0002, new Set([16])), true);
+  assert.equal(getPermissionTreeNodeState(hdyy01, new Set([16])), false);
+  assert.equal(getPermissionTreeNodeState(od0002, new Set([17])), false);
+  assert.equal(getPermissionTreeNodeState(hdyy01, new Set([17])), true);
+  assert.equal(getPermissionTreeNodeState(salesReports, new Set([16])), "indeterminate");
+  assert.equal(getPermissionTreeNodeState(salesReports, new Set([17])), "indeterminate");
 });

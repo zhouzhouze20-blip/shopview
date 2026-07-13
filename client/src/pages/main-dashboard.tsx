@@ -21,6 +21,7 @@ import PointsActivityAnalysisPage from "./activity-analysis/points";
 import StarDiamondAnalysisPage from "./activity-analysis/star-diamond";
 import CommoditySalesDetailReportPage from "./sales-reports/commodity-sales-detail";
 import Od0002SalesGrossProfitPage from "./sales-reports/od0002-sales-gross-profit";
+import Hdyy01GroupOperationAnalysisPage from "./sales-reports/hdyy01-group-operation-analysis";
 import MerchantPlanningPage from "./merchant-planning";
 import RevenueMapPage from "./revenue-map";
 import JointSettlementStatementsPage from "./joint-settlement-statements";
@@ -151,6 +152,7 @@ const MODULE_LABELS: Record<string, string> = {
   "star-diamond-analysis": "中心星钻会员分析",
   "commodity-sales-detail": "商品销售明细",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
+  "hdyy01-group-operation-analysis": "HDYY01柜组经营分析表",
   "merchant-planning": "招商规划",
   "revenue-map": "收益地图",
   "joint-settlement": "联营结算单管理",
@@ -696,6 +698,8 @@ export default function MainDashboard() {
         return <CommoditySalesDetailReportPage />;
       case "od0002-sales-gross-profit":
         return <Od0002SalesGrossProfitPage />;
+      case "hdyy01-group-operation-analysis":
+        return <Hdyy01GroupOperationAnalysisPage />;
       case "merchant-planning":
         return <MerchantPlanningPage />;
       case "revenue-map":

@@ -31,6 +31,8 @@ from services.od0002_report import (
     load_od0002_authorized_stores,
     load_od0002_report,
 )
+from services.hdyy01_report import load_hdyy01_report
+from services.hdyy01_excel import build_hdyy01_workbook_file
 from services.od0002_excel import build_od0002_workbook_file
 
 
@@ -352,6 +354,166 @@ def _od0002_store_id_for_code(db: Session, store_code: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
+def _hdyy01_deny_resolution_guard_sql(scope: Any) -> str:
+    """Fail closed when a denied HDYY01 dimension cannot be resolved."""
+    if "__all__" in scope.deny:
+        return ""
+
+    guards: list[str] = []
+    if scope.deny.get("store", set()):
+        guards.append("AND st.store_id IS NOT NULL")
+    if scope.deny.get("department", set()):
+        guards.append("AND dept.normalized_mfcode IS NOT NULL")
+    if scope.deny.get("group", set()):
+        guards.append(
+            "AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))), '') "
+            "IS NOT NULL"
+        )
+    if scope.deny.get("category", set()):
+        guards.append("AND h.normalized_level3_code IS NOT NULL")
+    if scope.deny.get("floor", set()):
+        guards.append(
+            "AND mf.normalized_mfcode IS NOT NULL "
+            "AND NULLIF(TRIM(BOTH FROM COALESCE(mf.mflc, '')), '') IS NOT NULL"
+        )
+    return " " + " ".join(guards) if guards else ""
+
+
+@router.get("/reports/hdyy01/stores")
+async def hdyy01_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every store visible to HDYY01, independent of sales dates."""
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01_stores",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    return load_od0002_authorized_stores(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+    )
+
+
+@router.get("/reports/hdyy01/departments")
+async def hdyy01_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return permission-scoped HDYY01 department options."""
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01_departments",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    selected_store = (store_id or "").strip() or None
+    return load_od0002_authorized_departments(
+        db, TrustedScopeSql(scope_filter_sql), scope_params, selected_store
+    )
+
+
+@router.get("/reports/hdyy01")
+async def hdyy01_report(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    """HDYY01 group operation analysis report."""
+    report, _ = _load_hdyy01_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    return report
+
+
+def _load_hdyy01_for_request(
+    start_date: date,
+    end_date: date,
+    store_id: str | None,
+    db: Session,
+    current_user: User,
+    department_id: str | None = None,
+) -> tuple[dict[str, Any], Any]:
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="s.sglmfid",
+        category_code_expr="h.level2_code",
+        category_name_expr="h.level2_name",
+        floor_expr="mf.mflc",
+    )
+    scope_filter_sql += _hdyy01_deny_resolution_guard_sql(scope)
+    report = load_hdyy01_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        start_date=start_date,
+        end_date=end_date,
+        selected_store=selected_store,
+        selected_department=selected_department,
+    )
+    return report, scope
+
+
 @router.get("/reports/od0002/stores")
 async def od0002_stores(
     db: Session = Depends(get_db),
@@ -507,6 +669,57 @@ def _od0002_scope_description(scope: Any) -> str:
     if denied:
         base += "；排除 " + "；".join(denied)
     return "当前用户权限范围：" + base
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """Close an export file even when ASGI sending aborts before background tasks."""
+
+    def __init__(self, *args, close_file, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._close_file = close_file
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._close_file()
+
+
+@router.get("/reports/hdyy01/export")
+async def hdyy01_export(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    report, scope = _load_hdyy01_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    export_report = dict(report)
+    export_report["scope_description"] = _od0002_scope_description(scope)
+    export_file = await run_in_threadpool(
+        build_hdyy01_workbook_file, export_report
+    )
+    filename = (
+        "HDYY01柜组经营分析表_"
+        f"{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    )
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return _ClosingStreamingResponse(
+        stream_chunks(),
+        close_file=export_file.close,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        },
+        background=BackgroundTask(export_file.close),
+    )
 
 
 @router.get("/reports/od0002/export")
