@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import date
 from decimal import Decimal
@@ -17,6 +18,191 @@ from python_app.services.od0002_report import EXCLUDED_DEPARTMENT_CODES
 
 START = date(2026, 7, 1)
 END = date(2026, 7, 10)
+
+
+def test_hdyy01_permission_is_registered_independently():
+    from python_app.routers.authz import CORE_PERMISSION_DEFINITIONS
+
+    assert (
+        "sales.hdyy01.view",
+        "查看HDYY01柜组经营分析表",
+        "sales",
+        "hdyy01_view",
+    ) in CORE_PERMISSION_DEFINITIONS
+
+
+def test_hdyy01_stores_endpoint_requires_permission_and_option_scope_aliases(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda db, user, **kwargs: (calls.setdefault("scope_kwargs", kwargs), DataScope(all_access=True))[1])
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
+    monkeypatch.setattr(sales, "load_od0002_authorized_stores", lambda db, scope_sql, params: [{"store_code": "601"}])
+
+    result = asyncio.run(sales.hdyy01_stores(object(), object()))
+
+    assert result == [{"store_code": "601"}]
+    assert calls["permission"] == "sales.hdyy01.view"
+    assert calls["scope_kwargs"] == {"fallback_resource_code": "sales"}
+    assert calls["filter_kwargs"] == {
+        "prefix": "hdyy01_stores", "store_expr": "st.store_id::text",
+        "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
+        "group_expr": "mf.mfcode", "category_code_expr": "ac.category_code",
+        "category_name_expr": "ac.category_name", "floor_expr": "mf.mflc",
+    }
+
+
+def test_hdyy01_departments_endpoint_trims_store_and_uses_option_scope_aliases(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True))
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
+    monkeypatch.setattr(sales, "load_od0002_authorized_departments", lambda db, scope_sql, params, store: calls.setdefault("store", store) or [])
+
+    asyncio.run(sales.hdyy01_departments(" 603 ", object(), object()))
+
+    assert calls["permission"] == "sales.hdyy01.view"
+    assert calls["store"] == "603"
+    assert calls["filter_kwargs"] == {
+        "prefix": "hdyy01_departments", "store_expr": "st.store_id::text",
+        "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
+        "group_expr": "mf.mfcode", "category_code_expr": "ac.category_code",
+        "category_name_expr": "ac.category_name", "floor_expr": "mf.mflc",
+    }
+
+
+def test_hdyy01_route_uses_independent_permission_main_aliases_and_loads_once(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    calls = {"loads": 0}
+    monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
+    monkeypatch.setattr(sales, "load_business_scope", lambda db, user, **kwargs: (calls.setdefault("scope_kwargs", kwargs), DataScope(all_access=True))[1])
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
+
+    def fake_load(db, scope_sql, params, **kwargs):
+        calls["loads"] += 1
+        calls["load"] = (scope_sql, params, kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(sales, "load_hdyy01_report", fake_load)
+
+    result = asyncio.run(sales.hdyy01_report(START, END, " 603 ", object(), object(), " D01 "))
+
+    assert result == {"ok": True}
+    assert calls["permission"] == "sales.hdyy01.view"
+    assert calls["scope_kwargs"] == {"fallback_resource_code": "sales"}
+    assert calls["loads"] == 1
+    assert calls["filter_kwargs"] == {
+        "prefix": "hdyy01", "store_expr": "st.store_id::text",
+        "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
+        "group_expr": "mf.mfcode", "category_code_expr": "h.level2_code",
+        "category_name_expr": "h.level2_name", "floor_expr": "mf.mflc",
+    }
+    assert calls["load"][0].value == " AND 1=1"
+    assert calls["load"][2]["selected_store"] == "603"
+    assert calls["load"][2]["selected_department"] == "D01"
+
+
+def test_hdyy01_route_rejects_end_before_start_with_422():
+    from fastapi import HTTPException
+    from python_app.routers import sales
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sales.hdyy01_report(date(2026, 7, 2), date(2026, 7, 1), None, object(), object()))
+    assert exc.value.status_code == 422
+
+
+def test_hdyy01_route_rejects_selected_store_outside_explicit_store_scope(monkeypatch):
+    from fastapi import HTTPException
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"1"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "2")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sales.hdyy01_report(START, END, "602", object(), object()))
+    assert exc.value.status_code == 403
+
+
+def test_hdyy01_route_allows_selected_store_explicitly_allowed(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"1"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "1")
+    monkeypatch.setattr(sales, "load_hdyy01_report", lambda *args, **kwargs: {"store": kwargs["selected_store"]})
+
+    assert asyncio.run(sales.hdyy01_report(START, END, "601", object(), object())) == {"store": "601"}
+
+
+def test_hdyy01_route_preserves_mixed_scope_union_semantics(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(allow={"store": {"1"}, "department": {"D01"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "2")
+    monkeypatch.setattr(sales, "load_hdyy01_report", lambda *args, **kwargs: {"store": kwargs["selected_store"]})
+
+    assert asyncio.run(sales.hdyy01_report(START, END, "602", object(), object())) == {"store": "602"}
+
+
+def test_hdyy01_route_honors_all_access_despite_residual_store_allow(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True, allow={"store": {"1"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda *args: pytest.fail("all_access must not resolve the selected store"))
+    monkeypatch.setattr(sales, "load_hdyy01_report", lambda *args, **kwargs: {"store": kwargs["selected_store"]})
+
+    assert asyncio.run(sales.hdyy01_report(START, END, "602", object(), object())) == {"store": "602"}
+
+
+def test_hdyy01_route_applies_store_deny_before_all_access(monkeypatch):
+    from fastapi import HTTPException
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True, deny={"store": {"1"}}))
+    monkeypatch.setattr(sales, "_od0002_store_id_for_code", lambda db, code: "1")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sales.hdyy01_report(START, END, "601", object(), object()))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("raw_store", "raw_department", "expected_store", "expected_department"),
+    [(" 601 ", " D01 ", "601", "D01"), ("   ", "  ", None, None)],
+)
+def test_hdyy01_route_trims_selected_filters(monkeypatch, raw_store, raw_department, expected_store, expected_department):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True))
+    monkeypatch.setattr(sales, "load_hdyy01_report", lambda *args, **kwargs: kwargs)
+
+    result = asyncio.run(sales.hdyy01_report(START, END, raw_store, object(), object(), raw_department))
+    assert result["selected_store"] == expected_store
+    assert result["selected_department"] == expected_department
+
+
+def test_hdyy01_export_route_is_not_registered_yet():
+    from python_app.routers import sales
+
+    assert not any(route.path == "/api/sales/reports/hdyy01/export" for route in sales.router.routes)
 
 
 def compact_sql(sql):

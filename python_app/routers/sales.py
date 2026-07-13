@@ -31,6 +31,7 @@ from services.od0002_report import (
     load_od0002_authorized_stores,
     load_od0002_report,
 )
+from services.hdyy01_report import load_hdyy01_report
 from services.od0002_excel import build_od0002_workbook_file
 
 
@@ -350,6 +351,140 @@ def _od0002_store_id_for_code(db: Session, store_code: str) -> str | None:
         {"store_code": store_code},
     ).first()
     return str(row[0]) if row is not None else None
+
+
+@router.get("/reports/hdyy01/stores")
+async def hdyy01_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every store visible to HDYY01, independent of sales dates."""
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01_stores",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    return load_od0002_authorized_stores(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+    )
+
+
+@router.get("/reports/hdyy01/departments")
+async def hdyy01_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return permission-scoped HDYY01 department options."""
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01_departments",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    selected_store = (store_id or "").strip() or None
+    return load_od0002_authorized_departments(
+        db, TrustedScopeSql(scope_filter_sql), scope_params, selected_store
+    )
+
+
+@router.get("/reports/hdyy01")
+async def hdyy01_report(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    """HDYY01 group operation analysis report."""
+    report, _ = _load_hdyy01_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    return report
+
+
+def _load_hdyy01_for_request(
+    start_date: date,
+    end_date: date,
+    store_id: str | None,
+    db: Session,
+    current_user: User,
+    department_id: str | None = None,
+) -> tuple[dict[str, Any], Any]:
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+
+    require_permission(db, current_user, "sales.hdyy01.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hdyy01",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="h.level2_code",
+        category_name_expr="h.level2_name",
+        floor_expr="mf.mflc",
+    )
+    report = load_hdyy01_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        start_date=start_date,
+        end_date=end_date,
+        selected_store=selected_store,
+        selected_department=selected_department,
+    )
+    return report, scope
 
 
 @router.get("/reports/od0002/stores")
