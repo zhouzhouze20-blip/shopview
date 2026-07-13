@@ -68,6 +68,16 @@ const metricCells = (metrics: Od0002Metric) => [
   { value: formatPercent(metrics.margin_change), rawValue: metrics.margin_change, isYoy: true },
 ];
 
+function HierarchyValue({ name, code }: { name?: string | null; code?: string | null }) {
+  if (!name && !code) return null;
+  return (
+    <>
+      <div className="font-medium">{name || "未匹配"}</div>
+      <div className="text-xs text-muted-foreground">{code || "—"}</div>
+    </>
+  );
+}
+
 export default function Od0002SalesGrossProfitPage() {
   const { selectedStoreId } = useStore();
   const initial = useMemo(() => defaultFilters(), []);
@@ -262,6 +272,68 @@ export default function Od0002SalesGrossProfitPage() {
             ) : (
               <div role="status" className="py-16 text-center text-sm text-muted-foreground">{message === "暂无数据" ? "暂无数据" : message}</div>
             )
+          ) : activeTab === "department_categories" ? (
+            <div className="max-h-[65vh] overflow-auto rounded-md border">
+              <Table>
+                <TableHeader className="sticky top-0 z-20 bg-white">
+                  <TableRow>
+                    {submitted.storeId === OD0002_ALL_STORES && <TableHead rowSpan={2}>门店</TableHead>}
+                    <TableHead rowSpan={2}>部门</TableHead>
+                    <TableHead rowSpan={2}>区域</TableHead>
+                    <TableHead rowSpan={2}>品类</TableHead>
+                    <TableHead colSpan={3} className="text-center">销售收入</TableHead>
+                    <TableHead colSpan={3} className="text-center">毛利</TableHead>
+                    <TableHead colSpan={3} className="text-center">毛利率</TableHead>
+                  </TableRow>
+                  <TableRow>
+                    {["本期", "同期", "同比", "本期", "同期", "同比", "本期", "同期", "同比"].map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pagedRows.map((row, index) => {
+                    const isAreaSubtotal = row.row_type === "area_subtotal";
+                    const isDepartmentSubtotal = row.row_type === "department_subtotal";
+                    const subtotalClass = row.row_type === "category" ? "" : "bg-slate-50 font-semibold";
+                    return (
+                      <TableRow key={`${row.store_code ?? "all"}-${row.department_code ?? "department"}-${row.area_code ?? "area"}-${row.category_code ?? row.row_type ?? index}`} className={subtotalClass}>
+                        {submitted.storeId === OD0002_ALL_STORES && (
+                          <TableCell className="py-2"><HierarchyValue name={row.store_name} code={row.store_code} /></TableCell>
+                        )}
+                        <TableCell className="py-2">
+                          <HierarchyValue
+                            name={isDepartmentSubtotal ? `${row.department_name || "未匹配"}部门小计` : row.department_name}
+                            code={row.department_code}
+                          />
+                        </TableCell>
+                        <TableCell className="py-2">
+                          {!isDepartmentSubtotal && (
+                            <HierarchyValue
+                              name={isAreaSubtotal ? `${row.area_name || "未匹配"}区域小计` : row.area_name}
+                              code={row.area_code}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell className="py-2">
+                          {!isAreaSubtotal && !isDepartmentSubtotal && <HierarchyValue name={row.category_name} code={row.category_code} />}
+                        </TableCell>
+                        {metricCells(row.metrics).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+                {activeTotal && rows.length > 0 && (
+                  <TableFooter>
+                    <TableRow>
+                      {submitted.storeId === OD0002_ALL_STORES && <TableCell className="py-2" />}
+                      <TableCell className="py-2">合计</TableCell>
+                      <TableCell className="py-2" />
+                      <TableCell className="py-2" />
+                      {metricCells(activeTotal).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
+                    </TableRow>
+                  </TableFooter>
+                )}
+              </Table>
+            </div>
           ) : (
             <div className="max-h-[65vh] overflow-auto rounded-md border">
               <Table>

@@ -222,6 +222,21 @@ test("OD0002 table uses Chinese financial yoy colors and compact data rows", asy
   assert.match(source, /<TableFooter>[\s\S]*py-2/);
 });
 
+test("OD0002 page renders the department category hierarchy", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /activeTab === "department_categories"/);
+  for (const label of ["门店", "部门", "区域", "品类", "区域小计", "部门小计"]) {
+    assert.match(source, new RegExp(label));
+  }
+  assert.match(source, /row\.department_name/);
+  assert.match(source, /row\.area_name/);
+  assert.match(source, /row\.category_name/);
+  assert.match(source, /row\.row_type/);
+});
+
 test("frontend model accepts the complete backend response contract", async () => {
   await promisify(execFile)("./node_modules/.bin/tsc", [
     "--noEmit", "--strict", "--target", "ES2020", "--module", "ESNext",
