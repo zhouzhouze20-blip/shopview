@@ -4,6 +4,7 @@ from tempfile import SpooledTemporaryFile
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -82,40 +83,66 @@ def _style_header(cell) -> None:
     cell.border = BORDER
 
 
+def _write_only_cell(
+    sheet,
+    value: Any,
+    *,
+    kind: str | None = None,
+    total: bool = False,
+) -> WriteOnlyCell:
+    cell = WriteOnlyCell(sheet, value=value)
+    cell.border = BORDER
+    number_format = _number_format(kind) if kind is not None else None
+    if number_format is not None:
+        cell.number_format = number_format
+    if total:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor=TOTAL_FILL)
+    return cell
+
+
 def _write_detail_sheet(sheet, report: dict[str, Any]) -> None:
     final_column = get_column_letter(len(DETAIL_COLUMNS))
     dates = report.get("dates", {})
+    rows = report.get("rows", [])
+    last_data_row = max(4, 4 + len(rows))
 
-    sheet.merge_cells(f"A1:{final_column}1")
-    sheet["A1"] = "HDYY01柜组经营分析表"
-    sheet["A1"].font = Font(size=16, bold=True)
-    sheet["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    sheet.freeze_panes = "A5"
+    sheet.auto_filter.ref = f"A4:{final_column}{last_data_row}"
+    sheet.row_dimensions[1].height = 26
+    sheet.row_dimensions[4].height = 28
+    widths = (18, 20, 15, 22, 12, 10, 13, 16, 13, 16, 10, 13, 15, 15, 15, 13, 15, 15, 16)
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
 
-    sheet.merge_cells(f"A2:{final_column}2")
-    sheet["A2"] = (
+    title_cell = WriteOnlyCell(sheet, value="HDYY01柜组经营分析表")
+    title_cell.font = Font(size=16, bold=True)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    sheet.append([title_cell])
+
+    period_cell = WriteOnlyCell(sheet, value=(
         f"日期：{_date_text(dates.get('start_date'))} 至 "
         f"{_date_text(dates.get('end_date'))}；金额单位：元；面积单位：平方米"
-    )
-    sheet["A2"].alignment = Alignment(horizontal="center")
+    ))
+    period_cell.alignment = Alignment(horizontal="left")
+    sheet.append([period_cell])
 
     selected_store = report.get("selected_store") or "全部"
     selected_department = report.get("selected_department") or "全部"
-    sheet.merge_cells(f"A3:{final_column}3")
-    sheet["A3"] = f"筛选：机构 {selected_store}；部门 {selected_department}"
+    sheet.append([f"筛选：机构 {selected_store}；部门 {selected_department}"])
 
-    for column, (label, _key, _kind) in enumerate(DETAIL_COLUMNS, 1):
-        cell = sheet.cell(4, column, label)
+    header_cells = []
+    for label, _key, _kind in DETAIL_COLUMNS:
+        cell = WriteOnlyCell(sheet, value=label)
         _style_header(cell)
+        header_cells.append(cell)
+    sheet.append(header_cells)
 
-    row_number = 5
-    for row in report.get("rows", []):
-        for column, (_label, key, kind) in enumerate(DETAIL_COLUMNS, 1):
-            cell = sheet.cell(row_number, column, _cell_value(row, key, kind))
-            cell.border = BORDER
-            number_format = _number_format(kind)
-            if number_format is not None:
-                cell.number_format = number_format
-        row_number += 1
+    for row in rows:
+        sheet.append([
+            _write_only_cell(sheet, _cell_value(row, key, kind), kind=kind)
+            for _label, key, kind in DETAIL_COLUMNS
+        ])
 
     total = report.get("total", {})
     total_values = {
@@ -128,61 +155,52 @@ def _write_detail_sheet(sheet, report: dict[str, Any]) -> None:
         "member_sales": total.get("member_sales", 0),
         "stored_card_sales": total.get("stored_card_sales", 0),
     }
+    total_cells = []
     for column, (_label, key, kind) in enumerate(DETAIL_COLUMNS, 1):
         value = "合计" if column == 1 else total_values.get(key)
         if key in total_values and value is not None:
             value = _cell_value(total_values, key, kind)
-        cell = sheet.cell(row_number, column, value)
-        cell.border = BORDER
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill("solid", fgColor=TOTAL_FILL)
-        number_format = _number_format(kind)
-        if number_format is not None:
-            cell.number_format = number_format
-
-    last_data_row = max(4, row_number - 1)
-    sheet.auto_filter.ref = f"A4:{final_column}{last_data_row}"
-    sheet.freeze_panes = "A5"
-    sheet.row_dimensions[1].height = 26
-    sheet.row_dimensions[4].height = 28
-
-    widths = (18, 20, 15, 22, 12, 10, 13, 16, 13, 16, 10, 13, 15, 15, 15, 13, 15, 15, 16)
-    for index, width in enumerate(widths, 1):
-        sheet.column_dimensions[get_column_letter(index)].width = width
+        total_cells.append(
+            _write_only_cell(sheet, value, kind=kind, total=True)
+        )
+    sheet.append(total_cells)
 
 
 def _write_notes_sheet(sheet, report: dict[str, Any]) -> None:
-    sheet["A1"] = "项目"
-    sheet["B1"] = "说明"
-    for cell in sheet[1]:
-        _style_header(cell)
-
-    excluded = "、".join(sorted(EXCLUDED_DEPARTMENT_CODES))
-    scope = report.get("scope_description") or "当前用户权限范围：以系统数据权限为准"
-    sheet["A2"] = "HDYY01 口径"
-    sheet["B2"] = (
-        "销售日期取 sglhsrq；销售收入取 sglxssr，金额单位为元；"
-        "含税成本取 sgln13+sgln14-sglsupzk；毛利取 sgln2；"
-        "储值卡销售取 sglfcard；会员销售以 salehead.hykh 非空识别；"
-        "退货按带符号金额计入；仅小票净销售额 > 0 时计入消费次数；"
-        "客单价 = 带符号销售额 / 正向消费次数；排除 sglwmid=5；"
-        f"排除部门编码：{excluded}；{scope}；"
-        "分类层级使用 manaframe.mfchr2 关联 mana_brand_hierarchy，按编码层级关联；"
-        "分类缺失显示未匹配。"
-    )
-    sheet["A2"].border = BORDER
-    sheet["B2"].border = BORDER
-    sheet["A2"].alignment = Alignment(vertical="top")
-    sheet["B2"].alignment = Alignment(wrap_text=True, vertical="top")
     sheet.column_dimensions["A"].width = 20
     sheet.column_dimensions["B"].width = 120
     sheet.row_dimensions[2].height = 100
 
+    header_cells = [WriteOnlyCell(sheet, value=value) for value in ("项目", "说明")]
+    for cell in header_cells:
+        _style_header(cell)
+    sheet.append(header_cells)
+
+    excluded = "、".join(sorted(EXCLUDED_DEPARTMENT_CODES))
+    scope = report.get("scope_description") or "当前用户权限范围：以系统数据权限为准"
+    dates = report.get("dates", {})
+    notes = (
+        f"报表期间：{_date_text(dates.get('start_date'))} 至 "
+        f"{_date_text(dates.get('end_date'))}；"
+        "销售日期取 sglhsrq；销售收入取 sglxssr，金额单位为元；"
+        "含税成本取 sgln13+sgln14-sglsupzk；毛利取 sgln2；"
+        "储值卡销售取 sglfcard；会员销售以 salehead.hykh 非空识别；"
+        "退货按带符号金额计入；仅小票净销售额 > 0 时计入消费次数；"
+        "客单价 = 带符号销售额 / 正向消费次数；排除租赁业务 sglwmid=5；"
+        f"排除部门编码：{excluded}；{scope}；"
+        "分类层级使用 manaframe.mfchr2 关联 mana_brand_hierarchy，按编码层级关联；"
+        "分类缺失显示未匹配。"
+    )
+    label_cell = _write_only_cell(sheet, "HDYY01 口径")
+    label_cell.alignment = Alignment(vertical="top")
+    notes_cell = _write_only_cell(sheet, notes)
+    notes_cell.alignment = Alignment(wrap_text=True, vertical="top")
+    sheet.append([label_cell, notes_cell])
+
 
 def _build_hdyy01_workbook(report: dict[str, Any]) -> Workbook:
-    workbook = Workbook()
-    detail = workbook.active
-    detail.title = "明细"
+    workbook = Workbook(write_only=True)
+    detail = workbook.create_sheet("明细")
     _write_detail_sheet(detail, report)
     _write_notes_sheet(workbook.create_sheet("报表说明"), report)
     return workbook

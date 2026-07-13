@@ -124,7 +124,8 @@ def test_workbook_has_exact_sheets_layout_formats_signed_rows_total_and_notes():
     for phrase in (
         "sglhsrq", "sglxssr", "sgln13+sgln14-sglsupzk", "sgln2", "sglfcard",
         "salehead.hykh", "退货按带符号金额计入", "小票净销售额 > 0", "客单价 = 带符号销售额 / 正向消费次数",
-        "sglwmid=5", "当前用户权限范围：store=4；department=6030117",
+        "报表期间：2026-07-01 至 2026-07-10", "排除租赁业务 sglwmid=5",
+        "当前用户权限范围：store=4；department=6030117",
         "mfchr2", "mana_brand_hierarchy", "按编码层级关联", "未匹配",
     ):
         assert phrase in notes
@@ -197,6 +198,44 @@ def test_workbook_file_api_is_seeked_and_bytes_helper_closes_its_file(monkeypatc
     monkeypatch.setattr(hdyy01_excel, "build_hdyy01_workbook_file", lambda report: tracked_file)
     assert hdyy01_excel.build_hdyy01_workbook({}) == b"xlsx"
     assert tracked_file.closed
+
+
+def test_workbook_builder_uses_write_only_mode_and_handles_thousands_of_rows():
+    from python_app.services import hdyy01_excel
+
+    contract_workbook = hdyy01_excel._build_hdyy01_workbook(
+        sample_report(empty=True)
+    )
+    try:
+        assert contract_workbook.write_only is True
+    finally:
+        contract_workbook.save(BytesIO())
+
+    report = sample_report()
+    template = report["rows"][0]
+    report["rows"] = [
+        {**template, "group_code": f"G{index:05d}"}
+        for index in range(5_000)
+    ]
+
+    export_file = hdyy01_excel.build_hdyy01_workbook_file(report)
+    workbook = load_workbook(export_file, read_only=True)
+    try:
+        detail = workbook["明细"]
+        rows = detail.iter_rows(values_only=True)
+        assert next(rows)[0] == "HDYY01柜组经营分析表"
+        assert "2026-07-01" in next(rows)[0]
+        assert next(rows)[0].startswith("筛选：")
+        assert list(next(rows)) == HEADERS
+        for _ in range(5_000):
+            last = next(rows)
+        assert last[2] == "G04999"
+        assert next(rows)[0] == "合计"
+        with pytest.raises(StopIteration):
+            next(rows)
+    finally:
+        workbook.close()
+        export_file.close()
 
 
 def test_export_route_uses_shared_loader_once_filters_threadpool_and_closes_file(monkeypatch):
@@ -306,3 +345,56 @@ def test_export_builder_failure_propagates_without_response(monkeypatch):
     monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
     with pytest.raises(RuntimeError, match="builder failed"):
         asyncio.run(sales.hdyy01_export(START, END, None, object(), object()))
+
+
+def test_export_closes_file_when_asgi_send_fails_during_streaming(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    export_file = SpooledTemporaryFile()
+    export_file.write(b"xlsx")
+    export_file.seek(0)
+    monkeypatch.setattr(
+        sales,
+        "_load_hdyy01_for_request",
+        lambda *args: (sample_report(), DataScope(all_access=True)),
+    )
+    monkeypatch.setattr(
+        sales, "build_hdyy01_workbook_file", lambda report: export_file
+    )
+
+    async def fake_threadpool(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
+    response = asyncio.run(
+        sales.hdyy01_export(START, END, None, object(), object())
+    )
+    assert response.background is not None
+
+    async def invoke_response():
+        never_disconnect = asyncio.Event()
+
+        async def receive():
+            await never_disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                raise OSError("client disconnected")
+
+        await response({"type": "http"}, receive, send)
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(invoke_response())
+
+    def contains_oserror(error):
+        if isinstance(error, OSError):
+            return True
+        return any(
+            contains_oserror(child)
+            for child in getattr(error, "exceptions", ())
+        )
+
+    assert contains_oserror(exc_info.value)
+    assert export_file.closed

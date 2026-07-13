@@ -666,6 +666,20 @@ def _od0002_scope_description(scope: Any) -> str:
     return "当前用户权限范围：" + base
 
 
+class _ClosingStreamingResponse(StreamingResponse):
+    """Close an export file even when ASGI sending aborts before background tasks."""
+
+    def __init__(self, *args, close_file, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._close_file = close_file
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._close_file()
+
+
 @router.get("/reports/hdyy01/export")
 async def hdyy01_export(
     start_date: date,
@@ -692,8 +706,9 @@ async def hdyy01_export(
         while chunk := export_file.read(64 * 1024):
             yield chunk
 
-    return StreamingResponse(
+    return _ClosingStreamingResponse(
         stream_chunks(),
+        close_file=export_file.close,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
