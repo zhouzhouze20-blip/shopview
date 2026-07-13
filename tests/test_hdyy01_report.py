@@ -272,12 +272,6 @@ def test_hdyy01_route_trims_selected_filters(monkeypatch, raw_store, raw_departm
     assert result["selected_department"] == expected_department
 
 
-def test_hdyy01_export_route_is_not_registered_yet():
-    from python_app.routers import sales
-
-    assert not any(route.path == "/api/sales/reports/hdyy01/export" for route in sales.router.routes)
-
-
 def compact_sql(sql):
     return " ".join(sql.lower().split())
 

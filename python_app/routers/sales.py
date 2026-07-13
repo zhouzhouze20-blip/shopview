@@ -32,6 +32,7 @@ from services.od0002_report import (
     load_od0002_report,
 )
 from services.hdyy01_report import load_hdyy01_report
+from services.hdyy01_excel import build_hdyy01_workbook_file
 from services.od0002_excel import build_od0002_workbook_file
 
 
@@ -663,6 +664,42 @@ def _od0002_scope_description(scope: Any) -> str:
     if denied:
         base += "；排除 " + "；".join(denied)
     return "当前用户权限范围：" + base
+
+
+@router.get("/reports/hdyy01/export")
+async def hdyy01_export(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    report, scope = _load_hdyy01_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    export_report = dict(report)
+    export_report["scope_description"] = _od0002_scope_description(scope)
+    export_file = await run_in_threadpool(
+        build_hdyy01_workbook_file, export_report
+    )
+    filename = (
+        "HDYY01柜组经营分析表_"
+        f"{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    )
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return StreamingResponse(
+        stream_chunks(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        },
+        background=BackgroundTask(export_file.close),
+    )
 
 
 @router.get("/reports/od0002/export")
