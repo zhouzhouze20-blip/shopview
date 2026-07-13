@@ -62,10 +62,15 @@ def test_hdyy01_departments_endpoint_trims_store_and_uses_option_scope_aliases(m
     monkeypatch.setattr(sales, "require_permission", lambda db, user, code: calls.setdefault("permission", code))
     monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: DataScope(all_access=True))
     monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda scope, params, **kwargs: (calls.setdefault("filter_kwargs", kwargs), " AND 1=1")[1])
-    monkeypatch.setattr(sales, "load_od0002_authorized_departments", lambda db, scope_sql, params, store: calls.setdefault("store", store) or [])
+    def fake_load_departments(db, scope_sql, params, store):
+        calls["store"] = store
+        return []
 
-    asyncio.run(sales.hdyy01_departments(" 603 ", object(), object()))
+    monkeypatch.setattr(sales, "load_od0002_authorized_departments", fake_load_departments)
 
+    result = asyncio.run(sales.hdyy01_departments(" 603 ", object(), object()))
+
+    assert result == []
     assert calls["permission"] == "sales.hdyy01.view"
     assert calls["store"] == "603"
     assert calls["filter_kwargs"] == {
@@ -101,7 +106,7 @@ def test_hdyy01_route_uses_independent_permission_main_aliases_and_loads_once(mo
     assert calls["filter_kwargs"] == {
         "prefix": "hdyy01", "store_expr": "st.store_id::text",
         "department_code_expr": "dept.mfcode", "department_name_expr": "dept.mfcname",
-        "group_expr": "mf.mfcode", "category_code_expr": "h.level2_code",
+        "group_expr": "s.sglmfid", "category_code_expr": "h.level2_code",
         "category_name_expr": "h.level2_name", "floor_expr": "mf.mflc",
     }
     assert calls["load"][0].value == " AND 1=1"
@@ -180,6 +185,74 @@ def test_hdyy01_route_applies_store_deny_before_all_access(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(sales.hdyy01_report(START, END, "601", object(), object()))
     assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("dimension", "denied", "deny_expression", "resolution_guard"),
+    [
+        ("store", "1", "st.store_id::text", "st.store_id IS NOT NULL"),
+        ("department", "D01", "dept.mfcode", "dept.normalized_mfcode IS NOT NULL"),
+        ("group", "G01", "s.sglmfid", None),
+        ("category", "C01", "h.level2_code", "h.normalized_level3_code IS NOT NULL"),
+        (
+            "floor",
+            "02",
+            "mf.mflc",
+            "mf.normalized_mfcode IS NOT NULL AND NULLIF(TRIM(BOTH FROM COALESCE(mf.mflc, '')), '') IS NOT NULL",
+        ),
+    ],
+)
+def test_hdyy01_main_scope_denies_are_stable_when_dimensions_are_unresolved(
+    monkeypatch, dimension, denied, deny_expression, resolution_guard
+):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    scope = DataScope(all_access=True, deny={dimension: {denied}})
+    captured = {}
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sales, "load_business_scope", lambda *args, **kwargs: scope)
+    monkeypatch.setattr(
+        sales,
+        "load_hdyy01_report",
+        lambda db, scope_sql, params, **kwargs: captured.update(
+            scope_sql=scope_sql.value, params=params
+        ) or {},
+    )
+
+    asyncio.run(sales.hdyy01_report(START, END, None, object(), object()))
+
+    assert f"hdyy01_deny_{dimension}" in captured["params"]
+    assert deny_expression in captured["scope_sql"]
+    if resolution_guard is None:
+        assert all(
+            guard not in captured["scope_sql"]
+            for guard in (
+                "st.store_id IS NOT NULL",
+                "dept.normalized_mfcode IS NOT NULL",
+                "h.normalized_level3_code IS NOT NULL",
+                "mf.normalized_mfcode IS NOT NULL",
+            )
+        )
+    else:
+        assert resolution_guard in captured["scope_sql"]
+
+
+def test_hdyy01_all_deny_remains_unconditionally_closed():
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    scope = DataScope(all_access=True, deny={"__all__": {"*"}, "store": {"1"}})
+    params = {}
+    generated = sales._business_scope_filter_sql(
+        scope,
+        params,
+        prefix="hdyy01",
+        store_expr="st.store_id::text",
+    )
+
+    assert generated == " AND 1=0"
+    assert sales._hdyy01_deny_resolution_guard_sql(scope) == ""
 
 
 @pytest.mark.parametrize(
@@ -311,6 +384,16 @@ def test_query_uses_unique_normalized_dimensions_without_arbitrary_winners():
     assert "left join stores_unique st" in compact
     assert "left join hierarchy_unique h" in compact
     assert "distinct on" not in compact
+
+
+def test_store_uniqueness_counts_only_active_store_mappings():
+    sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
+    compact = compact_sql(sql)
+    stores = compact.split("stores_normalized as materialized", 1)[1].split(
+        "stores_unique as materialized", 1
+    )[0]
+
+    assert "from stores source where source.is_active is true" in stores
 
 
 def test_base_projects_used_columns_and_member_date_filter_is_sargable():
@@ -590,7 +673,7 @@ def test_postgresql_query_preserves_signed_scoped_facts_without_dimension_amplif
               mflc text, mfchr2 text
             ) ON COMMIT DROP;
             CREATE TEMP TABLE stores (
-              store_code text, store_name text
+              store_code text, store_name text, is_active boolean
             ) ON COMMIT DROP;
             CREATE TEMP TABLE mana_brand_hierarchy (
               level1_code text, level1_name text, level2_code text,
@@ -599,7 +682,8 @@ def test_postgresql_query_preserves_signed_scoped_facts_without_dimension_amplif
         """))
         connection.execute(text("""
             INSERT INTO stores VALUES
-              ('601', '一店'), ('602', '二店'), ('603', '未授权店');
+              ('601', '一店', true), ('601', '已停用同码门店', false),
+              ('602', '二店', true), ('603', '未授权店', true);
             INSERT INTO manaframe VALUES
               ('D1', '部门一', NULL, NULL, NULL, NULL),
               ('G1', '柜组一', 'D1', 10, '02', 'C1'),
@@ -632,6 +716,7 @@ def test_postgresql_query_preserves_signed_scoped_facts_without_dimension_amplif
     rows = {(row["store_code"], row["group_code"]): row for row in payload["rows"]}
     assert set(rows) == {("601", "G1"), ("602", "G1"), ("601", "GC")}
     assert rows[("601", "G1")]["sales_amount"] == 120.0
+    assert rows[("601", "G1")]["store_name"] == "一店"
     assert rows[("601", "G1")]["quantity"] == 1.0
     assert rows[("601", "G1")]["tax_cost"] == 72.0
     assert rows[("601", "G1")]["profit"] == 48.0

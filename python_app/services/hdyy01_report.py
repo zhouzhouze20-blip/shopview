@@ -120,6 +120,7 @@ stores_normalized AS MATERIALIZED (
       )
     ) AS normalized_match_count
   FROM stores source
+  WHERE source.is_active IS TRUE
 ),
 stores_unique AS MATERIALIZED (
   SELECT *

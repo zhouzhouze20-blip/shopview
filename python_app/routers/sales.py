@@ -353,6 +353,26 @@ def _od0002_store_id_for_code(db: Session, store_code: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
+def _hdyy01_deny_resolution_guard_sql(scope: Any) -> str:
+    """Fail closed when a denied HDYY01 dimension cannot be resolved."""
+    if "__all__" in scope.deny:
+        return ""
+
+    guards: list[str] = []
+    if scope.deny.get("store", set()):
+        guards.append("AND st.store_id IS NOT NULL")
+    if scope.deny.get("department", set()):
+        guards.append("AND dept.normalized_mfcode IS NOT NULL")
+    if scope.deny.get("category", set()):
+        guards.append("AND h.normalized_level3_code IS NOT NULL")
+    if scope.deny.get("floor", set()):
+        guards.append(
+            "AND mf.normalized_mfcode IS NOT NULL "
+            "AND NULLIF(TRIM(BOTH FROM COALESCE(mf.mflc, '')), '') IS NOT NULL"
+        )
+    return " " + " ".join(guards) if guards else ""
+
+
 @router.get("/reports/hdyy01/stores")
 async def hdyy01_stores(
     db: Session = Depends(get_db),
@@ -470,11 +490,12 @@ def _load_hdyy01_for_request(
         store_expr="st.store_id::text",
         department_code_expr="dept.mfcode",
         department_name_expr="dept.mfcname",
-        group_expr="mf.mfcode",
+        group_expr="s.sglmfid",
         category_code_expr="h.level2_code",
         category_name_expr="h.level2_name",
         floor_expr="mf.mflc",
     )
+    scope_filter_sql += _hdyy01_deny_resolution_guard_sql(scope)
     report = load_hdyy01_report(
         db,
         TrustedScopeSql(scope_filter_sql),
