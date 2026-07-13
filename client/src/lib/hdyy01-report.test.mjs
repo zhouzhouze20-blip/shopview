@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -308,6 +309,86 @@ test("store options trim, dedupe, and use the authorized label fallback", () => 
       { value: "602", label: "602" },
     ],
   );
+});
+
+test("HDYY01 page source exposes only the four approved filters and report endpoints", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /HDYY01柜组经营分析表/);
+  for (const label of ["开始日期", "结束日期", "门店", "部门"]) {
+    assert.match(source, new RegExp(`>${label}<`));
+  }
+  for (const endpoint of [
+    "/api/sales/reports/hdyy01/stores",
+    "/api/sales/reports/hdyy01/departments",
+    "/api/sales/reports/hdyy01?",
+    "/api/sales/reports/hdyy01/export?",
+  ]) {
+    assert.match(source, new RegExp(endpoint.replace(/[?]/g, "\\?")));
+  }
+  assert.doesNotMatch(source, /prior|yoy|同期|同比/i);
+  assert.match(source, /enabled:\s*hasSubmitted/);
+});
+
+test("HDYY01 page source maps StoreContext internal ids to authorized ERP codes", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /storesQuery\.data\?\.find\(\(store\)\s*=>\s*String\(store\.store_id\)\s*===\s*String\(selectedStoreId\)\)\?\.store_code\s*\?\?\s*null/,
+  );
+  assert.match(source, /syncHdyy01DraftFromGlobalStore\(current,\s*globalStoreCode,\s*draftDirty\)/);
+  assert.doesNotMatch(source, /syncHdyy01DraftFromGlobalStore\(current,\s*selectedStoreId/);
+
+  const authorizedStores = [{ store_id: 4, store_code: "604", store_name: "四店" }];
+  const selectedStoreId = 4;
+  const globalStoreCode = authorizedStores.find(
+    (store) => String(store.store_id) === String(selectedStoreId),
+  )?.store_code ?? null;
+  assert.equal(globalStoreCode, "604");
+});
+
+test("HDYY01 page source fixes pagination, authenticated export, columns, and quality labels", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const PAGE_SIZE = 50/);
+  assert.match(source, /paginateRows\([^,]+,\s*page,\s*PAGE_SIZE\)/);
+  assert.match(source, /import\s*\{[^}]*apiRequest[^}]*\}\s*from\s*["']@\/lib\/api["']/s);
+  assert.match(source, /apiRequest\(`\/api\/sales\/reports\/hdyy01\/export\?\$\{queryString\}`\)/);
+  assert.match(source, /contentDispositionFilename\(/);
+  assert.match(source, /scheduleObjectUrlRevoke\(/);
+  assert.match(source, /<TableHeader className="sticky/);
+  assert.match(source, /overflow-x-auto/);
+  assert.match(source, /<TableFooter>/);
+  assert.match(source, />合计</);
+
+  const columnLabels = [
+    "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "一级编码", "一级名称",
+    "二级编码", "二级名称", "等级", "数量", "销售收入", "含税销售成本", "毛利", "消费次数",
+    "客单", "会员销售", "储值卡销售",
+  ];
+  for (const label of columnLabels) {
+    assert.match(source, new RegExp(`label:\\s*["']${label}["']`));
+  }
+  assert.equal((source.match(/label:\s*["'][^"']+["']/g) ?? []).filter((entry) =>
+    columnLabels.some((label) => entry.includes(`"${label}"`) || entry.includes(`'${label}'`))
+  ).length, 19);
+
+  for (const label of [
+    "未匹配组织柜组数", "未匹配组织金额", "未匹配层级柜组数", "未匹配层级金额",
+    "缺失等级柜组数", "缺失等级金额", "未匹配会员小票数",
+  ]) {
+    assert.match(source, new RegExp(`label:\\s*["']${label}["']`));
+  }
 });
 
 test("frontend model accepts the complete backend response and rejects wrong quality keys", async () => {
