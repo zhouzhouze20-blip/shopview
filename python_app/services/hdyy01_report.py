@@ -289,15 +289,15 @@ def build_report_payload(
     ]
     quality = {
         "unmatched_organization_group_count": len(unmatched_organization),
-        "unmatched_organization_sales_amount": sum(
+        "unmatched_organization_amount": sum(
             (row["sales_amount"] for row in unmatched_organization), 0.0
         ),
         "unmatched_hierarchy_group_count": len(unmatched_hierarchy),
-        "unmatched_hierarchy_sales_amount": sum(
+        "unmatched_hierarchy_amount": sum(
             (row["sales_amount"] for row in unmatched_hierarchy), 0.0
         ),
         "missing_grade_group_count": len(missing_grade),
-        "missing_grade_sales_amount": sum(
+        "missing_grade_amount": sum(
             (row["sales_amount"] for row in missing_grade), 0.0
         ),
         "unmatched_member_ticket_count": max(

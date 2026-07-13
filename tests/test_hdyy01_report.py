@@ -247,11 +247,11 @@ def test_missing_dimensions_render_unmatched_and_feed_signed_quality_metrics():
         assert missing[key] == "未匹配"
     assert payload["quality"] == {
         "unmatched_organization_group_count": 1,
-        "unmatched_organization_sales_amount": -25.0,
+        "unmatched_organization_amount": -25.0,
         "unmatched_hierarchy_group_count": 1,
-        "unmatched_hierarchy_sales_amount": -25.0,
+        "unmatched_hierarchy_amount": -25.0,
         "missing_grade_group_count": 1,
-        "missing_grade_sales_amount": -25.0,
+        "missing_grade_amount": -25.0,
         "unmatched_member_ticket_count": 0,
     }
 
@@ -275,11 +275,11 @@ def test_empty_payload_has_complete_zero_totals_and_quality():
     }
     assert payload["quality"] == {
         "unmatched_organization_group_count": 0,
-        "unmatched_organization_sales_amount": 0.0,
+        "unmatched_organization_amount": 0.0,
         "unmatched_hierarchy_group_count": 0,
-        "unmatched_hierarchy_sales_amount": 0.0,
+        "unmatched_hierarchy_amount": 0.0,
         "missing_grade_group_count": 0,
-        "missing_grade_sales_amount": 0.0,
+        "missing_grade_amount": 0.0,
         "unmatched_member_ticket_count": 0,
     }
     assert payload["generated_at"].endswith("+00:00")
