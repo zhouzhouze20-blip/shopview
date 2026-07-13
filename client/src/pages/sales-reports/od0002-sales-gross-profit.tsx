@@ -71,10 +71,10 @@ const metricCells = (metrics: Od0002Metric) => [
 function HierarchyValue({ name, code }: { name?: string | null; code?: string | null }) {
   if (!name && !code) return null;
   return (
-    <>
-      <div className="font-medium">{name || "未匹配"}</div>
-      <div className="text-xs text-muted-foreground">{code || "—"}</div>
-    </>
+    <div className="min-w-[8rem] whitespace-nowrap">
+      <div className="font-medium whitespace-nowrap">{name || "未匹配"}</div>
+      <div className="text-xs text-muted-foreground whitespace-nowrap">{code || "—"}</div>
+    </div>
   );
 }
 
@@ -340,7 +340,8 @@ export default function Od0002SalesGrossProfitPage() {
                 <TableHeader className="sticky top-0 z-20 bg-white">
                   <TableRow>
                     {visible.includes("store") && <TableHead rowSpan={2}>门店</TableHead>}
-                    <TableHead rowSpan={2}>维度</TableHead>
+                    {activeTab === "groups" && <TableHead rowSpan={2}>部门</TableHead>}
+                    <TableHead rowSpan={2}>{activeTab === "groups" ? "柜组" : "维度"}</TableHead>
                     <TableHead colSpan={3} className="text-center">销售收入</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利率</TableHead>
@@ -351,9 +352,20 @@ export default function Od0002SalesGrossProfitPage() {
                 </TableHeader>
                 <TableBody>
                   {pagedRows.map((row, index) => (
-                    <TableRow key={`${row.store_code ?? "all"}-${row.dimension_code ?? row.dimension_name ?? index}`}>
-                      {visible.includes("store") && <TableCell className="py-2">{row.store_name || row.store_code || "—"}</TableCell>}
-                      <TableCell className="py-2"><div className="font-medium">{row.dimension_name || "未匹配"}</div><div className="text-xs text-muted-foreground">{row.dimension_code || "—"}</div></TableCell>
+                    <TableRow key={`${row.store_code ?? "all"}-${row.department_code ?? "department"}-${row.dimension_code ?? row.dimension_name ?? index}`}>
+                      {visible.includes("store") && (
+                        <TableCell className="py-2">
+                          <HierarchyValue name={row.store_name} code={row.store_code} />
+                        </TableCell>
+                      )}
+                      {activeTab === "groups" && (
+                        <TableCell className="py-2">
+                          <HierarchyValue name={row.department_name} code={row.department_code} />
+                        </TableCell>
+                      )}
+                      <TableCell className="py-2">
+                        <HierarchyValue name={row.dimension_name} code={row.dimension_code} />
+                      </TableCell>
                       {metricCells(row.metrics).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>
                   ))}
@@ -362,6 +374,7 @@ export default function Od0002SalesGrossProfitPage() {
                   <TableFooter>
                     <TableRow>
                       {visible.includes("store") && <TableCell className="py-2" />}
+                      {activeTab === "groups" && <TableCell className="py-2" />}
                       <TableCell className="py-2">合计</TableCell>
                       {metricCells(activeTotal).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>

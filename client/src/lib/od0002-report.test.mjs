@@ -217,8 +217,8 @@ test("OD0002 table uses Chinese financial yoy colors and compact data rows", asy
   assert.match(source, /function yoyColorClass\([^)]*\)[\s\S]*value > 0[\s\S]*text-red-600[\s\S]*value < 0[\s\S]*text-green-600/);
   assert.match(source, /isYoy:\s*true/g);
   assert.match(source, /cell\.isYoy\s*\?\s*yoyColorClass\(cell\.rawValue\)/);
-  assert.match(source, /<TableCell[^>]*className="py-2"[^>]*>\{row\.store_name/);
-  assert.match(source, /<TableCell[^>]*className="py-2"[^>]*><div className="font-medium">/);
+  assert.match(source, /<TableCell className="py-2">\s*<HierarchyValue name=\{row\.store_name\}/);
+  assert.match(source, /<TableCell className="py-2">\s*<HierarchyValue name=\{row\.dimension_name\}/);
   assert.match(source, /<TableFooter>[\s\S]*py-2/);
 });
 
@@ -235,6 +235,20 @@ test("OD0002 page renders the department category hierarchy", async () => {
   assert.match(source, /row\.area_name/);
   assert.match(source, /row\.category_name/);
   assert.match(source, /row\.row_type/);
+});
+
+test("OD0002 hierarchy values do not wrap and groups render department and group columns", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /function HierarchyValue[\s\S]*whitespace-nowrap/);
+  assert.match(source, /activeTab === "groups"[\s\S]*>部门</);
+  assert.match(source, /activeTab === "groups" \? "柜组" : "维度"/);
+  assert.match(source, /name=\{row\.department_name\}[\s\S]*code=\{row\.department_code\}/);
+  assert.match(source, /name=\{row\.dimension_name\}[\s\S]*code=\{row\.dimension_code\}/);
+  assert.match(source, /visible\.includes\("store"\)[\s\S]*HierarchyValue/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {
