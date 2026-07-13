@@ -311,6 +311,82 @@ test("store options trim, dedupe, and use the authorized label fallback", () => 
   );
 });
 
+test("default HDYY01 dates use the full month containing yesterday in local time", async () => {
+  const module = await import("./hdyy01-report.ts");
+  assert.equal(typeof module.defaultHdyy01DateRange, "function");
+
+  assert.deepEqual(module.defaultHdyy01DateRange(new Date(2026, 7, 1, 12)), {
+    start: "2026-07-01",
+    end: "2026-07-31",
+  });
+  assert.deepEqual(module.defaultHdyy01DateRange(new Date(2026, 0, 1, 12)), {
+    start: "2025-12-01",
+    end: "2025-12-31",
+  });
+  assert.deepEqual(module.defaultHdyy01DateRange(new Date(2026, 6, 13, 12)), {
+    start: "2026-07-01",
+    end: "2026-07-12",
+  });
+});
+
+test("authorized internal store ids resolve to ERP store codes only", async () => {
+  const module = await import("./hdyy01-report.ts");
+  assert.equal(typeof module.resolveHdyy01GlobalStoreCode, "function");
+
+  const stores = [{ store_id: 4, store_code: " 604 ", store_name: "四店" }];
+  assert.equal(module.resolveHdyy01GlobalStoreCode(stores, 4), "604");
+  assert.equal(module.resolveHdyy01GlobalStoreCode(stores, "4"), "604");
+  assert.equal(module.resolveHdyy01GlobalStoreCode(stores, 999), null);
+  assert.equal(module.resolveHdyy01GlobalStoreCode(stores, null), null);
+});
+
+test("submitted query snapshot is isolated from later draft edits", async () => {
+  const module = await import("./hdyy01-report.ts");
+  assert.equal(typeof module.createHdyy01QuerySnapshot, "function");
+
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "604",
+    departmentId: "60401",
+  };
+  const snapshot = module.createHdyy01QuerySnapshot(draft);
+  draft.start = "2026-06-01";
+  draft.end = "2026-06-30";
+  draft.storeId = "603";
+  draft.departmentId = "all";
+
+  assert.deepEqual(snapshot.filters, {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "604",
+    departmentId: "60401",
+  });
+  assert.equal(
+    snapshot.queryString,
+    "start_date=2026-07-01&end_date=2026-07-12&store_id=604&department_id=60401",
+  );
+});
+
+test("same submitted query explicitly refreshes while a changed query uses a new key", async () => {
+  const module = await import("./hdyy01-report.ts");
+  assert.equal(typeof module.shouldRefetchHdyy01Query, "function");
+
+  const current = module.createHdyy01QuerySnapshot({
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "604",
+    departmentId: "all",
+  });
+  const same = module.createHdyy01QuerySnapshot({ ...current.filters });
+  const changed = module.createHdyy01QuerySnapshot({ ...current.filters, storeId: "603" });
+
+  assert.equal(module.shouldRefetchHdyy01Query(null, current), false);
+  assert.equal(module.shouldRefetchHdyy01Query(current, same), true);
+  assert.equal(module.shouldRefetchHdyy01Query(current, changed), false);
+  assert.notEqual(current.queryString, changed.queryString);
+});
+
 test("HDYY01 page source exposes only the four approved filters and report endpoints", async () => {
   const source = await readFile(
     new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
@@ -330,28 +406,19 @@ test("HDYY01 page source exposes only the four approved filters and report endpo
     assert.match(source, new RegExp(endpoint.replace(/[?]/g, "\\?")));
   }
   assert.doesNotMatch(source, /prior|yoy|同期|同比/i);
-  assert.match(source, /enabled:\s*hasSubmitted/);
+  assert.match(source, /defaultHdyy01DateRange\(\)/);
 });
 
-test("HDYY01 page source maps StoreContext internal ids to authorized ERP codes", async () => {
+test("HDYY01 page source maps StoreContext ids through the tested ERP-code helper", async () => {
   const source = await readFile(
     new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(
-    source,
-    /storesQuery\.data\?\.find\(\(store\)\s*=>\s*String\(store\.store_id\)\s*===\s*String\(selectedStoreId\)\)\?\.store_code\s*\?\?\s*null/,
-  );
+  assert.match(source, /resolveHdyy01GlobalStoreCode\(storesQuery\.data\s*\?\?\s*\[\],\s*selectedStoreId\)/);
   assert.match(source, /syncHdyy01DraftFromGlobalStore\(current,\s*globalStoreCode,\s*draftDirty\)/);
   assert.doesNotMatch(source, /syncHdyy01DraftFromGlobalStore\(current,\s*selectedStoreId/);
-
-  const authorizedStores = [{ store_id: 4, store_code: "604", store_name: "四店" }];
-  const selectedStoreId = 4;
-  const globalStoreCode = authorizedStores.find(
-    (store) => String(store.store_id) === String(selectedStoreId),
-  )?.store_code ?? null;
-  assert.equal(globalStoreCode, "604");
+  assert.doesNotMatch(source, /storesQuery\.data\?\.find/);
 });
 
 test("HDYY01 page source fixes pagination, authenticated export, columns, and quality labels", async () => {
@@ -362,8 +429,9 @@ test("HDYY01 page source fixes pagination, authenticated export, columns, and qu
 
   assert.match(source, /const PAGE_SIZE = 50/);
   assert.match(source, /paginateRows\([^,]+,\s*page,\s*PAGE_SIZE\)/);
+  assert.match(source, /useEffect\(\(\)\s*=>\s*\{\s*setPage\(1\);\s*\},\s*\[draft\.storeId\]\)/s);
   assert.match(source, /import\s*\{[^}]*apiRequest[^}]*\}\s*from\s*["']@\/lib\/api["']/s);
-  assert.match(source, /apiRequest\(`\/api\/sales\/reports\/hdyy01\/export\?\$\{queryString\}`\)/);
+  assert.match(source, /apiRequest\(`\/api\/sales\/reports\/hdyy01\/export\?\$\{submitted\.queryString\}`\)/);
   assert.match(source, /contentDispositionFilename\(/);
   assert.match(source, /scheduleObjectUrlRevoke\(/);
   assert.match(source, /<TableHeader className="sticky/);
@@ -383,12 +451,38 @@ test("HDYY01 page source fixes pagination, authenticated export, columns, and qu
     columnLabels.some((label) => entry.includes(`"${label}"`) || entry.includes(`'${label}'`))
   ).length, 19);
 
+  for (const [label, field] of [
+    ["销售收入", "sales_amount"],
+    ["含税销售成本", "tax_cost"],
+    ["毛利", "profit"],
+    ["客单", "average_ticket"],
+    ["会员销售", "member_sales"],
+    ["储值卡销售", "stored_card_sales"],
+  ]) {
+    assert.match(source, new RegExp(`label:\\s*["']${label}["'][^}]*row\\.${field}`));
+  }
+
   for (const label of [
     "未匹配组织柜组数", "未匹配组织金额", "未匹配层级柜组数", "未匹配层级金额",
     "缺失等级柜组数", "缺失等级金额", "未匹配会员小票数",
   ]) {
     assert.match(source, new RegExp(`label:\\s*["']${label}["']`));
   }
+});
+
+test("HDYY01 page source uses stable submitted query keys and explicit same-filter refresh", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /queryVersion/);
+  assert.match(source, /const \[submitted, setSubmitted\] = useState<.*Hdyy01QuerySnapshot.*>\(null\)/);
+  assert.match(source, /queryKey:\s*\["\/api\/sales\/reports\/hdyy01",\s*submittedQueryString\]/);
+  assert.match(source, /createHdyy01QuerySnapshot\(draft\)/);
+  assert.match(source, /shouldRefetchHdyy01Query\(submitted,\s*nextSubmitted\)/);
+  assert.match(source, /reportQuery\.refetch\(\)/);
+  assert.match(source, /enabled:\s*Boolean\(submitted\)/);
 });
 
 test("frontend model accepts the complete backend response and rejects wrong quality keys", async () => {

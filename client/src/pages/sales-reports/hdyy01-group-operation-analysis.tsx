@@ -25,9 +25,10 @@ import {
 import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiRequest } from "@/lib/api";
 import {
-  buildHdyy01Params,
   changeHdyy01Store,
   contentDispositionFilename,
+  createHdyy01QuerySnapshot,
+  defaultHdyy01DateRange,
   formatHdyy01Area,
   formatHdyy01CodeName,
   formatHdyy01Count,
@@ -38,11 +39,14 @@ import {
   HDYY01_ALL_STORES,
   normalizeHdyy01StoreOptions,
   paginateRows,
+  resolveHdyy01GlobalStoreCode,
   scheduleObjectUrlRevoke,
+  shouldRefetchHdyy01Query,
   syncHdyy01DraftFromGlobalStore,
   type Hdyy01AuthorizedDepartment,
   type Hdyy01AuthorizedStore,
   type Hdyy01DraftFilters,
+  type Hdyy01QuerySnapshot,
   type Hdyy01Response,
   type Hdyy01Row,
 } from "@/lib/hdyy01-report";
@@ -87,18 +91,9 @@ const HDYY01_COLUMNS: readonly Hdyy01Column[] = [
   { label: "储值卡销售", className: "min-w-28 text-right", render: (row) => formatHdyy01Money(row.stored_card_sales) },
 ];
 
-function localIsoDate(date: Date): string {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
-}
-
 function defaultFilters(): Hdyy01DraftFilters {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now);
-  end.setDate(end.getDate() - 1);
   return {
-    start: localIsoDate(start),
-    end: localIsoDate(end),
+    ...defaultHdyy01DateRange(),
     storeId: HDYY01_ALL_STORES,
     departmentId: HDYY01_ALL_DEPARTMENTS,
   };
@@ -108,9 +103,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
   const { selectedStoreId } = useStore();
   const initial = useMemo(() => defaultFilters(), []);
   const [draft, setDraft] = useState<Hdyy01DraftFilters>(initial);
-  const [submitted, setSubmitted] = useState<Hdyy01DraftFilters>(initial);
-  const [hasSubmitted, setHasSubmitted] = useState(false);
-  const [queryVersion, setQueryVersion] = useState(0);
+  const [submitted, setSubmitted] = useState<Hdyy01QuerySnapshot | null>(null);
   const [draftDirty, setDraftDirty] = useState(false);
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
@@ -120,13 +113,15 @@ export default function Hdyy01GroupOperationAnalysisPage() {
     queryKey: ["/api/sales/reports/hdyy01/stores"],
     queryFn: () => apiGet("/api/sales/reports/hdyy01/stores"),
   });
-  const globalStoreCode = selectedStoreId === null
-    ? null
-    : storesQuery.data?.find((store) => String(store.store_id) === String(selectedStoreId))?.store_code ?? null;
+  const globalStoreCode = resolveHdyy01GlobalStoreCode(storesQuery.data ?? [], selectedStoreId);
 
   useEffect(() => {
     setDraft((current) => syncHdyy01DraftFromGlobalStore(current, globalStoreCode, draftDirty));
   }, [globalStoreCode]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [draft.storeId]);
 
   const hasSelectedStore = draft.storeId !== HDYY01_ALL_STORES;
   const departmentsQuery = useQuery<Hdyy01AuthorizedDepartment[]>({
@@ -137,27 +132,19 @@ export default function Hdyy01GroupOperationAnalysisPage() {
     enabled: hasSelectedStore,
   });
 
-  const queryString = useMemo(
-    () => buildHdyy01Params(
-      submitted.start,
-      submitted.end,
-      submitted.storeId,
-      submitted.departmentId,
-    ).toString(),
-    [submitted],
-  );
+  const submittedQueryString = submitted?.queryString ?? "";
   const reportQuery = useQuery<Hdyy01Response>({
-    queryKey: ["/api/sales/reports/hdyy01", queryString, queryVersion],
-    queryFn: () => apiGet(`/api/sales/reports/hdyy01?${queryString}`),
-    enabled: hasSubmitted
-      && Boolean(submitted.start && submitted.end && submitted.start <= submitted.end),
+    queryKey: ["/api/sales/reports/hdyy01", submittedQueryString],
+    queryFn: ({ queryKey: [, params] }) => apiGet(`/api/sales/reports/hdyy01?${params}`),
+    enabled: Boolean(submitted),
   });
 
   const storeOptions = useMemo(
     () => normalizeHdyy01StoreOptions(storesQuery.data ?? []),
     [storesQuery.data],
   );
-  const rows = hasSubmitted ? reportQuery.data?.rows ?? [] : [];
+  const hasSubmitted = Boolean(submitted);
+  const rows = submitted ? reportQuery.data?.rows ?? [] : [];
   const pagedRows = paginateRows(rows, page, PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const message = getHdyy01QueryMessage({
@@ -174,24 +161,26 @@ export default function Hdyy01GroupOperationAnalysisPage() {
 
   const submit = () => {
     if (!draft.start || !draft.end || draft.start > draft.end) return;
-    setSubmitted({ ...draft });
-    setHasSubmitted(true);
-    setQueryVersion((value) => value + 1);
+    const nextSubmitted = createHdyy01QuerySnapshot(draft);
+    const shouldRefetch = shouldRefetchHdyy01Query(submitted, nextSubmitted);
+    setSubmitted(nextSubmitted);
     setDraftDirty(false);
     setPage(1);
     setExportError(null);
+    if (shouldRefetch) void reportQuery.refetch();
   };
 
   const exportReport = async () => {
+    if (!submitted) return;
     setExporting(true);
     setExportError(null);
     let objectUrl: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     try {
-      const response = await apiRequest(`/api/sales/reports/hdyy01/export?${queryString}`);
+      const response = await apiRequest(`/api/sales/reports/hdyy01/export?${submitted.queryString}`);
       const blob = await response.blob();
       const filename = contentDispositionFilename(response.headers.get("Content-Disposition"))
-        ?? `HDYY01_柜组经营分析表_${submitted.start}_${submitted.end}.xlsx`;
+        ?? `HDYY01_柜组经营分析表_${submitted.filters.start}_${submitted.filters.end}.xlsx`;
       objectUrl = URL.createObjectURL(blob);
       anchor = document.createElement("a");
       anchor.href = objectUrl;

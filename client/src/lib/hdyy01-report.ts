@@ -86,6 +86,36 @@ export type Hdyy01DraftFilters = {
   departmentId: string;
 };
 
+export type Hdyy01QuerySnapshot = {
+  filters: Readonly<Hdyy01DraftFilters>;
+  queryString: string;
+};
+
+function localDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function defaultHdyy01DateRange(now: Date = new Date()): Pick<Hdyy01DraftFilters, "start" | "end"> {
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  end.setDate(end.getDate() - 1);
+  const start = new Date(end.getFullYear(), end.getMonth(), 1);
+  return { start: localDateString(start), end: localDateString(end) };
+}
+
+export function resolveHdyy01GlobalStoreCode(
+  permissionRows: readonly Hdyy01AuthorizedStore[],
+  selectedStoreId: string | number | null,
+): string | null {
+  if (selectedStoreId === null) return null;
+  const storeCode = permissionRows.find(
+    (store) => String(store.store_id) === String(selectedStoreId),
+  )?.store_code.trim();
+  return storeCode || null;
+}
+
 export function buildHdyy01Params(
   start: string,
   end: string,
@@ -102,6 +132,28 @@ export function buildHdyy01Params(
     params.set("department_id", normalizedDepartment);
   }
   return params;
+}
+
+export function createHdyy01QuerySnapshot(
+  draft: Hdyy01DraftFilters,
+): Hdyy01QuerySnapshot {
+  const filters = { ...draft };
+  return {
+    filters,
+    queryString: buildHdyy01Params(
+      filters.start,
+      filters.end,
+      filters.storeId,
+      filters.departmentId,
+    ).toString(),
+  };
+}
+
+export function shouldRefetchHdyy01Query(
+  current: Hdyy01QuerySnapshot | null,
+  next: Hdyy01QuerySnapshot,
+): boolean {
+  return current?.queryString === next.queryString;
 }
 
 export function changeHdyy01Store(
