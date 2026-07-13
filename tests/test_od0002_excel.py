@@ -29,6 +29,49 @@ def sample_report(*, empty=False):
             "metrics": dict(metrics),
         }]
         totals[key] = dict(metrics)
+    hierarchy_metrics = dict(metrics)
+    hierarchy_total = {
+        **metrics,
+        "sales_current": 240000.0,
+        "sales_prior": 200000.0,
+        "profit_current": 48000.0,
+        "profit_prior": 30000.0,
+    }
+    dimensions["department_categories"] = [] if empty else [
+        {
+            "store_code": "603", "store_name": "商城",
+            "department_code": "6030102", "department_name": "新世纪二部",
+            "area_code": "A1", "area_name": "女装区",
+            "category_code": "C1", "category_name": "中式女装",
+            "dimension_code": "C1", "dimension_name": "中式女装",
+            "row_type": "category", "metrics": dict(hierarchy_metrics),
+        },
+        {
+            "store_code": "603", "store_name": "商城",
+            "department_code": "6030102", "department_name": "新世纪二部",
+            "area_code": "A1", "area_name": "女装区",
+            "category_code": "C2", "category_name": "中淑女装",
+            "dimension_code": "C2", "dimension_name": "中淑女装",
+            "row_type": "category", "metrics": dict(hierarchy_metrics),
+        },
+        {
+            "store_code": "603", "store_name": "商城",
+            "department_code": "6030102", "department_name": "新世纪二部",
+            "area_code": "A1", "area_name": "女装区",
+            "category_code": None, "category_name": None,
+            "dimension_code": "A1", "dimension_name": "女装区小计",
+            "row_type": "area_subtotal", "metrics": dict(hierarchy_total),
+        },
+        {
+            "store_code": "603", "store_name": "商城",
+            "department_code": "6030102", "department_name": "新世纪二部",
+            "area_code": None, "area_name": None,
+            "category_code": None, "category_name": None,
+            "dimension_code": "6030102", "dimension_name": "新世纪二部小计",
+            "row_type": "department_subtotal", "metrics": dict(hierarchy_total),
+        },
+    ]
+    totals["department_categories"] = dict(hierarchy_total)
     if not empty:
         dimensions["departments"].append({
             "store_code": "602", "store_name": "二店",
@@ -54,7 +97,9 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     payload = build_od0002_workbook(sample_report())
     assert isinstance(payload, bytes)
     workbook = load_workbook(BytesIO(payload))
-    assert workbook.sheetnames == ["分店", "部门", "区域", "品类", "柜组", "楼层", "报表说明"]
+    assert workbook.sheetnames == [
+        "分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "楼层", "报表说明"
+    ]
 
     sheet = workbook["部门"]
     assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（部门）"
@@ -78,6 +123,39 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     assert sorted_codes[0] in notes and sorted_codes[-1] in notes
     assert all(code in notes for code in sorted_codes)
     assert "合计仅包含当前用户权限范围" in notes
+
+
+def test_department_category_sheet_has_hierarchy_subtotals_and_total():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
+    sheet = workbook["部门（含品类）"]
+
+    assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（部门（含品类））"
+    assert [sheet.cell(6, column).value for column in range(1, 5)] == ["门店", "部门", "区域", "品类"]
+    assert "商城" in sheet["A8"].value and "603" in sheet["A8"].value
+    assert "新世纪二部" in sheet["B8"].value and "6030102" in sheet["B8"].value
+    assert "女装区" in sheet["C8"].value and "A1" in sheet["C8"].value
+    assert "中式女装" in sheet["D8"].value and "C1" in sheet["D8"].value
+    assert sheet["C10"].value.startswith("女装区小计")
+    assert sheet["B11"].value.startswith("新世纪二部小计")
+    assert sheet["A12"].value == "合计"
+    assert sheet["E12"].value == 24
+    assert sheet.freeze_panes == "A8"
+    assert sheet.max_column == 13
+    assert sheet["B11"].font.bold is True
+    assert sheet["B11"].fill.fgColor.rgb.endswith("D9EAF7")
+
+
+def test_empty_department_category_sheet_keeps_headers_and_total():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report(empty=True))))
+    sheet = workbook["部门（含品类）"]
+
+    assert sheet["A6"].value == "门店"
+    assert sheet["D6"].value == "品类"
+    assert sheet["A8"].value == "合计"
 
 
 def test_workbook_keeps_store_columns_for_multiple_store_rows():

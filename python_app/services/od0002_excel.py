@@ -53,6 +53,28 @@ def _write_headers(sheet, dimension_name: str) -> None:
             cell.border = BORDER
 
 
+def _write_hierarchy_headers(sheet) -> None:
+    sheet.merge_cells("A5:D5")
+    sheet["A5"] = "层级"
+    for column, label in enumerate(("门店", "部门", "区域", "品类"), 1):
+        sheet.merge_cells(start_row=6, start_column=column, end_row=7, end_column=column)
+        sheet.cell(6, column).value = label
+    for start, end, label in ((5, 7, "销售收入"), (8, 10, "毛利额"), (11, 13, "毛利率")):
+        sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
+        sheet.cell(5, start).value = label
+    for group_start in (5, 8, 11):
+        for offset, label in enumerate(("本期", "同期", "同比")):
+            sheet.cell(6, group_start + offset).value = label
+            sheet.cell(7, group_start + offset).value = "万元" if group_start < 11 and offset < 2 else "%"
+    for row in range(5, 8):
+        for column in range(1, 14):
+            cell = sheet.cell(row, column)
+            cell.fill = PatternFill("solid", fgColor=BLUE)
+            cell.font = Font(color=WHITE, bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = BORDER
+
+
 def _metric_values(metrics: dict[str, Any]) -> list[Any]:
     return [
         float(metrics.get("sales_current") or 0) / 10000,
@@ -117,6 +139,70 @@ def _write_report_sheet(sheet, report: dict[str, Any], label: str, dimension_key
         sheet.column_dimensions[get_column_letter(index)].width = width
 
 
+def _hierarchy_text(name: Any, code: Any, *, suffix: str = "") -> Any:
+    safe_name = str(name or "未匹配") + suffix
+    safe_code = str(code or "—")
+    return _safe_excel_text(f"{safe_name}\n{safe_code}")
+
+
+def _write_department_category_sheet(sheet, report: dict[str, Any]) -> None:
+    dates = report["dates"]
+    label = "部门（含品类）"
+    sheet.merge_cells("A1:M1")
+    sheet["A1"] = f"OD0002 门店销售毛利汇总表（{label}）"
+    sheet["A1"].font = Font(size=16, bold=True)
+    sheet["A1"].alignment = Alignment(horizontal="center")
+    sheet.merge_cells("A2:M2")
+    sheet["A2"] = f"本期：{_date_text(dates['start_date'])} 至 {_date_text(dates['end_date'])}"
+    sheet.merge_cells("A3:M3")
+    sheet["A3"] = f"同期：{_date_text(dates['prior_start_date'])} 至 {_date_text(dates['prior_end_date'])}"
+    _write_hierarchy_headers(sheet)
+
+    row_number = 8
+    hierarchy_rows = report.get("dimensions", {}).get("department_categories", [])
+    for row in hierarchy_rows:
+        row_type = row.get("row_type")
+        if row_type == "area_subtotal":
+            identifiers = [
+                None,
+                None,
+                _hierarchy_text(row.get("area_name"), row.get("area_code"), suffix="小计"),
+                None,
+            ]
+        elif row_type == "department_subtotal":
+            identifiers = [
+                None,
+                _hierarchy_text(
+                    row.get("department_name"), row.get("department_code"), suffix="小计"
+                ),
+                None,
+                None,
+            ]
+        else:
+            identifiers = [
+                _hierarchy_text(row.get("store_name"), row.get("store_code")),
+                _hierarchy_text(row.get("department_name"), row.get("department_code")),
+                _hierarchy_text(row.get("area_name"), row.get("area_code")),
+                _hierarchy_text(row.get("category_name"), row.get("category_code")),
+            ]
+        _write_data_row(
+            sheet,
+            row_number,
+            identifiers + _metric_values(row.get("metrics", {})),
+            total=row_type in ("area_subtotal", "department_subtotal"),
+        )
+        for column in range(1, 5):
+            sheet.cell(row_number, column).alignment = Alignment(wrap_text=True, vertical="center")
+        row_number += 1
+
+    total = report.get("totals", {}).get("department_categories", {})
+    _write_data_row(sheet, row_number, ["合计", None, None, None] + _metric_values(total), total=True)
+    sheet.freeze_panes = "A8"
+    widths = (22, 24, 22, 24) + (14,) * 9
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+
 def _write_notes(sheet, report: dict[str, Any]) -> None:
     sheet["A1"] = "项目"
     sheet["B1"] = "说明"
@@ -146,6 +232,8 @@ def _build_od0002_workbook(report: dict[str, Any]) -> Workbook:
     workbook.remove(workbook.active)
     for label, dimension_key in SHEETS:
         _write_report_sheet(workbook.create_sheet(label), report, label, dimension_key)
+        if dimension_key == "departments":
+            _write_department_category_sheet(workbook.create_sheet("部门（含品类）"), report)
     _write_notes(workbook.create_sheet("报表说明"), report)
     return workbook
 
