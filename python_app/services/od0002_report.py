@@ -394,12 +394,14 @@ categories AS (
 groups AS (
   SELECT 'groups' AS dimension_type, store_code, store_name,
          group_code AS dimension_code, group_name AS dimension_name,
-         NULL::text AS department_code, NULL::text AS department_name,
+         department_code, department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
-  FROM base GROUP BY store_code, store_name, group_code, group_name
+  FROM base
+  GROUP BY store_code, store_name, department_code, department_name,
+           group_code, group_name
 ),
 floors AS (
   SELECT 'floors' AS dimension_type, store_code, store_name,
@@ -588,11 +590,16 @@ def normalize_rows(
                 row.get("profit_prior"),
             ),
         }
-        if dimension_type == "department_categories":
+        if dimension_type in ("department_categories", "groups"):
             normalized.update(
                 {
                     "department_code": row.get("department_code"),
                     "department_name": row.get("department_name"),
+                }
+            )
+        if dimension_type == "department_categories":
+            normalized.update(
+                {
                     "area_code": row.get("area_code"),
                     "area_name": row.get("area_name"),
                     "category_code": row.get("category_code"),

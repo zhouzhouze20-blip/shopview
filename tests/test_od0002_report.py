@@ -348,6 +348,25 @@ def test_build_report_query_contains_six_dimensions_and_store_grouping():
         assert "store_code" in section.split("GROUP BY", 1)[1]
 
 
+def test_group_query_aggregates_by_store_department_and_group():
+    sql, _ = build_report_query(
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        date(2025, 1, 1),
+        date(2025, 1, 31),
+        TrustedScopeSql(""),
+        {},
+    )
+    compact = " ".join(sql.lower().split())
+    block = compact.split("groups as (", 1)[1].split("), floors as", 1)[0]
+
+    assert "department_code, department_name" in block
+    assert (
+        "group by store_code, store_name, department_code, department_name, "
+        "group_code, group_name"
+    ) in block
+
+
 def test_normalize_rows_keeps_same_department_separate_by_store_and_builds_metrics():
     rows = [
         {
@@ -374,6 +393,47 @@ def test_normalize_rows_keeps_same_department_separate_by_store_and_builds_metri
         "unmatched_area_category_sales_current": 0.0,
         "unmatched_floor_sales_current": 0.0,
     }
+
+
+def test_normalize_rows_keeps_group_department_and_does_not_merge_duplicate_group_codes():
+    rows = [
+        {
+            "dimension_type": "groups",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030101",
+            "department_name": "新世纪一部",
+            "dimension_code": "0105",
+            "dimension_name": "L'oreal欧莱雅厅",
+            "sales_current": 100,
+            "profit_current": 10,
+            "sales_prior": 80,
+            "profit_prior": 8,
+        },
+        {
+            "dimension_type": "groups",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030102",
+            "department_name": "新世纪二部",
+            "dimension_code": "0105",
+            "dimension_name": "同编码测试厅",
+            "sales_current": 60,
+            "profit_current": 6,
+            "sales_prior": 50,
+            "profit_prior": 5,
+        },
+    ]
+
+    dimensions, _quality = normalize_rows(rows)
+
+    assert [
+        (row["department_code"], row["department_name"], row["dimension_code"])
+        for row in dimensions["groups"]
+    ] == [
+        ("6030101", "新世纪一部", "0105"),
+        ("6030102", "新世纪二部", "0105"),
+    ]
 
 
 def test_normalize_rows_uses_sales_dashboard_department_order_within_each_store():
