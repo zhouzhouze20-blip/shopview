@@ -119,6 +119,19 @@ def test_migration_downgrade_drops_indexes_and_table(monkeypatch):
 def test_source_sql_extracts_three_level_hierarchy_and_grade():
     sql = " ".join(SOURCE_SQL_PATH.read_text(encoding="utf-8").upper().split())
 
+    expected_projections = (
+        "LEVEL1.MBID AS LEVEL1_CODE",
+        "LEVEL1.MBCNAME AS LEVEL1_NAME",
+        "LEVEL2.MBID AS LEVEL2_CODE",
+        "LEVEL2.MBCNAME AS LEVEL2_NAME",
+        "LEVEL3.MBID AS LEVEL3_CODE",
+        "LEVEL3.MBCNAME AS LEVEL3_NAME",
+        "LEVEL3.MBSTR1 AS GRADE_CODE",
+        "CURRENT_TIMESTAMP AS ETL_LOADED_AT",
+    )
+    for projection in expected_projections:
+        assert projection in sql
+
     assert sql.count("BIBH.ODS_MANABRAND") == 3
     assert "LEVEL3.MBPID = LEVEL2.MBID" in sql
     assert "LEVEL2.MBPID = LEVEL1.MBID" in sql
@@ -127,5 +140,8 @@ def test_source_sql_extracts_three_level_hierarchy_and_grade():
     assert "LEVEL1.MBCLASS = 1" in sql
     assert "CASE LEVEL3.MBSTR1 WHEN '1' THEN 'A' WHEN '2' THEN 'B' WHEN '3' THEN 'C' WHEN '4' THEN 'D' END AS GRADE_LABEL" in sql
     assert "STAGE" in sql
-    assert "CONFLICTING PARENT/GRADE VALUES" in sql
-    assert "REPLACE TARGET ONLY AFTER VALIDATION" in sql
+    reject_conflict = "REJECT A LEVEL3_CODE WITH CONFLICTING PARENT/GRADE VALUES"
+    replace_target = "REPLACE TARGET ONLY AFTER VALIDATION"
+    assert reject_conflict in sql
+    assert replace_target in sql
+    assert sql.index(reject_conflict) < sql.index(replace_target)
