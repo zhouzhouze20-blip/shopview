@@ -36,6 +36,7 @@ import {
   formatHdyy01Quantity,
   getHdyy01QueryMessage,
   HDYY01_ALL_DEPARTMENTS,
+  HDYY01_REPORT_STALE_TIME,
   HDYY01_ALL_STORES,
   normalizeHdyy01StoreOptions,
   paginateRows,
@@ -137,6 +138,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
     queryKey: ["/api/sales/reports/hdyy01", submittedQueryString],
     queryFn: ({ queryKey: [, params] }) => apiGet(`/api/sales/reports/hdyy01?${params}`),
     enabled: Boolean(submitted),
+    staleTime: HDYY01_REPORT_STALE_TIME,
   });
 
   const storeOptions = useMemo(
@@ -148,7 +150,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
   const pagedRows = paginateRows(rows, page, PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const message = getHdyy01QueryMessage({
-    isLoading: hasSubmitted && reportQuery.isLoading,
+    isLoading: hasSubmitted && reportQuery.isFetching,
     error: hasSubmitted ? reportQuery.error : null,
     hasData: hasSubmitted && Boolean(reportQuery.data),
     rowCount: rows.length,
@@ -305,7 +307,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
                 <Button
                   variant="outline"
                   onClick={exportReport}
-                  disabled={exporting || !hasSubmitted || !reportQuery.data}
+                  disabled={exporting || reportQuery.isFetching || !hasSubmitted || !reportQuery.data}
                 >
                   {exporting
                     ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />

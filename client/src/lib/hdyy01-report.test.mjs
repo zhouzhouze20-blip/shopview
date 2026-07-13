@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { promisify } from "node:util";
+import { QueryClient } from "@tanstack/query-core";
 
 import {
   HDYY01_ALL_DEPARTMENTS,
@@ -387,6 +388,34 @@ test("same submitted query explicitly refreshes while a changed query uses a new
   assert.notEqual(current.queryString, changed.queryString);
 });
 
+test("HDYY01 refetches an A-B-A filter sequence despite the global infinite stale time", async () => {
+  const module = await import("./hdyy01-report.ts");
+  assert.equal(module.HDYY01_REPORT_STALE_TIME, 0);
+
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, retry: false },
+    },
+  });
+  const networkCalls = [];
+  const fetchReport = (queryString) => queryClient.fetchQuery({
+    queryKey: ["/api/sales/reports/hdyy01", queryString],
+    queryFn: async () => {
+      networkCalls.push(queryString);
+      return { queryString };
+    },
+    staleTime: module.HDYY01_REPORT_STALE_TIME,
+  });
+  const filterA = "start_date=2026-07-01&end_date=2026-07-12&store_id=604";
+  const filterB = "start_date=2026-07-01&end_date=2026-07-12&store_id=603";
+
+  await fetchReport(filterA);
+  await fetchReport(filterB);
+  await fetchReport(filterA);
+
+  assert.deepEqual(networkCalls, [filterA, filterB, filterA]);
+});
+
 test("HDYY01 page source exposes only the four approved filters and report endpoints", async () => {
   const source = await readFile(
     new URL("../pages/sales-reports/hdyy01-group-operation-analysis.tsx", import.meta.url),
@@ -479,10 +508,13 @@ test("HDYY01 page source uses stable submitted query keys and explicit same-filt
   assert.doesNotMatch(source, /queryVersion/);
   assert.match(source, /const \[submitted, setSubmitted\] = useState<.*Hdyy01QuerySnapshot.*>\(null\)/);
   assert.match(source, /queryKey:\s*\["\/api\/sales\/reports\/hdyy01",\s*submittedQueryString\]/);
+  assert.match(source, /staleTime:\s*HDYY01_REPORT_STALE_TIME/);
   assert.match(source, /createHdyy01QuerySnapshot\(draft\)/);
   assert.match(source, /shouldRefetchHdyy01Query\(submitted,\s*nextSubmitted\)/);
   assert.match(source, /reportQuery\.refetch\(\)/);
   assert.match(source, /enabled:\s*Boolean\(submitted\)/);
+  assert.match(source, /isLoading:\s*hasSubmitted\s*&&\s*reportQuery\.isFetching/);
+  assert.match(source, /disabled=\{exporting\s*\|\|\s*reportQuery\.isFetching\s*\|\|\s*!hasSubmitted/);
 });
 
 test("frontend model accepts the complete backend response and rejects wrong quality keys", async () => {

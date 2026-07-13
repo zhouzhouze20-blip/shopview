@@ -1,5 +1,6 @@
 export const HDYY01_ALL_STORES = "all";
 export const HDYY01_ALL_DEPARTMENTS = "all";
+export const HDYY01_REPORT_STALE_TIME = 0;
 
 export interface Hdyy01Row {
   store_code: string | null;
