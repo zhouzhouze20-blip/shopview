@@ -44,7 +44,7 @@ export interface Hdyy01Quality {
   unmatched_hierarchy_amount: number;
   missing_grade_group_count: number;
   missing_grade_amount: number;
-  unmatched_member_ticket_count: number;
+  unmatched_member_ticket_count: number | null;
 }
 
 export interface Hdyy01Response {

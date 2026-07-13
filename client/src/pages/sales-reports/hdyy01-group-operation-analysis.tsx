@@ -206,7 +206,12 @@ export default function Hdyy01GroupOperationAnalysisPage() {
     { label: "未匹配层级金额", value: formatHdyy01Money(quality.unmatched_hierarchy_amount) },
     { label: "缺失等级柜组数", value: formatHdyy01Count(quality.missing_grade_group_count) },
     { label: "缺失等级金额", value: formatHdyy01Money(quality.missing_grade_amount) },
-    { label: "未匹配会员小票数", value: formatHdyy01Count(quality.unmatched_member_ticket_count) },
+    {
+      label: "未匹配会员小票数",
+      value: quality.unmatched_member_ticket_count === null
+        ? "不可计算"
+        : formatHdyy01Count(quality.unmatched_member_ticket_count),
+    },
   ] : [];
 
   return (

@@ -215,15 +215,13 @@ member_tickets AS (
   JOIN scoped_ticket_keys s
     ON h.billno = s.sglbillno
    AND TRIM(BOTH FROM h.mkt) = s.store_code
-  WHERE h.rqsj >= :start_date
-    AND h.rqsj < :end_date + INTERVAL '1 day'
-    AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+  WHERE NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
 ),
 unmatched_member_tickets AS (
   -- A salehead ticket absent from the scoped facts cannot be attributed to a
-  -- permitted group safely. Reporting zero avoids scanning or disclosing
-  -- tickets belonging to groups outside the caller's data scope.
-  SELECT 0::bigint AS unmatched_member_ticket_count
+  -- permitted group safely. Keep this unavailable instead of scanning or
+  -- disclosing tickets belonging to groups outside the caller's data scope.
+  SELECT NULL::bigint AS unmatched_member_ticket_count
 ),
 group_metrics AS (
   SELECT
@@ -300,8 +298,11 @@ def normalize_row(row: Mapping[str, Any] | Any) -> dict[str, Any]:
         item[key] = _number(item.get(key))
 
     item["ticket_count"] = int(item.get("ticket_count") or 0)
-    item["unmatched_member_ticket_count"] = int(
-        item.get("unmatched_member_ticket_count") or 0
+    unmatched_member_ticket_count = item.get("unmatched_member_ticket_count")
+    item["unmatched_member_ticket_count"] = (
+        None
+        if unmatched_member_ticket_count is None
+        else int(unmatched_member_ticket_count)
     )
     item["average_ticket"] = (
         item["sales_amount"] / item["ticket_count"]
@@ -366,6 +367,11 @@ def build_report_payload(
     missing_grade = [
         row for row in normalized if row.get("grade_label") == "未匹配"
     ]
+    unmatched_member_ticket_counts = [
+        row["unmatched_member_ticket_count"]
+        for row in normalized
+        if row["unmatched_member_ticket_count"] is not None
+    ]
     quality = {
         "unmatched_organization_group_count": len(unmatched_organization),
         "unmatched_organization_amount": sum(
@@ -380,11 +386,8 @@ def build_report_payload(
             (row["sales_amount"] for row in missing_grade), 0.0
         ),
         "unmatched_member_ticket_count": max(
-            (
-                int(row.get("unmatched_member_ticket_count") or 0)
-                for row in normalized
-            ),
-            default=0,
+            unmatched_member_ticket_counts,
+            default=None,
         ),
     }
 

@@ -78,8 +78,8 @@ def sample_report(*, empty: bool = False):
 
 HEADERS = [
     "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "一级编码", "一级名称",
-    "二级编码", "二级名称", "等级", "数量", "销售收入", "含税成本", "毛利",
-    "消费次数", "客单价", "会员销售", "储值卡销售",
+    "二级编码", "二级名称", "等级", "数量", "销售收入", "含税销售成本", "毛利",
+    "消费次数", "客单", "会员销售", "储值卡销售",
 ]
 
 
@@ -123,7 +123,8 @@ def test_workbook_has_exact_sheets_layout_formats_signed_rows_total_and_notes():
     notes = workbook["报表说明"]["B2"].value
     for phrase in (
         "sglhsrq", "sglxssr", "sgln13+sgln14-sglsupzk", "sgln2", "sglfcard",
-        "salehead.hykh", "退货按带符号金额计入", "小票净销售额 > 0", "客单价 = 带符号销售额 / 正向消费次数",
+        "salehead.hykh", "退货按带符号金额计入", "小票净销售额 > 0", "客单 = 带符号销售额 / 正向消费次数",
+        "未匹配会员小票数因细粒度权限无法安全归属，当前不可计算",
         "报表期间：2026-07-01 至 2026-07-10", "排除租赁业务 sglwmid=5",
         "当前用户权限范围：store=4；department=6030117",
         "mfchr2", "mana_brand_hierarchy", "按编码层级关联", "未匹配",

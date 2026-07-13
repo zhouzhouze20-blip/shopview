@@ -497,6 +497,10 @@ test("HDYY01 page source fixes pagination, authenticated export, columns, and qu
   ]) {
     assert.match(source, new RegExp(`label:\\s*["']${label}["']`));
   }
+  assert.match(
+    source,
+    /unmatched_member_ticket_count\s*===\s*null\s*\?\s*["']不可计算["']/,
+  );
 });
 
 test("HDYY01 page source uses stable submitted query keys and explicit same-filter refresh", async () => {

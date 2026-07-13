@@ -192,7 +192,12 @@ def test_hdyy01_route_applies_store_deny_before_all_access(monkeypatch):
     [
         ("store", "1", "st.store_id::text", "st.store_id IS NOT NULL"),
         ("department", "D01", "dept.mfcode", "dept.normalized_mfcode IS NOT NULL"),
-        ("group", "G01", "s.sglmfid", None),
+        (
+            "group",
+            "G01",
+            "s.sglmfid",
+            "NULLIF(UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))), '') IS NOT NULL",
+        ),
         ("category", "C01", "h.level2_code", "h.normalized_level3_code IS NOT NULL"),
         (
             "floor",
@@ -298,7 +303,7 @@ def report_row(**overrides):
         "ticket_count": 1,
         "member_sales": Decimal("80"),
         "stored_card_sales": Decimal("30"),
-        "unmatched_member_ticket_count": 0,
+        "unmatched_member_ticket_count": None,
     }
     row.update(overrides)
     return row
@@ -357,7 +362,7 @@ def test_query_limits_member_identification_to_scoped_base_ticket_keys():
     assert "scoped_ticket_keys as" in compact
     assert "select distinct sglmarket::text as store_code, sglbillno" in compact
     assert "join scoped_ticket_keys s" in compact
-    assert "0::bigint as unmatched_member_ticket_count" in compact
+    assert "null::bigint as unmatched_member_ticket_count" in compact
 
 
 def test_query_uses_unique_normalized_dimensions_without_arbitrary_winners():
@@ -390,7 +395,7 @@ def test_store_uniqueness_counts_only_active_store_mappings():
     assert "from stores source where source.is_active is true" in stores
 
 
-def test_base_projects_used_columns_and_member_date_filter_is_sargable():
+def test_member_identification_uses_scoped_sales_dates_without_header_date_truncation():
     sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
     compact = compact_sql(sql)
     base = compact.split("base_sales as materialized", 1)[1].split(") ,", 1)[0]
@@ -398,8 +403,8 @@ def test_base_projects_used_columns_and_member_date_filter_is_sargable():
     assert "select s.*" not in compact
     assert "s.sglmarket" in base
     assert "s.sglbillno" in base
-    assert "h.rqsj >= :start_date" in compact
-    assert "h.rqsj < :end_date + interval '1 day'" in compact
+    assert "h.rqsj >= :start_date" not in compact
+    assert "h.rqsj < :end_date + interval '1 day'" not in compact
     assert "h.rqsj::date" not in compact
 
 
@@ -450,6 +455,26 @@ def test_normalize_row_preserves_hierarchy_and_grade_values():
     assert row["grade_label"] == "D"
     assert row["area"] == 10.5
     assert row["average_ticket"] == 100.0
+    assert row["unmatched_member_ticket_count"] is None
+
+
+def test_payload_preserves_unavailable_member_ticket_quality_and_future_numeric_values():
+    unavailable = build_report_payload(
+        [report_row(unmatched_member_ticket_count=None)],
+        start_date=START,
+        end_date=END,
+    )
+    numeric = build_report_payload(
+        [
+            report_row(unmatched_member_ticket_count=None),
+            report_row(store_code="602", unmatched_member_ticket_count=3),
+        ],
+        start_date=START,
+        end_date=END,
+    )
+
+    assert unavailable["quality"]["unmatched_member_ticket_count"] is None
+    assert numeric["quality"]["unmatched_member_ticket_count"] == 3
 
 
 def test_payload_keeps_same_group_separate_between_stores():
@@ -532,7 +557,7 @@ def test_missing_dimensions_render_unmatched_and_feed_signed_quality_metrics():
                 level2_name=None,
                 grade_label=None,
                 sales_amount=-25,
-                unmatched_member_ticket_count=0,
+                unmatched_member_ticket_count=None,
             ),
             report_row(store_code="602", grade_label="B", sales_amount=100),
         ],
@@ -552,7 +577,7 @@ def test_missing_dimensions_render_unmatched_and_feed_signed_quality_metrics():
         "unmatched_hierarchy_amount": -25.0,
         "missing_grade_group_count": 1,
         "missing_grade_amount": -25.0,
-        "unmatched_member_ticket_count": 0,
+        "unmatched_member_ticket_count": None,
     }
 
 
@@ -595,7 +620,7 @@ def test_empty_payload_has_complete_zero_totals_and_quality():
         "unmatched_hierarchy_amount": 0.0,
         "missing_grade_group_count": 0,
         "missing_grade_amount": 0.0,
-        "unmatched_member_ticket_count": 0,
+        "unmatched_member_ticket_count": None,
     }
     assert payload["generated_at"].endswith("+00:00")
 
@@ -693,7 +718,7 @@ def test_postgresql_query_preserves_signed_scoped_facts_without_dimension_amplif
               (601, 'GC', DATE '2026-07-04', 'BC', 1, 25, 15, 0, 0, 10, 0, '1'),
               (603, 'G1', DATE '2026-07-01', 'BX', 9, 999, 600, 0, 0, 399, 0, '1');
             INSERT INTO salehead VALUES
-              ('B1', '601', TIMESTAMP '2026-07-01 10:00:00', 'M1'),
+              ('B1', '601', TIMESTAMP '2026-06-30 23:59:59', 'M1'),
               ('B2', '601', TIMESTAMP '2026-07-02 10:00:00', 'M1'),
               ('B1', '602', TIMESTAMP '2026-07-01 11:00:00', 'M2'),
               ('BX', '603', TIMESTAMP '2026-07-01 12:00:00', 'M3');

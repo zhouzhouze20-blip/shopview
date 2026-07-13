@@ -77,7 +77,7 @@ const quality = {
   unmatched_hierarchy_amount: 0,
   missing_grade_group_count: 0,
   missing_grade_amount: 0,
-  unmatched_member_ticket_count: 0,
+  unmatched_member_ticket_count: null,
 } satisfies Hdyy01Quality;
 
 export const hdyy01ResponseContract = {

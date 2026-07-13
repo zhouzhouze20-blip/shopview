@@ -31,10 +31,10 @@ DETAIL_COLUMNS = (
     ("等级", "grade_label", "classification"),
     ("数量", "quantity", "quantity"),
     ("销售收入", "sales_amount", "money"),
-    ("含税成本", "tax_cost", "money"),
+    ("含税销售成本", "tax_cost", "money"),
     ("毛利", "profit", "money"),
     ("消费次数", "ticket_count", "integer"),
-    ("客单价", "average_ticket", "money"),
+    ("客单", "average_ticket", "money"),
     ("会员销售", "member_sales", "money"),
     ("储值卡销售", "stored_card_sales", "money"),
 )
@@ -183,13 +183,14 @@ def _write_notes_sheet(sheet, report: dict[str, Any]) -> None:
         f"报表期间：{_date_text(dates.get('start_date'))} 至 "
         f"{_date_text(dates.get('end_date'))}；"
         "销售日期取 sglhsrq；销售收入取 sglxssr，金额单位为元；"
-        "含税成本取 sgln13+sgln14-sglsupzk；毛利取 sgln2；"
+        "含税销售成本取 sgln13+sgln14-sglsupzk；毛利取 sgln2；"
         "储值卡销售取 sglfcard；会员销售以 salehead.hykh 非空识别；"
         "退货按带符号金额计入；仅小票净销售额 > 0 时计入消费次数；"
-        "客单价 = 带符号销售额 / 正向消费次数；排除租赁业务 sglwmid=5；"
+        "客单 = 带符号销售额 / 正向消费次数；排除租赁业务 sglwmid=5；"
         f"排除部门编码：{excluded}；{scope}；"
         "分类层级使用 manaframe.mfchr2 关联 mana_brand_hierarchy，按编码层级关联；"
-        "分类缺失显示未匹配。"
+        "分类缺失显示未匹配；"
+        "未匹配会员小票数因细粒度权限无法安全归属，当前不可计算。"
     )
     label_cell = _write_only_cell(sheet, "HDYY01 口径")
     label_cell.alignment = Alignment(vertical="top")

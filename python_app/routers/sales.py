@@ -364,6 +364,11 @@ def _hdyy01_deny_resolution_guard_sql(scope: Any) -> str:
         guards.append("AND st.store_id IS NOT NULL")
     if scope.deny.get("department", set()):
         guards.append("AND dept.normalized_mfcode IS NOT NULL")
+    if scope.deny.get("group", set()):
+        guards.append(
+            "AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))), '') "
+            "IS NOT NULL"
+        )
     if scope.deny.get("category", set()):
         guards.append("AND h.normalized_level3_code IS NOT NULL")
     if scope.deny.get("floor", set()):
