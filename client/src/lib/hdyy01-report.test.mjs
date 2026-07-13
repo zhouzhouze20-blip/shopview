@@ -144,26 +144,66 @@ test("scheduleObjectUrlRevoke defers cleanup", () => {
   assert.deepEqual(calls, [["schedule", 0], ["revoke", "blob:hdyy01"]]);
 });
 
-test("global store sync handles cold start and changes while preserving dirty drafts", () => {
+test("global store sync resets department on cold start", () => {
   const draft = {
     start: "2026-07-01",
     end: "2026-07-12",
     storeId: "all",
-    departmentId: "all",
+    departmentId: "6030117",
   };
   assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, 603, false), {
     ...draft,
     storeId: "603",
+    departmentId: "all",
   });
-  assert.deepEqual(syncHdyy01DraftFromGlobalStore({ ...draft, storeId: "603" }, 602, false), {
+});
+
+test("global store sync resets department on a later store change", () => {
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "603",
+    departmentId: "6030117",
+  };
+  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, 602, false), {
     ...draft,
     storeId: "602",
+    departmentId: "all",
   });
-  assert.deepEqual(syncHdyy01DraftFromGlobalStore({ ...draft, storeId: "603" }, 602, true), {
-    ...draft,
+});
+
+test("global store sync resets department when the global store becomes all", () => {
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
     storeId: "603",
+    departmentId: "6030117",
+  };
+  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, null, false), {
+    ...draft,
+    storeId: "all",
+    departmentId: "all",
   });
-  assert.deepEqual(syncHdyy01DraftFromGlobalStore({ ...draft, storeId: "603" }, null, false), draft);
+});
+
+test("global store sync preserves the draft when the store is unchanged", () => {
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "603",
+    departmentId: "6030117",
+  };
+  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, 603, false), draft);
+});
+
+test("global store sync preserves a dirty draft", () => {
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "603",
+    departmentId: "6030117",
+  };
+  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, 602, true), draft);
 });
 
 test("store options trim, dedupe, and use the authorized label fallback", () => {

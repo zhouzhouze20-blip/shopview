@@ -3,18 +3,18 @@ export const HDYY01_ALL_DEPARTMENTS = "all";
 
 export interface Hdyy01Row {
   store_code: string | null;
-  store_name: string | null;
+  store_name: string;
   department_code: string | null;
-  department_name: string | null;
+  department_name: string;
   group_code: string | null;
-  group_name: string | null;
+  group_name: string;
   area: number;
   floor_code: string | null;
   level1_code: string | null;
-  level1_name: string | null;
+  level1_name: string;
   level2_code: string | null;
-  level2_name: string | null;
-  grade_label: string | null;
+  level2_name: string;
+  grade_label: string;
   quantity: number;
   sales_amount: number;
   tax_cost: number;
@@ -194,9 +194,12 @@ export function syncHdyy01DraftFromGlobalStore<T extends Hdyy01DraftFilters>(
   dirty: boolean,
 ): T {
   if (dirty) return draft;
+  const storeId = globalStoreId === null ? HDYY01_ALL_STORES : String(globalStoreId);
+  if (storeId === draft.storeId) return draft;
   return {
     ...draft,
-    storeId: globalStoreId === null ? HDYY01_ALL_STORES : String(globalStoreId),
+    storeId,
+    departmentId: HDYY01_ALL_DEPARTMENTS,
   };
 }
 

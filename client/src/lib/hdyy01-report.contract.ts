@@ -32,19 +32,27 @@ const row = {
 const unmatchedRow = {
   ...row,
   store_code: null,
-  store_name: null,
+  store_name: "未匹配",
   department_code: null,
-  department_name: null,
+  department_name: "未匹配",
   group_code: null,
-  group_name: null,
+  group_name: "未匹配",
   floor_code: null,
   level1_code: null,
-  level1_name: null,
+  level1_name: "未匹配",
   level2_code: null,
-  level2_name: null,
-  grade_label: null,
+  level2_name: "未匹配",
+  grade_label: "未匹配",
   average_ticket: null,
 } satisfies Hdyy01Row;
+
+const rowWithInvalidNullDisplay = {
+  ...unmatchedRow,
+  // @ts-expect-error normalize_row guarantees display fields are strings.
+  store_name: null,
+} satisfies Hdyy01Row;
+
+void rowWithInvalidNullDisplay;
 
 const total = {
   quantity: 12.25,
