@@ -1,8 +1,13 @@
 import type {
+  Hdyy01DraftFilters,
   Hdyy01Quality,
   Hdyy01Response,
   Hdyy01Row,
   Hdyy01Total,
+} from "./hdyy01-report.ts";
+import {
+  changeHdyy01Store,
+  syncHdyy01DraftFromGlobalStore,
 } from "./hdyy01-report.ts";
 
 const row = {
@@ -92,3 +97,28 @@ const qualityWithWrongKey = {
 } satisfies Hdyy01Quality;
 
 void qualityWithWrongKey;
+
+const literalDraft = {
+  start: "2026-07-01",
+  end: "2026-07-12",
+  storeId: "603",
+  departmentId: "6030117",
+} as const;
+
+const changedLiteralDraft = changeHdyy01Store(literalDraft, "604");
+const syncedLiteralDraft = syncHdyy01DraftFromGlobalStore(literalDraft, "604", false);
+
+const changedDraftContract: Hdyy01DraftFilters = changedLiteralDraft;
+const syncedDraftContract: Hdyy01DraftFilters = syncedLiteralDraft;
+
+// @ts-expect-error changed store fields must not retain the input's old literal type.
+const staleChangedStore: "603" = changedLiteralDraft.storeId;
+// @ts-expect-error synchronized store fields must not retain the input's old literal type.
+const staleSyncedStore: "603" = syncedLiteralDraft.storeId;
+// @ts-expect-error synchronization accepts mapped ERP store codes, not internal numeric ids.
+syncHdyy01DraftFromGlobalStore(literalDraft, 4, false);
+
+void changedDraftContract;
+void syncedDraftContract;
+void staleChangedStore;
+void staleSyncedStore;

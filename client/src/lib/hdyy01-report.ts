@@ -104,7 +104,10 @@ export function buildHdyy01Params(
   return params;
 }
 
-export function changeHdyy01Store<T extends Hdyy01DraftFilters>(draft: T, storeId: string): T {
+export function changeHdyy01Store(
+  draft: Hdyy01DraftFilters,
+  storeId: string,
+): Hdyy01DraftFilters {
   return { ...draft, storeId, departmentId: HDYY01_ALL_DEPARTMENTS };
 }
 
@@ -112,8 +115,9 @@ function formatNumber(
   value: number | null | undefined,
   options: Intl.NumberFormatOptions,
 ): string {
-  if (value === null || value === undefined) return "—";
-  return value.toLocaleString("zh-CN", options);
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const normalizedValue = Object.is(value, -0) ? 0 : value;
+  return normalizedValue.toLocaleString("zh-CN", options);
 }
 
 export function formatHdyy01Money(value: number | null | undefined): string {
@@ -143,9 +147,12 @@ export function formatHdyy01CodeName(
 }
 
 export function paginateRows<T>(rows: readonly T[], page: number, pageSize = 50): T[] {
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePageSize = Number.isFinite(pageSize) && Number.isInteger(pageSize) && pageSize > 0
+    ? pageSize
+    : 50;
+  const totalPages = Math.max(1, Math.ceil(rows.length / safePageSize));
   const safePage = Math.min(totalPages, Math.max(1, Math.trunc(page) || 1));
-  return rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  return rows.slice((safePage - 1) * safePageSize, safePage * safePageSize);
 }
 
 export function getHdyy01QueryMessage(state: {
@@ -157,7 +164,12 @@ export function getHdyy01QueryMessage(state: {
   if (state.isLoading) return "正在加载报表…";
   if (state.error) {
     const message = state.error instanceof Error ? state.error.message : String(state.error);
-    return /403|无功能权限|无权限/.test(message)
+    const normalizedMessage = message.trim();
+    const isPermissionError = /^(?:API请求失败:\s*403\b|HTTP\s*403\b)/i.test(normalizedMessage)
+      || ["无功能权限", "无该门店数据权限", "无权限", "无权限查看此报表"].includes(
+        normalizedMessage,
+      );
+    return isPermissionError
       ? "无权限查看此报表"
       : "报表加载失败，请稍后重试";
   }
@@ -165,19 +177,27 @@ export function getHdyy01QueryMessage(state: {
   return null;
 }
 
+function sanitizeContentDispositionFilename(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized || /[\u0000-\u001f\u007f]/.test(normalized)) return null;
+  const filename = normalized.split(/[\\/]/).pop()?.trim();
+  if (!filename || filename === "." || filename === "..") return null;
+  return filename;
+}
+
 export function contentDispositionFilename(header: string | null): string | null {
   if (!header) return null;
-  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header)?.[1];
+  const encoded = /filename\*\s*=\s*UTF-8'[^']*'([^;]+)/i.exec(header)?.[1];
   if (encoded) {
     try {
-      return decodeURIComponent(encoded.trim()).split(/[\\/]/).pop() || null;
+      const filename = sanitizeContentDispositionFilename(decodeURIComponent(encoded.trim()));
+      if (filename) return filename;
     } catch {
-      return null;
+      // Fall through to the plain filename when the extended value is malformed.
     }
   }
   const plain = /filename\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(header);
-  const filename = (plain?.[1] ?? plain?.[2])?.trim();
-  return filename?.split(/[\\/]/).pop() || null;
+  return sanitizeContentDispositionFilename(plain?.[1] ?? plain?.[2]);
 }
 
 export function scheduleObjectUrlRevoke(
@@ -188,13 +208,13 @@ export function scheduleObjectUrlRevoke(
   schedule(() => revoke(url), 0);
 }
 
-export function syncHdyy01DraftFromGlobalStore<T extends Hdyy01DraftFilters>(
-  draft: T,
-  globalStoreId: string | number | null,
+export function syncHdyy01DraftFromGlobalStore(
+  draft: Hdyy01DraftFilters,
+  globalStoreCode: string | null,
   dirty: boolean,
-): T {
+): Hdyy01DraftFilters {
   if (dirty) return draft;
-  const storeId = globalStoreId === null ? HDYY01_ALL_STORES : String(globalStoreId);
+  const storeId = globalStoreCode === null ? HDYY01_ALL_STORES : globalStoreCode;
   if (storeId === draft.storeId) return draft;
   return {
     ...draft,
@@ -209,7 +229,13 @@ export function normalizeHdyy01StoreOptions(
   const options = new Map<string, string>();
   permissionRows.forEach((row) => {
     const value = row.store_code.trim();
-    if (value) options.set(value, row.store_name?.trim() || value);
+    if (!value) return;
+    const label = row.store_name?.trim();
+    if (label) {
+      options.set(value, label);
+    } else if (!options.has(value)) {
+      options.set(value, value);
+    }
   });
   return Array.from(options, ([value, label]) => ({ value, label }));
 }

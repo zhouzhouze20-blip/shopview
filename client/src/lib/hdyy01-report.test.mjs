@@ -60,12 +60,16 @@ test("HDYY01 money formatter uses yuan with exactly two decimals", () => {
   assert.equal(formatHdyy01Money(-1234.5), "-1,234.50");
   assert.equal(formatHdyy01Money(null), "—");
   assert.equal(formatHdyy01Money(undefined), "—");
+  assert.equal(formatHdyy01Money(Number.NaN), "—");
+  assert.equal(formatHdyy01Money(-0), "0.00");
 });
 
 test("HDYY01 area formatter uses exactly two decimals", () => {
   assert.equal(formatHdyy01Area(1234.567), "1,234.57");
   assert.equal(formatHdyy01Area(-2), "-2.00");
   assert.equal(formatHdyy01Area(null), "—");
+  assert.equal(formatHdyy01Area(Number.POSITIVE_INFINITY), "—");
+  assert.equal(formatHdyy01Area(-0), "0.00");
 });
 
 test("HDYY01 quantity formatter keeps up to four decimals", () => {
@@ -73,12 +77,16 @@ test("HDYY01 quantity formatter keeps up to four decimals", () => {
   assert.equal(formatHdyy01Quantity(-2.5), "-2.5");
   assert.equal(formatHdyy01Quantity(2), "2");
   assert.equal(formatHdyy01Quantity(null), "—");
+  assert.equal(formatHdyy01Quantity(Number.NEGATIVE_INFINITY), "—");
+  assert.equal(formatHdyy01Quantity(-0), "0");
 });
 
 test("HDYY01 count formatter renders an integer", () => {
   assert.equal(formatHdyy01Count(1234.6), "1,235");
   assert.equal(formatHdyy01Count(-2.4), "-2");
   assert.equal(formatHdyy01Count(null), "—");
+  assert.equal(formatHdyy01Count(Number.NaN), "—");
+  assert.equal(formatHdyy01Count(-0), "0");
 });
 
 test("code and name formatter falls back without hiding known values", () => {
@@ -96,6 +104,13 @@ test("paginateRows returns fifty-row pages and clamps page bounds", () => {
   assert.deepEqual(paginateRows(rows, Number.NaN), rows.slice(0, 50));
 });
 
+test("paginateRows falls back to fifty for invalid page sizes", () => {
+  const rows = Array.from({ length: 121 }, (_, index) => index + 1);
+  for (const pageSize of [0, -10, Number.NaN, Number.POSITIVE_INFINITY, 12.5]) {
+    assert.deepEqual(paginateRows(rows, 2, pageSize), rows.slice(50, 100));
+  }
+});
+
 test("getHdyy01QueryMessage distinguishes loading, permission, failure, and empty states", () => {
   assert.equal(getHdyy01QueryMessage({ isLoading: true }), "正在加载报表…");
   assert.equal(
@@ -107,6 +122,14 @@ test("getHdyy01QueryMessage distinguishes loading, permission, failure, and empt
     "无权限查看此报表",
   );
   assert.equal(
+    getHdyy01QueryMessage({ error: new Error("HTTP 403 Forbidden") }),
+    "无权限查看此报表",
+  );
+  assert.equal(
+    getHdyy01QueryMessage({ error: new Error("无功能权限") }),
+    "无权限查看此报表",
+  );
+  assert.equal(
     getHdyy01QueryMessage({ error: new Error("API请求失败: 500") }),
     "报表加载失败，请稍后重试",
   );
@@ -115,10 +138,27 @@ test("getHdyy01QueryMessage distinguishes loading, permission, failure, and empt
   assert.equal(getHdyy01QueryMessage({}), null);
 });
 
+test("getHdyy01QueryMessage does not treat unrelated 403 text as a permission status", () => {
+  for (const message of [
+    "API请求失败: 500 - body record 403 unavailable",
+    "record 403 is archived",
+    "用户无权限状态统计失败",
+  ]) {
+    assert.equal(
+      getHdyy01QueryMessage({ error: new Error(message) }),
+      "报表加载失败，请稍后重试",
+    );
+  }
+});
+
 test("contentDispositionFilename parses UTF-8 and quoted names and strips paths", () => {
   assert.equal(
     contentDispositionFilename("attachment; filename*=UTF-8''reports%2FHDYY01_%E6%9F%9C%E7%BB%84.xlsx"),
     "HDYY01_柜组.xlsx",
+  );
+  assert.equal(
+    contentDispositionFilename("attachment; filename*=UTF-8'zh-CN'HDYY01_%E7%BB%8F%E8%90%A5.xlsx"),
+    "HDYY01_经营.xlsx",
   );
   assert.equal(
     contentDispositionFilename('attachment; filename="..\\exports\\HDYY01 report.xlsx"'),
@@ -127,11 +167,36 @@ test("contentDispositionFilename parses UTF-8 and quoted names and strips paths"
   assert.equal(contentDispositionFilename(null), null);
 });
 
-test("contentDispositionFilename rejects malformed UTF-8 encoding", () => {
+test("contentDispositionFilename falls back to a valid plain name after invalid extended values", () => {
+  assert.equal(
+    contentDispositionFilename(
+      "attachment; filename*=UTF-8''HDYY01_%E0%A4%A.xlsx; filename=HDYY01_fallback.xlsx",
+    ),
+    "HDYY01_fallback.xlsx",
+  );
+  assert.equal(
+    contentDispositionFilename(
+      "attachment; filename*=UTF-8''unsafe%0Aname.xlsx; filename=HDYY01_safe.xlsx",
+    ),
+    "HDYY01_safe.xlsx",
+  );
   assert.equal(
     contentDispositionFilename("attachment; filename*=UTF-8''HDYY01_%E0%A4%A.xlsx"),
     null,
   );
+});
+
+test("contentDispositionFilename rejects unsafe or meaningless names", () => {
+  for (const header of [
+    'attachment; filename="."',
+    'attachment; filename=".."',
+    'attachment; filename="bad\u0000name.xlsx"',
+    'attachment; filename="bad\nname.xlsx"',
+    'attachment; filename="bad\u007fname.xlsx"',
+    'attachment; filename="   "',
+  ]) {
+    assert.equal(contentDispositionFilename(header), null);
+  }
 });
 
 test("scheduleObjectUrlRevoke defers cleanup", () => {
@@ -151,7 +216,7 @@ test("global store sync resets department on cold start", () => {
     storeId: "all",
     departmentId: "6030117",
   };
-  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, 603, false), {
+  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, "603", false), {
     ...draft,
     storeId: "603",
     departmentId: "all",
@@ -165,7 +230,7 @@ test("global store sync resets department on a later store change", () => {
     storeId: "603",
     departmentId: "6030117",
   };
-  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, 602, false), {
+  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, "602", false), {
     ...draft,
     storeId: "602",
     departmentId: "all",
@@ -193,7 +258,7 @@ test("global store sync preserves the draft when the store is unchanged", () => 
     storeId: "603",
     departmentId: "6030117",
   };
-  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, 603, false), draft);
+  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, "603", false), draft);
 });
 
 test("global store sync preserves a dirty draft", () => {
@@ -203,7 +268,30 @@ test("global store sync preserves a dirty draft", () => {
     storeId: "603",
     departmentId: "6030117",
   };
-  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, 602, true), draft);
+  assert.strictEqual(syncHdyy01DraftFromGlobalStore(draft, "602", true), draft);
+});
+
+test("global store sync receives the ERP code mapped from the authorized internal store id", () => {
+  const authorizedStores = [
+    { store_id: 4, store_code: "604", store_name: "四店" },
+  ];
+  const selectedStoreId = 4;
+  const globalStoreCode = authorizedStores.find(
+    (store) => String(store.store_id) === String(selectedStoreId),
+  )?.store_code ?? null;
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-12",
+    storeId: "all",
+    departmentId: "6030117",
+  };
+
+  assert.equal(globalStoreCode, "604");
+  assert.deepEqual(syncHdyy01DraftFromGlobalStore(draft, globalStoreCode, false), {
+    ...draft,
+    storeId: "604",
+    departmentId: "all",
+  });
 });
 
 test("store options trim, dedupe, and use the authorized label fallback", () => {
@@ -211,8 +299,9 @@ test("store options trim, dedupe, and use the authorized label fallback", () => 
     normalizeHdyy01StoreOptions([
       { store_id: 1, store_code: " 603 ", store_name: " 三店 " },
       { store_id: 2, store_code: "603", store_name: "三店（最新）" },
-      { store_id: 3, store_code: " 602 ", store_name: "  " },
-      { store_id: 4, store_code: "   ", store_name: "忽略" },
+      { store_id: 3, store_code: "603", store_name: "  " },
+      { store_id: 4, store_code: " 602 ", store_name: "  " },
+      { store_id: 5, store_code: "   ", store_name: "忽略" },
     ]),
     [
       { value: "603", label: "三店（最新）" },
