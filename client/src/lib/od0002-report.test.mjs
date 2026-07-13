@@ -83,11 +83,19 @@ test("buildOd0002Params sends one selected department", () => {
   assert.equal(params.get("department_id"), "6030117");
 });
 
-test("OD0002 exposes the six approved tabs in order", () => {
+test("OD0002 exposes department with categories after department", () => {
   assert.deepEqual(
     OD0002_TABS.map((tab) => tab.label),
-    ["分店", "部门", "区域", "品类", "柜组", "楼层"],
+    ["分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "楼层"],
   );
+  assert.equal(OD0002_TABS[2].key, "department_categories");
+});
+
+test("department category rows expose four hierarchy identifiers", async () => {
+  const module = await import("./od0002-report.ts");
+  assert.equal(module.isOd0002DepartmentCategoryTab("department_categories"), true);
+  assert.equal(module.isOd0002DepartmentCategoryTab("departments"), false);
+  assert.deepEqual(module.OD0002_HIERARCHY_COLUMNS, ["store", "department", "area", "category"]);
 });
 
 test("formatMoneyWan converts yuan to ten-thousand yuan and preserves negative values", () => {

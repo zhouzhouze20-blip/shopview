@@ -4,6 +4,7 @@ export const OD0002_ALL_DEPARTMENTS = "all";
 export type Od0002DimensionKey =
   | "stores"
   | "departments"
+  | "department_categories"
   | "areas"
   | "categories"
   | "groups"
@@ -26,9 +27,18 @@ export interface Od0002Row {
   store_name: string | null;
   dimension_code: string | null;
   dimension_name: string | null;
+  department_code?: string | null;
+  department_name?: string | null;
+  area_code?: string | null;
+  area_name?: string | null;
+  category_code?: string | null;
+  category_name?: string | null;
+  row_type?: Od0002HierarchyRowType;
   metrics: Od0002Metric;
   total: Od0002Metric;
 }
+
+export type Od0002HierarchyRowType = "category" | "area_subtotal" | "department_subtotal";
 
 export interface Od0002Quality {
   unmatched_area_category_group_count: number;
@@ -57,11 +67,18 @@ export const OD0002_TABS: ReadonlyArray<{
 }> = [
   { key: "stores", label: "分店" },
   { key: "departments", label: "部门" },
+  { key: "department_categories", label: "部门（含品类）" },
   { key: "areas", label: "区域" },
   { key: "categories", label: "品类" },
   { key: "groups", label: "柜组" },
   { key: "floors", label: "楼层" },
 ];
+
+export const OD0002_HIERARCHY_COLUMNS = ["store", "department", "area", "category"] as const;
+
+export function isOd0002DepartmentCategoryTab(tab: Od0002DimensionKey): boolean {
+  return tab === "department_categories";
+}
 
 function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);

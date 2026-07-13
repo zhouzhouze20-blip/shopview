@@ -25,6 +25,45 @@ const row = {
   total: metric,
 } satisfies Od0002Row;
 
+const departmentCategoryRows = [
+  {
+    ...row,
+    dimension_code: "C1",
+    dimension_name: "中式女装",
+    department_code: "6030102",
+    department_name: "新世纪二部",
+    area_code: "A1",
+    area_name: "女装区",
+    category_code: "C1",
+    category_name: "中式女装",
+    row_type: "category",
+  },
+  {
+    ...row,
+    dimension_code: "A1",
+    dimension_name: "女装区小计",
+    department_code: "6030102",
+    department_name: "新世纪二部",
+    area_code: "A1",
+    area_name: "女装区",
+    category_code: null,
+    category_name: null,
+    row_type: "area_subtotal",
+  },
+  {
+    ...row,
+    dimension_code: "6030102",
+    dimension_name: "新世纪二部小计",
+    department_code: "6030102",
+    department_name: "新世纪二部",
+    area_code: null,
+    area_name: null,
+    category_code: null,
+    category_name: null,
+    row_type: "department_subtotal",
+  },
+] satisfies Od0002Row[];
+
 export const od0002ResponseContract = {
   dates: {
     start_date: "2026-01-01",
@@ -36,6 +75,7 @@ export const od0002ResponseContract = {
   dimensions: {
     stores: [row],
     departments: [row],
+    department_categories: departmentCategoryRows,
     areas: [row],
     categories: [row],
     groups: [row],
@@ -44,6 +84,7 @@ export const od0002ResponseContract = {
   totals: {
     stores: metric,
     departments: metric,
+    department_categories: metric,
     areas: metric,
     categories: metric,
     groups: metric,
