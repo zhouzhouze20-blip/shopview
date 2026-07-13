@@ -92,9 +92,69 @@ def build_report_query(
         )
 
     sql = f"""
-WITH base_sales AS MATERIALIZED (
+WITH manaframe_normalized AS MATERIALIZED (
   SELECT
-    s.*,
+    source.*,
+    NULLIF(UPPER(TRIM(BOTH FROM COALESCE(source.mfcode, ''))), '')
+      AS normalized_mfcode,
+    COUNT(*) OVER (
+      PARTITION BY NULLIF(
+        UPPER(TRIM(BOTH FROM COALESCE(source.mfcode, ''))), ''
+      )
+    ) AS normalized_match_count
+  FROM manaframe source
+),
+manaframe_unique AS MATERIALIZED (
+  SELECT *
+  FROM manaframe_normalized
+  WHERE normalized_match_count = 1
+),
+stores_normalized AS MATERIALIZED (
+  SELECT
+    source.*,
+    NULLIF(TRIM(BOTH FROM COALESCE(source.store_code, '')), '')
+      AS normalized_store_code,
+    COUNT(*) OVER (
+      PARTITION BY NULLIF(
+        TRIM(BOTH FROM COALESCE(source.store_code, '')), ''
+      )
+    ) AS normalized_match_count
+  FROM stores source
+),
+stores_unique AS MATERIALIZED (
+  SELECT *
+  FROM stores_normalized
+  WHERE normalized_match_count = 1
+),
+hierarchy_normalized AS MATERIALIZED (
+  SELECT
+    source.*,
+    NULLIF(UPPER(TRIM(BOTH FROM COALESCE(source.level3_code, ''))), '')
+      AS normalized_level3_code,
+    COUNT(*) OVER (
+      PARTITION BY NULLIF(
+        UPPER(TRIM(BOTH FROM COALESCE(source.level3_code, ''))), ''
+      )
+    ) AS normalized_match_count
+  FROM mana_brand_hierarchy source
+),
+hierarchy_unique AS MATERIALIZED (
+  SELECT *
+  FROM hierarchy_normalized
+  WHERE normalized_match_count = 1
+),
+base_sales AS MATERIALIZED (
+  SELECT
+    s.sglmarket,
+    s.sglhsrq,
+    s.sglbillno,
+    s.sglsl,
+    s.sglxssr,
+    s.sgln13,
+    s.sgln14,
+    s.sglsupzk,
+    s.sgln2,
+    s.sglfcard,
     st.store_name,
     NULLIF(TRIM(BOTH FROM s.sglmfid), '') AS group_code,
     NULLIF(TRIM(BOTH FROM mf.mfcname), '') AS group_name,
@@ -108,14 +168,17 @@ WITH base_sales AS MATERIALIZED (
     h.level2_name,
     h.grade_label
   FROM salegoodslist s
-  LEFT JOIN manaframe mf
-    ON UPPER(TRIM(BOTH FROM s.sglmfid)) = UPPER(TRIM(BOTH FROM mf.mfcode))
-  LEFT JOIN manaframe dept
-    ON UPPER(TRIM(BOTH FROM mf.mfpcode)) = UPPER(TRIM(BOTH FROM dept.mfcode))
-  LEFT JOIN stores st
-    ON TRIM(BOTH FROM st.store_code) = s.sglmarket::text
-  LEFT JOIN mana_brand_hierarchy h
-    ON UPPER(TRIM(BOTH FROM mf.mfchr2)) = UPPER(TRIM(BOTH FROM h.level3_code))
+  LEFT JOIN manaframe_unique mf
+    ON NULLIF(UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))), '')
+       = mf.normalized_mfcode
+  LEFT JOIN manaframe_unique dept
+    ON NULLIF(UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))), '')
+       = dept.normalized_mfcode
+  LEFT JOIN stores_unique st
+    ON s.sglmarket::text = st.normalized_store_code
+  LEFT JOIN hierarchy_unique h
+    ON NULLIF(UPPER(TRIM(BOTH FROM COALESCE(mf.mfchr2, ''))), '')
+       = h.normalized_level3_code
   WHERE s.sglhsrq BETWEEN :start_date AND :end_date
     AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
     AND TRIM(BOTH FROM COALESCE(dept.mfcode, '')) <> ALL(:excluded_department_codes)
@@ -141,13 +204,18 @@ ticket_counts AS (
   FROM ticket_sales
   GROUP BY store_code, group_code
 ),
+scoped_ticket_keys AS (
+  SELECT DISTINCT sglmarket::text AS store_code, sglbillno
+  FROM base_sales
+),
 member_tickets AS (
   SELECT DISTINCT h.billno, TRIM(BOTH FROM h.mkt) AS store_code
   FROM salehead h
-  JOIN base_sales s
+  JOIN scoped_ticket_keys s
     ON h.billno = s.sglbillno
-   AND TRIM(BOTH FROM h.mkt) = s.sglmarket::text
-  WHERE h.rqsj::date BETWEEN :start_date AND :end_date
+   AND TRIM(BOTH FROM h.mkt) = s.store_code
+  WHERE h.rqsj >= :start_date
+    AND h.rqsj < :end_date + INTERVAL '1 day'
     AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
 ),
 unmatched_member_tickets AS (
@@ -282,7 +350,17 @@ def build_report_payload(
         row for row in normalized if _organization_unmatched(row)
     ]
     unmatched_hierarchy = [
-        row for row in normalized if not row.get("level2_code")
+        row
+        for row in normalized
+        if any(
+            not row.get(key) or row.get(key) == "未匹配"
+            for key in (
+                "level1_code",
+                "level1_name",
+                "level2_code",
+                "level2_name",
+            )
+        )
     ]
     missing_grade = [
         row for row in normalized if row.get("grade_label") == "未匹配"

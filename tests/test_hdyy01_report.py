@@ -1,7 +1,9 @@
+import os
 from datetime import date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine, text
 
 from python_app.services.hdyy01_report import (
     TrustedScopeSql,
@@ -90,7 +92,7 @@ def test_query_identifies_members_by_nonempty_card_and_both_ticket_keys():
     assert "from salehead h" in compact
     assert "nullif(trim(both from coalesce(h.hykh, '')), '') is not null" in compact
     assert "h.billno = s.sglbillno" in compact
-    assert "trim(both from h.mkt) = s.sglmarket::text" in compact
+    assert "trim(both from h.mkt) = s.store_code" in compact
     assert "select distinct h.billno" in compact
     assert "case when mt.billno is not null then coalesce(s.sglxssr, 0) else 0 end" in compact
 
@@ -99,8 +101,43 @@ def test_query_limits_member_identification_to_scoped_base_ticket_keys():
     sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
     compact = compact_sql(sql)
 
-    assert "join base_sales s" in compact
+    assert "scoped_ticket_keys as" in compact
+    assert "select distinct sglmarket::text as store_code, sglbillno" in compact
+    assert "join scoped_ticket_keys s" in compact
     assert "0::bigint as unmatched_member_ticket_count" in compact
+
+
+def test_query_uses_unique_normalized_dimensions_without_arbitrary_winners():
+    sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
+    compact = compact_sql(sql)
+
+    assert "manaframe_normalized as" in compact
+    assert "stores_normalized as" in compact
+    assert "hierarchy_normalized as" in compact
+    assert compact.count("count(*) over (") >= 3
+    assert compact.count("partition by") >= 3
+    assert "manaframe_unique as" in compact
+    assert "stores_unique as" in compact
+    assert "hierarchy_unique as" in compact
+    assert compact.count("normalized_match_count = 1") >= 3
+    assert "left join manaframe_unique mf" in compact
+    assert "left join manaframe_unique dept" in compact
+    assert "left join stores_unique st" in compact
+    assert "left join hierarchy_unique h" in compact
+    assert "distinct on" not in compact
+
+
+def test_base_projects_used_columns_and_member_date_filter_is_sargable():
+    sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
+    compact = compact_sql(sql)
+    base = compact.split("base_sales as materialized", 1)[1].split(") ,", 1)[0]
+
+    assert "select s.*" not in compact
+    assert "s.sglmarket" in base
+    assert "s.sglbillno" in base
+    assert "h.rqsj >= :start_date" in compact
+    assert "h.rqsj < :end_date + interval '1 day'" in compact
+    assert "h.rqsj::date" not in compact
 
 
 def test_query_uses_left_organization_and_code_hierarchy_joins_and_filters():
@@ -115,12 +152,12 @@ def test_query_uses_left_organization_and_code_hierarchy_joins_and_filters():
     )
     compact = compact_sql(sql)
 
-    assert "left join manaframe mf" in compact
-    assert "left join manaframe dept" in compact
-    assert "left join stores st" in compact
-    assert "left join mana_brand_hierarchy h" in compact
-    assert "mf.mfchr2" in compact and "h.level3_code" in compact
-    assert "mfcname" not in compact.split("left join mana_brand_hierarchy h", 1)[1].split("where", 1)[0]
+    assert "left join manaframe_unique mf" in compact
+    assert "left join manaframe_unique dept" in compact
+    assert "left join stores_unique st" in compact
+    assert "left join hierarchy_unique h" in compact
+    assert "mf.mfchr2" in compact and "h.normalized_level3_code" in compact
+    assert "mfcname" not in compact.split("left join hierarchy_unique h", 1)[1].split("where", 1)[0]
     assert "s.sglhsrq between :start_date and :end_date" in compact
     assert "s.sglwmid is null or s.sglwmid <> '5'" in compact
     assert ":excluded_department_codes" in compact
@@ -256,6 +293,21 @@ def test_missing_dimensions_render_unmatched_and_feed_signed_quality_metrics():
     }
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    ["level1_code", "level1_name", "level2_code", "level2_name"],
+)
+def test_hierarchy_quality_requires_every_level_code_and_name(missing_field):
+    payload = build_report_payload(
+        [report_row(**{missing_field: None})],
+        start_date=START,
+        end_date=END,
+    )
+
+    assert payload["quality"]["unmatched_hierarchy_group_count"] == 1
+    assert payload["quality"]["unmatched_hierarchy_amount"] == 100.0
+
+
 def test_empty_payload_has_complete_zero_totals_and_quality():
     payload = build_report_payload([], start_date=START, end_date=END)
 
@@ -329,3 +381,79 @@ def test_load_report_executes_one_bound_statement_and_builds_payload():
     assert payload["selected_store"] == "603"
     assert payload["selected_department"] == "6030117"
     assert payload["rows"][0]["sales_amount"] == 100.0
+
+
+@pytest.mark.skipif(
+    not os.getenv("HDYY01_TEST_DATABASE_URL"),
+    reason="HDYY01_TEST_DATABASE_URL is not configured",
+)
+def test_postgresql_query_preserves_signed_scoped_facts_without_dimension_amplification():
+    engine = create_engine(os.environ["HDYY01_TEST_DATABASE_URL"])
+    with engine.connect() as connection, connection.begin():
+        connection.execute(text("""
+            CREATE TEMP TABLE salegoodslist (
+              sglmarket integer, sglmfid text, sglhsrq date, sglbillno text,
+              sglsl numeric, sglxssr numeric, sgln13 numeric, sgln14 numeric,
+              sglsupzk numeric, sgln2 numeric, sglfcard numeric, sglwmid text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE salehead (
+              billno text, mkt text, rqsj timestamp, hykh text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE manaframe (
+              mfcode text, mfcname text, mfpcode text, mfyymj numeric,
+              mflc text, mfchr2 text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE stores (
+              store_code text, store_name text
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE mana_brand_hierarchy (
+              level1_code text, level1_name text, level2_code text,
+              level2_name text, level3_code text, grade_label text
+            ) ON COMMIT DROP;
+        """))
+        connection.execute(text("""
+            INSERT INTO stores VALUES
+              ('601', '一店'), ('602', '二店'), ('603', '未授权店');
+            INSERT INTO manaframe VALUES
+              ('D1', '部门一', NULL, NULL, NULL, NULL),
+              ('G1', '柜组一', 'D1', 10, '02', 'C1'),
+              ('GC', '冲突柜组甲', 'D1', 20, '03', 'C1'),
+              (' gc ', '冲突柜组乙', 'D1', 30, '04', 'C1');
+            INSERT INTO mana_brand_hierarchy VALUES
+              ('L1', '一级', 'L2', '二级', 'C1', 'A');
+            INSERT INTO salegoodslist VALUES
+              (601, 'G1', DATE '2026-07-01', 'B1', 1, 100, 60, 0, 0, 40, 20, '1'),
+              (601, 'G1', DATE '2026-07-02', 'B2', -1, -30, -18, 0, 0, -12, -5, '1'),
+              (601, 'G1', DATE '2026-07-03', 'B3', 1, 50, 30, 0, 0, 20, 0, '1'),
+              (602, 'G1', DATE '2026-07-01', 'B1', 2, 200, 120, 0, 0, 80, 40, '1'),
+              (601, 'GC', DATE '2026-07-04', 'BC', 1, 25, 15, 0, 0, 10, 0, '1'),
+              (603, 'G1', DATE '2026-07-01', 'BX', 9, 999, 600, 0, 0, 399, 0, '1');
+            INSERT INTO salehead VALUES
+              ('B1', '601', TIMESTAMP '2026-07-01 10:00:00', 'M1'),
+              ('B2', '601', TIMESTAMP '2026-07-02 10:00:00', 'M1'),
+              ('B1', '602', TIMESTAMP '2026-07-01 11:00:00', 'M2'),
+              ('BX', '603', TIMESTAMP '2026-07-01 12:00:00', 'M3');
+        """))
+
+        payload = load_hdyy01_report(
+            connection,
+            TrustedScopeSql(" AND s.sglmarket::text = ANY(:allowed_stores)"),
+            {"allowed_stores": ["601", "602"]},
+            start_date=START,
+            end_date=END,
+        )
+
+    rows = {(row["store_code"], row["group_code"]): row for row in payload["rows"]}
+    assert set(rows) == {("601", "G1"), ("602", "G1"), ("601", "GC")}
+    assert rows[("601", "G1")]["sales_amount"] == 120.0
+    assert rows[("601", "G1")]["quantity"] == 1.0
+    assert rows[("601", "G1")]["tax_cost"] == 72.0
+    assert rows[("601", "G1")]["profit"] == 48.0
+    assert rows[("601", "G1")]["ticket_count"] == 2
+    assert rows[("601", "G1")]["member_sales"] == 70.0
+    assert rows[("602", "G1")]["sales_amount"] == 200.0
+    assert rows[("602", "G1")]["member_sales"] == 200.0
+    assert rows[("601", "GC")]["sales_amount"] == 25.0
+    assert rows[("601", "GC")]["group_name"] == "未匹配"
+    assert payload["total"]["sales_amount"] == 345.0
+    assert payload["quality"]["unmatched_organization_group_count"] == 1
