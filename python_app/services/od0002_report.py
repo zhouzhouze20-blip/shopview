@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from collections.abc import Iterable, Mapping
+from itertools import groupby
 from typing import Any
 
 from sqlalchemy import text
@@ -108,6 +109,7 @@ def metric_triplet(
 DIMENSION_TYPES = (
     "stores",
     "departments",
+    "department_categories",
     "areas",
     "categories",
     "groups",
@@ -341,6 +343,9 @@ base AS (
 stores AS (
   SELECT 'stores' AS dimension_type, store_code, store_name,
          store_code AS dimension_code, store_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name
@@ -348,13 +353,30 @@ stores AS (
 departments AS (
   SELECT 'departments' AS dimension_type, store_code, store_name,
          department_code AS dimension_code, department_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, department_code, department_name
 ),
+department_categories AS (
+  SELECT 'department_categories' AS dimension_type, store_code, store_name,
+         category_code AS dimension_code, category_name AS dimension_name,
+         department_code, department_name, area_code, area_name,
+         category_code, category_name,
+         SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+  FROM base
+  GROUP BY store_code, store_name, department_code, department_name,
+           area_code, area_name, category_code, category_name
+),
 areas AS (
   SELECT 'areas' AS dimension_type, store_code, store_name,
          area_code AS dimension_code, area_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, area_code, area_name
@@ -362,6 +384,9 @@ areas AS (
 categories AS (
   SELECT 'categories' AS dimension_type, store_code, store_name,
          category_code AS dimension_code, category_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, category_code, category_name
@@ -369,6 +394,9 @@ categories AS (
 groups AS (
   SELECT 'groups' AS dimension_type, store_code, store_name,
          group_code AS dimension_code, group_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, group_code, group_name
@@ -376,6 +404,9 @@ groups AS (
 floors AS (
   SELECT 'floors' AS dimension_type, store_code, store_name,
          floor_code AS dimension_code, floor_name AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
          SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
   FROM base GROUP BY store_code, store_name, floor_code, floor_name
@@ -384,6 +415,9 @@ quality AS (
   SELECT 'quality' AS dimension_type, NULL::text AS store_code, NULL::text AS store_name,
          'unmatched_area_category' AS dimension_code,
          '未匹配区域品类' AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
          COALESCE(SUM(sales_current), 0) AS sales_current,
          COUNT(DISTINCT (store_code, group_code))::numeric AS profit_current,
          COALESCE(SUM(sales_prior), 0) AS sales_prior,
@@ -393,6 +427,7 @@ quality AS (
   UNION ALL
   SELECT 'quality', NULL::text, NULL::text,
          'unmatched_floor', '未匹配楼层',
+         NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
          COALESCE(SUM(sales_current), 0),
          COUNT(DISTINCT (store_code, group_code))::numeric,
          COALESCE(SUM(sales_prior), 0), 0::numeric
@@ -401,6 +436,7 @@ quality AS (
 )
 SELECT * FROM stores
 UNION ALL SELECT * FROM departments
+UNION ALL SELECT * FROM department_categories
 UNION ALL SELECT * FROM areas
 UNION ALL SELECT * FROM categories
 UNION ALL SELECT * FROM groups
@@ -415,6 +451,94 @@ def _row_dict(row: Mapping[str, Any] | Any) -> dict[str, Any]:
     if isinstance(row, Mapping):
         return dict(row)
     return {key: row[key] for key in row.keys()}
+
+
+def _combined_metrics(rows: Iterable[Mapping[str, Any]]) -> dict[str, float | None]:
+    items = list(rows)
+    return metric_triplet(
+        sum(_number(row["metrics"].get("sales_current")) for row in items),
+        sum(_number(row["metrics"].get("profit_current")) for row in items),
+        sum(_number(row["metrics"].get("sales_prior")) for row in items),
+        sum(_number(row["metrics"].get("profit_prior")) for row in items),
+    )
+
+
+def _department_category_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("store_code") or ""),
+        department_display_sort_key(
+            {
+                "department_code": row.get("department_code"),
+                "department_name": row.get("department_name"),
+            }
+        ),
+        str(row.get("department_code") or ""),
+        str(row.get("area_code") or ""),
+        str(row.get("area_name") or ""),
+        str(row.get("category_code") or ""),
+        str(row.get("category_name") or ""),
+    )
+
+
+def _build_department_category_hierarchy(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    detail_rows = [dict(row) for row in sorted(rows, key=_department_category_sort_key)]
+    result: list[dict[str, Any]] = []
+
+    def department_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        return (
+            row.get("store_code"),
+            row.get("store_name"),
+            row.get("department_code"),
+            row.get("department_name"),
+        )
+
+    def area_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        return row.get("area_code"), row.get("area_name")
+
+    for _, department_group in groupby(detail_rows, key=department_key):
+        department_rows = list(department_group)
+        for _, area_group in groupby(department_rows, key=area_key):
+            area_rows = list(area_group)
+            for row in area_rows:
+                row["row_type"] = "category"
+                result.append(row)
+            area_first = area_rows[0]
+            result.append(
+                {
+                    "store_code": area_first.get("store_code"),
+                    "store_name": area_first.get("store_name"),
+                    "department_code": area_first.get("department_code"),
+                    "department_name": area_first.get("department_name"),
+                    "area_code": area_first.get("area_code"),
+                    "area_name": area_first.get("area_name"),
+                    "category_code": None,
+                    "category_name": None,
+                    "dimension_code": area_first.get("area_code"),
+                    "dimension_name": f"{area_first.get('area_name') or '未匹配'}小计",
+                    "row_type": "area_subtotal",
+                    "metrics": _combined_metrics(area_rows),
+                }
+            )
+        department_first = department_rows[0]
+        result.append(
+            {
+                "store_code": department_first.get("store_code"),
+                "store_name": department_first.get("store_name"),
+                "department_code": department_first.get("department_code"),
+                "department_name": department_first.get("department_name"),
+                "area_code": None,
+                "area_name": None,
+                "category_code": None,
+                "category_name": None,
+                "dimension_code": department_first.get("department_code"),
+                "dimension_name": f"{department_first.get('department_name') or '未匹配'}小计",
+                "row_type": "department_subtotal",
+                "metrics": _combined_metrics(department_rows),
+            }
+        )
+    return result
 
 
 def normalize_rows(
@@ -464,6 +588,17 @@ def normalize_rows(
                 row.get("profit_prior"),
             ),
         }
+        if dimension_type == "department_categories":
+            normalized.update(
+                {
+                    "department_code": row.get("department_code"),
+                    "department_name": row.get("department_name"),
+                    "area_code": row.get("area_code"),
+                    "area_name": row.get("area_name"),
+                    "category_code": row.get("category_code"),
+                    "category_name": row.get("category_name"),
+                }
+            )
         dimensions[dimension_type].append(normalized)
     dimensions["departments"].sort(
         key=lambda row: (
@@ -475,6 +610,9 @@ def normalize_rows(
                 }
             ),
         )
+    )
+    dimensions["department_categories"] = _build_department_category_hierarchy(
+        dimensions["department_categories"]
     )
     return dimensions, quality
 
@@ -528,10 +666,15 @@ def load_od0002_report(
     dimensions, quality = normalize_rows(rows)
     totals: dict[str, dict[str, float | None]] = {}
     for dimension_type, dimension_rows in dimensions.items():
-        sales_current = sum(row["metrics"]["sales_current"] for row in dimension_rows)
-        profit_current = sum(row["metrics"]["profit_current"] for row in dimension_rows)
-        sales_prior = sum(row["metrics"]["sales_prior"] for row in dimension_rows)
-        profit_prior = sum(row["metrics"]["profit_prior"] for row in dimension_rows)
+        total_rows = (
+            [row for row in dimension_rows if row.get("row_type") == "category"]
+            if dimension_type == "department_categories"
+            else dimension_rows
+        )
+        sales_current = sum(row["metrics"]["sales_current"] for row in total_rows)
+        profit_current = sum(row["metrics"]["profit_current"] for row in total_rows)
+        sales_prior = sum(row["metrics"]["sales_prior"] for row in total_rows)
+        profit_prior = sum(row["metrics"]["profit_prior"] for row in total_rows)
         total = metric_triplet(sales_current, profit_current, sales_prior, profit_prior)
         totals[dimension_type] = total
         for row in dimension_rows:

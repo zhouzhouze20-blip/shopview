@@ -555,12 +555,151 @@ def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
         "start_date": date(2026, 1, 1), "end_date": date(2026, 1, 31),
         "prior_start_date": date(2025, 1, 1), "prior_end_date": date(2025, 1, 31),
     }
-    assert set(payload["dimensions"]) == set(("stores", "departments", "areas", "categories", "groups", "floors"))
+    assert set(payload["dimensions"]) == set(
+        (
+            "stores",
+            "departments",
+            "department_categories",
+            "areas",
+            "categories",
+            "groups",
+            "floors",
+        )
+    )
     assert payload["totals"]["stores"] == metric_triplet(400, 70, 200, 20)
     assert all(row["total"] == payload["totals"]["stores"] for row in payload["dimensions"]["stores"])
     assert payload["selected_store"] is None
     assert payload["quality"]["unmatched_floor_group_count"] == 0
     assert payload["generated_at"]
+
+
+def test_report_query_adds_department_category_dimension_without_merging_departments():
+    sql, _ = build_report_query(
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        date(2025, 1, 1),
+        date(2025, 1, 31),
+        TrustedScopeSql(""),
+        {},
+    )
+    compact = " ".join(sql.lower().split())
+
+    assert "department_categories as" in compact
+    block = compact.split("department_categories as", 1)[1].split("), areas as", 1)[0]
+    assert "'department_categories' as dimension_type" in block
+    assert "department_code" in block
+    assert "area_code" in block
+    assert "category_code" in block
+    assert "group by store_code, store_name, department_code, department_name" in block
+    assert "area_code, area_name, category_code, category_name" in block
+    assert "union all select * from department_categories" in compact
+
+
+def test_normalize_rows_builds_category_area_and_department_rows_in_order():
+    rows = [
+        {
+            "dimension_type": "department_categories",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030102",
+            "department_name": "新世纪二部",
+            "area_code": "A1",
+            "area_name": "女装区",
+            "category_code": "C2",
+            "category_name": "中淑女装",
+            "dimension_code": "C2",
+            "dimension_name": "中淑女装",
+            "sales_current": 50,
+            "profit_current": 5,
+            "sales_prior": 40,
+            "profit_prior": 4,
+        },
+        {
+            "dimension_type": "department_categories",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030102",
+            "department_name": "新世纪二部",
+            "area_code": "A1",
+            "area_name": "女装区",
+            "category_code": "C1",
+            "category_name": "中式女装",
+            "dimension_code": "C1",
+            "dimension_name": "中式女装",
+            "sales_current": 30,
+            "profit_current": 3,
+            "sales_prior": 20,
+            "profit_prior": 2,
+        },
+    ]
+
+    dimensions, _ = normalize_rows(rows)
+    hierarchy = dimensions["department_categories"]
+
+    assert [row["row_type"] for row in hierarchy] == [
+        "category",
+        "category",
+        "area_subtotal",
+        "department_subtotal",
+    ]
+    assert [row["category_code"] for row in hierarchy[:2]] == ["C1", "C2"]
+    assert hierarchy[2]["metrics"]["sales_current"] == 80
+    assert hierarchy[3]["metrics"]["sales_current"] == 80
+
+
+def test_load_report_total_counts_only_department_category_detail_rows():
+    rows = [
+        {
+            "dimension_type": "department_categories",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "D1",
+            "department_name": "一部",
+            "area_code": "A1",
+            "area_name": "女装区",
+            "category_code": "C1",
+            "category_name": "女装",
+            "dimension_code": "C1",
+            "dimension_name": "女装",
+            "sales_current": 100,
+            "profit_current": 20,
+            "sales_prior": 80,
+            "profit_prior": 16,
+        }
+    ]
+    payload = load_od0002_report(
+        FakeDb(rows),
+        TrustedScopeSql(""),
+        {},
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        prior_start_date=date(2025, 1, 1),
+        prior_end_date=date(2025, 1, 31),
+    )
+
+    assert payload["totals"]["department_categories"]["sales_current"] == 100
+
+
+def test_department_category_reuses_base_permission_and_department_filter():
+    scope = " AND s.sglmarket::text = ANY(:scope_allow_store)"
+    sql, params = build_report_query(
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        date(2025, 1, 1),
+        date(2025, 1, 31),
+        TrustedScopeSql(scope),
+        {"scope_allow_store": ["603"]},
+        selected_store="603",
+        selected_department="6030102",
+    )
+    compact = " ".join(sql.split())
+    base = compact.split("base AS", 1)[1].split("), stores AS", 1)[0]
+
+    assert scope in base
+    assert "s.sglmarket::text = :selected_store" in base
+    assert "= UPPER(:selected_department)" in base
+    assert params["scope_allow_store"] == ["603"]
+    assert params["selected_department"] == "6030102"
 
 
 def test_od0002_route_requires_permission_scope_and_builds_expected_alias_scope(monkeypatch):
