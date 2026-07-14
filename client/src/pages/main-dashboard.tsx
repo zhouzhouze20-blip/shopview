@@ -19,6 +19,7 @@ import ConfirmedRevenueDailyPage from "./activity-analysis/confirmed-revenue-dai
 import CouponMonthlyBalancePage from "./activity-analysis/coupon-monthly-balance";
 import PointsActivityAnalysisPage from "./activity-analysis/points";
 import StarDiamondAnalysisPage from "./activity-analysis/star-diamond";
+import BrandMemberAnalysisPage from "./member-analysis/brand-member-analysis";
 import CommoditySalesDetailReportPage from "./sales-reports/commodity-sales-detail";
 import Od0002SalesGrossProfitPage from "./sales-reports/od0002-sales-gross-profit";
 import Hdyy01GroupOperationAnalysisPage from "./sales-reports/hdyy01-group-operation-analysis";
@@ -150,6 +151,7 @@ const MODULE_LABELS: Record<string, string> = {
   "confirmed-revenue-daily": "确认收入占比",
   "coupon-monthly-balance": "卡券月结",
   "star-diamond-analysis": "中心星钻会员分析",
+  "brand-member-analysis": "品牌会员经营分析",
   "commodity-sales-detail": "商品销售明细",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
   "hdyy01-group-operation-analysis": "HDYY01柜组经营分析表",
@@ -694,6 +696,8 @@ export default function MainDashboard() {
         return <CouponMonthlyBalancePage />;
       case "star-diamond-analysis":
         return <StarDiamondAnalysisPage />;
+      case "brand-member-analysis":
+        return <BrandMemberAnalysisPage />;
       case "commodity-sales-detail":
         return <CommoditySalesDetailReportPage />;
       case "od0002-sales-gross-profit":

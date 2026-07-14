@@ -68,6 +68,17 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
         ],
       },
       {
+        id: "member-analysis-group",
+        name: "会员经营分析",
+        children: [
+          {
+            id: "brand-member-analysis",
+            name: "品牌会员分析",
+            permissionCodes: ["sales.brand_member_analysis.view"],
+          },
+        ],
+      },
+      {
         id: "sales-reports",
         name: "报表",
         children: [

@@ -24,6 +24,7 @@ const permissions = [
   { id: 15, permission_code: "sales.view", permission_name: "查看销售", module_code: "sales", action_code: "view" },
   { id: 16, permission_code: "sales.od0002.view", permission_name: "查看OD0002门店销售毛利汇总表", module_code: "sales", action_code: "od0002_view" },
   { id: 17, permission_code: "sales.hdyy01.view", permission_name: "查看HDYY01柜组经营分析表", module_code: "sales", action_code: "hdyy01_view" },
+  { id: 18, permission_code: "sales.brand_member_analysis.view", permission_name: "查看品牌会员分析", module_code: "sales", action_code: "brand_member_analysis_view" },
 ];
 
 function findNode(nodes, id) {
@@ -129,4 +130,20 @@ test("shows OD0002 and HDYY01 as independent sales report permissions", () => {
   assert.equal(getPermissionTreeNodeState(hdyy01, new Set([17])), true);
   assert.equal(getPermissionTreeNodeState(salesReports, new Set([16])), "indeterminate");
   assert.equal(getPermissionTreeNodeState(salesReports, new Set([17])), "indeterminate");
+});
+
+test("shows brand member analysis as an independent member analysis permission", () => {
+  const tree = buildRolePermissionTree(permissions);
+  const memberAnalysis = findNode(tree, "member-analysis-group");
+  const brandMemberAnalysis = findNode(tree, "brand-member-analysis");
+
+  assert.ok(memberAnalysis);
+  assert.equal(memberAnalysis.name, "会员经营分析");
+  assert.deepEqual((memberAnalysis.children ?? []).map((node) => node.id), ["brand-member-analysis"]);
+  assert.ok(brandMemberAnalysis);
+  assert.deepEqual(
+    (brandMemberAnalysis.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.brand_member_analysis.view"],
+  );
+  assert.deepEqual(collectPermissionTreeIds(brandMemberAnalysis), [18]);
 });

@@ -41,6 +41,7 @@ from routers import (
     contracts,
     contract_unit_bindings,
     sales,
+    brand_member_analysis,
     revenue,
     merchant_planning,
     activity_analysis,
@@ -100,6 +101,7 @@ app.include_router(floor_area_report.router)
 app.include_router(contracts.router)
 app.include_router(contract_unit_bindings.router)
 app.include_router(sales.router)
+app.include_router(brand_member_analysis.router)
 app.include_router(revenue.router)
 app.include_router(merchant_planning.router)
 app.include_router(activity_analysis.router)

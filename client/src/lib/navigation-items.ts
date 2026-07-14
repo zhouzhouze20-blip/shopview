@@ -60,6 +60,14 @@ export const navigationItems: NavigationItem[] = [
         ],
       },
       {
+        id: "member-analysis-group",
+        name: "会员经营分析",
+        icon: Users,
+        subItems: [
+          { id: "brand-member-analysis", name: "品牌会员分析", icon: Users },
+        ],
+      },
+      {
         id: "sales-reports",
         name: "报表",
         icon: BarChart3,

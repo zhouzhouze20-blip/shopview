@@ -27,6 +27,7 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   "confirmed-revenue-daily": ["activity_settlement.confirmed_revenue.view"],
   "coupon-monthly-balance": ["activity_settlement.coupon_monthly.view"],
   "star-diamond-analysis": ["activity_analysis.star_diamond.view"],
+  "brand-member-analysis": ["sales.brand_member_analysis.view"],
   "commodity-sales-detail": ["sales.view"],
   "od0002-sales-gross-profit": ["sales.od0002.view"],
   "hdyy01-group-operation-analysis": ["sales.hdyy01.view"],

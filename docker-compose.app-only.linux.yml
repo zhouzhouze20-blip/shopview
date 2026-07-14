@@ -9,6 +9,8 @@ services:
     restart: unless-stopped
     user: ${APP_RUN_USER:-0:0}
     env_file:
+      # 保留根目录 .env 中已保存的 AI 配置；服务器专用配置随后覆盖同名基础变量。
+      - .env
       - env.app-only.linux
     environment:
       NODE_ENV: production

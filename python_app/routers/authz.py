@@ -63,6 +63,12 @@ CORE_PERMISSION_DEFINITIONS = [
     ("contract.view", "查看合同", "contract", "view"),
     ("contract.edit", "维护合同", "contract", "edit"),
     ("sales.view", "查看销售", "sales", "view"),
+    (
+        "sales.brand_member_analysis.view",
+        "查看品牌会员分析",
+        "sales",
+        "brand_member_analysis_view",
+    ),
     ("sales.od0002.view", "查看OD0002门店销售毛利汇总表", "sales", "od0002_view"),
     ("sales.hdyy01.view", "查看HDYY01柜组经营分析表", "sales", "hdyy01_view"),
     ("activity_analysis.view", "查看活动分析", "activity_analysis", "view"),

@@ -14,6 +14,10 @@ DEFAULT_MINIMAX_MODEL = "MiniMax-M2.7"
 DEFAULT_MINIMAX_BASE_URL = "https://api.minimaxi.com/v1"
 
 
+class AIOutputTruncatedError(ValueError):
+    pass
+
+
 def generate_ai_report(payload: dict[str, Any], instructions: str | None = None) -> dict[str, Any]:
     config = _load_ai_config()
     if not config["api_key"]:
@@ -37,6 +41,15 @@ def generate_ai_report(payload: dict[str, Any], instructions: str | None = None)
             "provider": config["provider"],
             "model": config["model"],
             "report": report,
+        }
+    except AIOutputTruncatedError as exc:
+        return {
+            "enabled": True,
+            "status": "truncated",
+            "provider": config["provider"],
+            "model": config["model"],
+            "report": None,
+            "error": str(exc),
         }
     except Exception as exc:
         return {
@@ -82,7 +95,7 @@ def _minimax_config() -> dict[str, Any]:
         "api_key_env": "SALES_ANALYSIS_AI_API_KEY 或 MINIMAX_API_KEY",
         "model": _env("SALES_ANALYSIS_AI_MODEL", _env("MINIMAX_MODEL", DEFAULT_MINIMAX_MODEL)),
         "timeout": _env_float("SALES_ANALYSIS_AI_TIMEOUT_SECONDS", _env_float("MINIMAX_TIMEOUT_SECONDS", 90.0)),
-        "max_output_tokens": _env_int("SALES_ANALYSIS_AI_MAX_OUTPUT_TOKENS", 800),
+        "max_output_tokens": _env_int("SALES_ANALYSIS_AI_MAX_OUTPUT_TOKENS", 1200),
     }
 
 
@@ -113,7 +126,12 @@ def _call_responses_api(payload: dict[str, Any], config: dict[str, Any], instruc
         timeout=config["timeout"],
     )
     response.raise_for_status()
-    return _extract_responses_output_text(response.json())
+    data = response.json()
+    if data.get("status") == "incomplete":
+        reason = (data.get("incomplete_details") or {}).get("reason")
+        if reason == "max_output_tokens":
+            raise AIOutputTruncatedError("AI 输出达到长度上限，内容不完整。")
+    return _extract_responses_output_text(data)
 
 
 def _call_chat_completions_api(payload: dict[str, Any], config: dict[str, Any], instructions: str | None = None) -> str | None:
@@ -134,7 +152,11 @@ def _call_chat_completions_api(payload: dict[str, Any], config: dict[str, Any], 
         timeout=config["timeout"],
     )
     response.raise_for_status()
-    return _extract_chat_completion_text(response.json())
+    data = response.json()
+    choices = data.get("choices") or []
+    if choices and choices[0].get("finish_reason") == "length":
+        raise AIOutputTruncatedError("AI 输出达到长度上限，内容不完整。")
+    return _extract_chat_completion_text(data)
 
 
 def _analysis_instructions() -> str:
