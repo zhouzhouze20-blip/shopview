@@ -28,6 +28,9 @@ export interface BrandMemberSummary {
   refund_only_member_sales_revenue: number;
   spend_per_buyer: number;
   purchase_frequency: number;
+  member_sales_quantity: number;
+  items_per_ticket: number;
+  average_item_price: number;
   department_rank: number | null;
   department_group_count: number;
   old_customer_repurchase_rate: number;
@@ -62,11 +65,28 @@ export interface BrandMemberLevelConsumption {
   average_ticket_value: number;
 }
 
+export interface BrandMemberPurchaseFrequencyAnalysis {
+  code: "single_purchase" | "repeat_purchase";
+  label: "一次客" | "多次客";
+  buyer_count: number;
+  buyer_share: number | null;
+  sales_revenue: number;
+  sales_share: number | null;
+  ticket_count: number;
+  sales_quantity: number;
+  spend_per_buyer: number;
+  purchase_frequency: number;
+  average_ticket_value: number;
+  items_per_ticket: number;
+  average_item_price: number;
+}
+
 export interface BrandMemberPeriod {
   period: { start_date: string; end_date: string };
   summary: BrandMemberSummary;
   segments: BrandMemberSegment[];
   member_level_consumption: BrandMemberLevelConsumption[];
+  purchase_frequency_analysis: BrandMemberPurchaseFrequencyAnalysis[];
   old_customer_funnel: BrandMemberFunnel;
   inflow_sources: BrandMemberInflowSource[];
 }

@@ -469,16 +469,20 @@ test("HDYY01 page source fixes pagination, authenticated export, columns, and qu
   assert.match(source, />合计</);
 
   const columnLabels = [
-    "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "一级编码", "一级名称",
-    "二级编码", "二级名称", "等级", "数量", "销售收入", "含税销售成本", "毛利", "消费次数",
-    "客单", "会员销售", "储值卡销售",
+    "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "数量", "销售收入",
+    "含税销售成本", "毛利", "消费次数", "客单", "会员销售", "储值卡销售",
   ];
   for (const label of columnLabels) {
     assert.match(source, new RegExp(`label:\\s*["']${label}["']`));
   }
   assert.equal((source.match(/label:\s*["'][^"']+["']/g) ?? []).filter((entry) =>
     columnLabels.some((label) => entry.includes(`"${label}"`) || entry.includes(`'${label}'`))
-  ).length, 19);
+  ).length, 14);
+
+  for (const removedLabel of ["一级编码", "一级名称", "二级编码", "二级名称", "等级"]) {
+    assert.doesNotMatch(source, new RegExp(`label:\\s*["']${removedLabel}["']`));
+  }
+  assert.match(source, /label:\s*["']楼层["'][^}]*row\.floor_name/);
 
   for (const [label, field] of [
     ["销售收入", "sales_amount"],

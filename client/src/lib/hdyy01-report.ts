@@ -11,6 +11,7 @@ export interface Hdyy01Row {
   group_name: string;
   area: number;
   floor_code: string | null;
+  floor_name: string;
   level1_code: string | null;
   level1_name: string;
   level2_code: string | null;

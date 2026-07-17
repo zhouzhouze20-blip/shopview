@@ -100,6 +100,8 @@ def brand_member_conclusion_instructions() -> str:
         "只能引用输入中直接提供的金额、人数、比例、频次和排名。"
         "固定术语必须原样使用：sales_revenue称为销售收入，不得称销售额或销售码洋；"
         "spend_per_buyer称为会员人均消费，不得称客单价；"
+        "purchase_frequency_analysis中的single_purchase称为一次客、repeat_purchase称为多次客；"
+        "items_per_ticket称为客件数，average_item_price称为件单价；"
         "department_visit_count称为到目标部门人数，不得称品类到访；"
         "target_repurchase_count称为回购目标柜组人数。"
         "严禁自行做除法、加总、差额、占比或任何其他计算，严禁改写数字。"

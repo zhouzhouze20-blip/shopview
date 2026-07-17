@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from .od0002_report import (
     EXCLUDED_DEPARTMENT_CODES,
+    FLOOR_NAMES,
     TrustedScopeSql,
     _trusted_scope_value,
 )
@@ -44,6 +45,7 @@ DISPLAY_FIELDS = (
     "store_name",
     "department_name",
     "group_name",
+    "floor_name",
     "level1_name",
     "level2_name",
     "grade_label",
@@ -90,6 +92,10 @@ def build_report_query(
             " AND UPPER(TRIM(BOTH FROM COALESCE(dept.mfcode, ''))) "
             "= UPPER(:selected_department)"
         )
+
+    floor_cases = "\n".join(
+        f"WHEN '{code}' THEN '{name}'" for code, name in FLOOR_NAMES.items()
+    )
 
     sql = f"""
 WITH manaframe_normalized AS MATERIALIZED (
@@ -163,6 +169,10 @@ base_sales AS MATERIALIZED (
     NULLIF(TRIM(BOTH FROM dept.mfcname), '') AS department_name,
     mf.mfyymj AS area,
     NULLIF(TRIM(BOTH FROM mf.mflc), '') AS floor_code,
+    CASE NULLIF(TRIM(BOTH FROM mf.mflc), '')
+      {floor_cases}
+      ELSE '未匹配'
+    END AS floor_name,
     h.level1_code,
     h.level1_name,
     h.level2_code,
@@ -233,6 +243,7 @@ group_metrics AS (
     MAX(s.group_name) AS group_name,
     MAX(s.area) AS area,
     MAX(s.floor_code) AS floor_code,
+    MAX(s.floor_name) AS floor_name,
     MAX(s.level1_code) AS level1_code,
     MAX(s.level1_name) AS level1_name,
     MAX(s.level2_code) AS level2_code,

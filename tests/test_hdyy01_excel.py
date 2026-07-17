@@ -20,6 +20,7 @@ def sample_report(*, empty: bool = False):
             "group_name": "A柜组",
             "area": 10.5,
             "floor_code": "02",
+            "floor_name": "1F",
             "level1_code": "10",
             "level1_name": "服装",
             "level2_code": "1001",
@@ -41,6 +42,7 @@ def sample_report(*, empty: bool = False):
             "group_name": "退货柜组",
             "area": 8.0,
             "floor_code": "02",
+            "floor_name": "1F",
             "level1_code": "10",
             "level1_name": "服装",
             "level2_code": "1002",
@@ -77,9 +79,8 @@ def sample_report(*, empty: bool = False):
 
 
 HEADERS = [
-    "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "一级编码", "一级名称",
-    "二级编码", "二级名称", "等级", "数量", "销售收入", "含税销售成本", "毛利",
-    "消费次数", "客单", "会员销售", "储值卡销售",
+    "机构", "部门", "柜组编码", "柜组名称", "面积", "楼层", "数量", "销售收入",
+    "含税销售成本", "毛利", "消费次数", "客单", "会员销售", "储值卡销售",
 ]
 
 
@@ -94,9 +95,9 @@ def test_workbook_has_exact_sheets_layout_formats_signed_rows_total_and_notes():
     assert sheet["A1"].value == "HDYY01柜组经营分析表"
     assert "2026-07-01" in sheet["A2"].value
     assert "2026-07-10" in sheet["A2"].value
-    assert [sheet.cell(4, column).value for column in range(1, 20)] == HEADERS
+    assert [sheet.cell(4, column).value for column in range(1, 15)] == HEADERS
     assert sheet.freeze_panes == "A5"
-    assert sheet.auto_filter.ref == "A4:S6"
+    assert sheet.auto_filter.ref == "A4:N6"
     assert sheet["A4"].fill.fgColor.rgb.endswith("4472C4")
     assert sheet["A4"].font.bold
     assert sheet["A4"].font.color.rgb.endswith("FFFFFF")
@@ -104,17 +105,18 @@ def test_workbook_has_exact_sheets_layout_formats_signed_rows_total_and_notes():
     assert sheet.column_dimensions["A"].width > 0
 
     assert sheet["E5"].number_format == "0.00"
-    assert sheet["L5"].number_format == "0.####"
-    assert sheet["M5"].number_format == "0.00"
-    assert sheet["P5"].number_format == "0"
-    assert sheet["Q6"].value is None
-    assert sheet["L6"].value == -0.5
-    assert sheet["M6"].value == -20
-    assert isinstance(sheet["M6"].value, (int, float))
+    assert sheet["F5"].value == "1F"
+    assert sheet["G5"].number_format == "0.####"
+    assert sheet["H5"].number_format == "0.00"
+    assert sheet["K5"].number_format == "0"
+    assert sheet["L6"].value is None
+    assert sheet["G6"].value == -0.5
+    assert sheet["H6"].value == -20
+    assert isinstance(sheet["H6"].value, (int, float))
 
     assert sheet["A7"].value == "合计"
-    assert all(sheet.cell(7, column).value is None for column in range(2, 12))
-    assert [sheet.cell(7, column).value for column in range(12, 20)] == [
+    assert all(sheet.cell(7, column).value is None for column in range(2, 7))
+    assert [sheet.cell(7, column).value for column in range(7, 15)] == [
         1.625, 80, 48, 32, 1, 80, 70, 25,
     ]
     assert sheet["A7"].font.bold
@@ -137,14 +139,11 @@ def test_workbook_escapes_formula_like_text_but_keeps_negative_numbers_numeric()
     from python_app.services.hdyy01_excel import build_hdyy01_workbook
 
     report = sample_report()
-    text_values = [
-        "=1+1", "+SUM(A1:A2)", "-G01", "@柜组", "=10", "+02", "-10", "@服装",
-        "=1001", "+女装", "-A",
-    ]
+    text_values = ["=1+1", "+SUM(A1:A2)", "-G01", "@柜组", "=10", "+1F"]
     for key, value in zip(
         (
             "store_name", "department_name", "group_code", "group_name", "area",
-            "floor_code", "level1_code", "level1_name", "level2_code", "level2_name", "grade_label",
+            "floor_name",
         ),
         text_values,
     ):
@@ -155,13 +154,13 @@ def test_workbook_escapes_formula_like_text_but_keeps_negative_numbers_numeric()
     sheet = load_workbook(
         BytesIO(build_hdyy01_workbook(report)), data_only=False
     )["明细"]
-    for column in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11):
+    for column in (1, 2, 3, 4, 6):
         cell = sheet.cell(5, column)
         assert cell.data_type == "s"
         assert cell.value.startswith("'")
     assert sheet["E5"].value == -10.25
-    assert sheet["L5"].value == -2.5
-    assert isinstance(sheet["L5"].value, (int, float))
+    assert sheet["G5"].value == -2.5
+    assert isinstance(sheet["G5"].value, (int, float))
 
 
 def test_empty_workbook_has_headers_total_notes_and_missing_classification_display():
@@ -169,16 +168,15 @@ def test_empty_workbook_has_headers_total_notes_and_missing_classification_displ
 
     workbook = load_workbook(BytesIO(build_hdyy01_workbook(sample_report(empty=True))))
     sheet = workbook["明细"]
-    assert [sheet.cell(4, column).value for column in range(1, 20)] == HEADERS
+    assert [sheet.cell(4, column).value for column in range(1, 15)] == HEADERS
     assert sheet["A5"].value == "合计"
-    assert sheet.auto_filter.ref == "A4:S4"
+    assert sheet.auto_filter.ref == "A4:N4"
     assert "sglxssr" in workbook["报表说明"]["B2"].value
 
     report = sample_report()
-    for key in ("level1_code", "level1_name", "level2_code", "level2_name", "grade_label"):
-        report["rows"][0][key] = None
+    report["rows"][0]["floor_name"] = None
     sheet = load_workbook(BytesIO(build_hdyy01_workbook(report)))["明细"]
-    assert [sheet.cell(5, column).value for column in range(7, 12)] == ["未匹配"] * 5
+    assert sheet["F5"].value is None
 
 
 def test_workbook_file_api_is_seeked_and_bytes_helper_closes_its_file(monkeypatch):

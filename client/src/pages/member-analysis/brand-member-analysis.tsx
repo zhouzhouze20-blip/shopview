@@ -6,8 +6,10 @@ import {
   Check,
   ChevronDown,
   Download,
+  Presentation,
   RefreshCw,
   Search,
+  ShoppingBasket,
   Sparkles,
   Store,
   Users,
@@ -142,6 +144,8 @@ export default function BrandMemberAnalysisPage() {
   const [competitorPickerOpen, setCompetitorPickerOpen] = useState(false);
   const [competitorSearch, setCompetitorSearch] = useState("");
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingPpt, setIsExportingPpt] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!draft.storeCode && selectedStore?.storeCode) {
@@ -223,6 +227,7 @@ export default function BrandMemberAnalysisPage() {
   );
 
   const submitQuery = () => {
+    setExportError(null);
     setSubmitted({ ...draft });
     setQueryVersion((version) => version + 1);
   };
@@ -236,12 +241,29 @@ export default function BrandMemberAnalysisPage() {
 
   const handleSupplierExport = async () => {
     if (!report || isExporting) return;
+    setExportError(null);
     setIsExporting(true);
     try {
       const { exportSupplierWorkbook } = await import("@/lib/export-brand-member-supplier");
       exportSupplierWorkbook(report, selectedStoreName, aiQuery.data?.conclusion);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "供应商沟通版生成失败，请稍后重试。");
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handlePptExport = async () => {
+    if (!report || isExportingPpt) return;
+    setExportError(null);
+    setIsExportingPpt(true);
+    try {
+      const { exportSupplierPresentation } = await import("@/lib/export-brand-member-ppt");
+      await exportSupplierPresentation(report, selectedStoreName, aiQuery.data?.conclusion);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "PPT生成失败，请稍后重试。");
+    } finally {
+      setIsExportingPpt(false);
     }
   };
 
@@ -267,10 +289,19 @@ export default function BrandMemberAnalysisPage() {
             <p className="mt-2 text-sm text-slate-500">从经营结果、会员流入、老客回购和竞品表现四个方向讲清品牌故事。</p>
           </div>
           {report ? (
-            <Button variant="outline" disabled={isExporting} onClick={() => void handleSupplierExport()}>
-              {isExporting ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-              {isExporting ? "正在生成沟通版" : "导出供应商沟通版"}
-            </Button>
+            <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" disabled={isExporting || isExportingPpt} onClick={() => void handleSupplierExport()}>
+                  {isExporting ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  {isExporting ? "正在生成 Excel" : "导出 Excel 沟通版"}
+                </Button>
+                <Button className="bg-slate-950 text-white hover:bg-slate-800" disabled={isExporting || isExportingPpt} onClick={() => void handlePptExport()}>
+                  {isExportingPpt ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Presentation className="mr-2 h-4 w-4" />}
+                  {isExportingPpt ? "正在生成 PPT" : "导出 PPT 沟通版"}
+                </Button>
+              </div>
+              {exportError ? <div className="max-w-xl text-right text-xs text-rose-600">{exportError}</div> : null}
+            </div>
           ) : null}
         </div>
 
@@ -577,6 +608,67 @@ export default function BrandMemberAnalysisPage() {
                 </CardContent>
               </Card>
             </div>
+
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ShoppingBasket className="h-4 w-4 text-amber-700" />购买频次与客件分析
+                </CardTitle>
+                <div className="text-xs leading-5 text-slate-500">
+                  一次客＝期间内1张会员交易小票，多次客＝期间内2张及以上；客件数＝会员净销售件数÷会员交易小票数，退货数量按负数冲减。
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table className="min-w-[1280px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>客群</TableHead>
+                        <TableHead className="text-right">本期会员数</TableHead>
+                        <TableHead className="text-right">同期会员数</TableHead>
+                        <TableHead className="text-right">本期人数占比</TableHead>
+                        <TableHead className="text-right">本期销售收入</TableHead>
+                        <TableHead className="text-right">同期销售收入</TableHead>
+                        <TableHead className="text-right">消费频次</TableHead>
+                        <TableHead className="text-right">客单</TableHead>
+                        <TableHead className="text-right">净销售件数</TableHead>
+                        <TableHead className="text-right">本期客件数</TableHead>
+                        <TableHead className="text-right">同期客件数</TableHead>
+                        <TableHead className="text-right">件单价</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {current.purchase_frequency_analysis.map((row) => {
+                        const priorRow = prior.purchase_frequency_analysis.find((item) => item.code === row.code);
+                        return (
+                          <TableRow key={row.code}>
+                            <TableCell>
+                              <Badge variant="outline" className={cn(
+                                "font-medium",
+                                row.code === "repeat_purchase" ? "border-teal-200 bg-teal-50 text-teal-800" : "text-slate-700",
+                              )}>
+                                {row.label}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">{formatBrandNumber(row.buyer_count)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatBrandNumber(priorRow?.buyer_count ?? 0)}</TableCell>
+                            <TableCell className="text-right">{formatBrandShare(row.buyer_share)}</TableCell>
+                            <TableCell className="text-right font-medium">{formatBrandMoney(row.sales_revenue)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatBrandMoney(priorRow?.sales_revenue ?? 0)}</TableCell>
+                            <TableCell className="text-right">{formatBrandNumber(row.purchase_frequency, 2)}</TableCell>
+                            <TableCell className="text-right">{formatBrandMoney(row.average_ticket_value)}</TableCell>
+                            <TableCell className="text-right">{formatBrandNumber(row.sales_quantity, 2)}</TableCell>
+                            <TableCell className="text-right font-semibold text-amber-800">{formatBrandNumber(row.items_per_ticket, 2)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatBrandNumber(priorRow?.items_per_ticket ?? 0, 2)}</TableCell>
+                            <TableCell className="text-right">{formatBrandMoney(row.average_item_price)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
 
             <Card className="border-slate-200 shadow-sm">
               <CardHeader>

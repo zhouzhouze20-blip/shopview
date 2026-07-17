@@ -105,8 +105,8 @@ export const apiRequest = async (
   return response;
 };
 
-export const apiGet = <T>(endpoint: string): Promise<T> => 
-  apiRequest(endpoint).then(res => res.json());
+export const apiGet = <T>(endpoint: string, options: RequestInit = {}): Promise<T> =>
+  apiRequest(endpoint, options).then(res => res.json());
 
 export const apiPost = <T>(endpoint: string, data?: any): Promise<T> => 
   apiRequest(endpoint, {

@@ -18,8 +18,10 @@ from routers.brand_member_analysis import (
     brand_member_conclusion_instructions,
 )
 from services.brand_member_analysis import (
+    _load_department_rank,
     _period_classification_ctes,
     _load_member_level_consumption,
+    _load_purchase_frequency_analysis,
     build_comparison,
     build_rule_conclusion,
     list_group_options,
@@ -244,11 +246,92 @@ def test_member_level_consumption_uses_salehead_customer_type_and_standard_level
     assert db.params == params
 
 
+def test_purchase_frequency_analysis_splits_once_and_repeat_buyers_and_calculates_items():
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    db = CaptureDb()
+    params = {
+        "store_code": "601",
+        "target_group_code": "G1",
+        "start_date": date(2026, 6, 1),
+        "end_date": date(2026, 6, 30),
+    }
+
+    assert _load_purchase_frequency_analysis(db, params) == []
+    compact = " ".join(db.sql.split())
+    assert "CASE WHEN ticket_count = 1 THEN 'single_purchase' ELSE 'repeat_purchase' END" in compact
+    assert "COALESCE(s.sglsl, 0)::numeric AS sales_quantity" in compact
+    assert "COALESCE(totals.sales_quantity, 0) / totals.ticket_count" in compact
+    assert "END AS items_per_ticket" in compact
+    assert "COALESCE(totals.sales_revenue, 0) / totals.sales_quantity" in compact
+    assert "END AS average_item_price" in compact
+    assert db.params == params
+
+
+def test_department_rank_uses_exact_composite_index_predicates():
+    class OneRowMappings:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"department_rank": 1, "department_group_count": 5}
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return OneRowMappings()
+
+    db = CaptureDb()
+    params = {
+        "store_code": "601",
+        "target_group_code": "6010101052",
+        "target_department_code": "6010101",
+        "start_date": date(2026, 1, 1),
+        "end_date": date(2026, 6, 30),
+    }
+
+    assert _load_department_rank(db, params) == {
+        "department_rank": 1,
+        "department_group_count": 5,
+    }
+    compact = " ".join(db.sql.split())
+    assert "department_groups AS MATERIALIZED" in compact
+    assert "s.sglmarket = :store_code" in compact
+    assert "s.sglmfid = groups.group_code" in compact
+    assert "TRIM(BOTH FROM COALESCE(s.sglmarket::text, ''))" not in compact
+    assert db.params == params
+
+
 def test_comparison_uses_absolute_prior_for_signed_revenue_rate():
     comparison = build_comparison({"sales_revenue": -80}, {"sales_revenue": -100})
 
     assert comparison["sales_revenue"]["change"] == 20
     assert comparison["sales_revenue"]["change_rate"] == pytest.approx(0.2)
+
+
+def test_comparison_includes_customer_items_per_ticket():
+    comparison = build_comparison({"items_per_ticket": 1.8}, {"items_per_ticket": 1.5})
+
+    assert comparison["items_per_ticket"]["change"] == pytest.approx(0.3)
+    assert comparison["items_per_ticket"]["change_rate"] == pytest.approx(0.2)
 
 
 def test_rule_conclusion_does_not_claim_competitor_when_none_selected():
@@ -295,6 +378,16 @@ def test_ai_snapshot_backend_allowlist_removes_personal_fields():
                             "member_no": "SECRET-CARD",
                         }
                     ],
+                    "purchase_frequency_analysis": [
+                        {
+                            "code": "single_purchase",
+                            "label": "一次客",
+                            "buyer_count": 1,
+                            "sales_quantity": 2,
+                            "items_per_ticket": 2,
+                            "member_no": "SECRET-CARD",
+                        }
+                    ],
                     "member_list": [{"member_no": "SECRET-CARD"}],
                 },
             },
@@ -317,6 +410,13 @@ def test_ai_snapshot_backend_allowlist_removes_personal_fields():
         "buyer_count": 1,
         "sales_revenue": 100,
     }
+    assert safe["target"]["current"]["purchase_frequency_analysis"][0] == {
+        "code": "single_purchase",
+        "label": "一次客",
+        "buyer_count": 1,
+        "sales_quantity": 2,
+        "items_per_ticket": 2,
+    }
 
 
 def test_brand_member_ai_instructions_lock_comparison_and_numeric_claims():
@@ -328,6 +428,8 @@ def test_brand_member_ai_instructions_lock_comparison_and_numeric_claims():
     assert "不得设定输入中不存在的数值目标" in instructions
     assert "sales_revenue称为销售收入" in instructions
     assert "spend_per_buyer称为会员人均消费" in instructions
+    assert "single_purchase称为一次客" in instructions
+    assert "items_per_ticket称为客件数" in instructions
     assert "使用纯文本" in instructions
 
 

@@ -365,6 +365,75 @@ function createMemberStructureSheet(report: BrandMemberReport) {
   return sheet;
 }
 
+function createPurchaseFrequencySheet(report: BrandMemberReport) {
+  const current = report.target.current;
+  const prior = report.target.prior;
+  const rows: unknown[][] = [
+    ["购买频次与客件分析"],
+    [],
+    [`${report.target.group_name}｜一次客、多次客及客件表现`],
+    [],
+    [
+      "客群", "定义", "本期会员数", "本期人数占比", "本期销售收入（元）", "本期销售占比",
+      "本期交易小票", "本期消费频次", "本期客单（元）", "本期净销售件数", "本期客件数", "本期件单价（元）",
+      "同期会员数", "同期人数占比", "同期销售收入（元）", "同期客件数", "同期客单（元）", "同期件单价（元）",
+    ],
+    ...current.purchase_frequency_analysis.map((row) => {
+      const priorRow = prior.purchase_frequency_analysis.find((item) => item.code === row.code);
+      return [
+        row.label,
+        row.code === "single_purchase" ? "期间内1张会员交易小票" : "期间内2张及以上会员交易小票",
+        row.buyer_count,
+        row.buyer_share,
+        roundMoney(row.sales_revenue),
+        row.sales_share,
+        row.ticket_count,
+        roundDecimal(row.purchase_frequency),
+        roundMoney(row.average_ticket_value),
+        roundDecimal(row.sales_quantity),
+        roundDecimal(row.items_per_ticket),
+        roundMoney(row.average_item_price),
+        priorRow?.buyer_count ?? 0,
+        priorRow?.buyer_share ?? null,
+        roundMoney(priorRow?.sales_revenue ?? 0),
+        roundDecimal(priorRow?.items_per_ticket ?? 0),
+        roundMoney(priorRow?.average_ticket_value ?? 0),
+        roundMoney(priorRow?.average_item_price ?? 0),
+      ];
+    }),
+    [],
+    ["说明：净销售件数汇总 salegoodslist.sglsl，退货数量按负数冲减；客件数＝净销售件数÷会员交易小票数；件单价＝会员销售收入净额÷净销售件数。"],
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  applyBase(sheet, `A1:R${rows.length}`);
+  applyTitle(sheet, "R", "购买频次与客件分析", `${report.target.group_name}｜一次客、多次客及客件表现`);
+  const endRow = 5 + current.purchase_frequency_analysis.length;
+  applyTable(sheet, 5, endRow, "R");
+  setNumberFormat(sheet, `C6:C${endRow}`, COUNT_FORMAT);
+  setNumberFormat(sheet, `D6:D${endRow}`, PERCENT_FORMAT);
+  setNumberFormat(sheet, `E6:E${endRow}`, MONEY_FORMAT);
+  setNumberFormat(sheet, `F6:F${endRow}`, PERCENT_FORMAT);
+  setNumberFormat(sheet, `G6:G${endRow}`, COUNT_FORMAT);
+  setNumberFormat(sheet, `H6:H${endRow}`, "0.00");
+  setNumberFormat(sheet, `I6:I${endRow}`, MONEY_FORMAT);
+  setNumberFormat(sheet, `J6:K${endRow}`, "0.00");
+  setNumberFormat(sheet, `L6:L${endRow}`, MONEY_FORMAT);
+  setNumberFormat(sheet, `M6:M${endRow}`, COUNT_FORMAT);
+  setNumberFormat(sheet, `N6:N${endRow}`, PERCENT_FORMAT);
+  setNumberFormat(sheet, `O6:O${endRow}`, MONEY_FORMAT);
+  setNumberFormat(sheet, `P6:P${endRow}`, "0.00");
+  setNumberFormat(sheet, `Q6:R${endRow}`, MONEY_FORMAT);
+  merge(sheet, `A${rows.length}:R${rows.length}`);
+  styleRange(sheet, `A${rows.length}:R${rows.length}`, { font: { name: FONT_NAME, sz: 9, italic: true, color: { rgb: COLORS.muted } }, alignment: { wrapText: true, vertical: "center" } });
+  sheet["!cols"] = [
+    { wch: 14 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 16 },
+    { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 16 },
+    { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 16 },
+  ];
+  sheet["!rows"]![rows.length - 1] = { hpt: 36 };
+  return sheet;
+}
+
 function createOldCustomerSheet(report: BrandMemberReport) {
   const current = report.target.current.old_customer_funnel;
   const prior = report.target.prior.old_customer_funnel;
@@ -460,6 +529,8 @@ function createDefinitionsSheet(report: BrandMemberReport) {
     ["购买会员数", "期间在目标柜组至少发生一笔正向购买的会员数", "所选本期 / 同期", "按会员去重"],
     ["会员历史身份", "分别追溯至各分析期开始日期之前的全部门店消费历史", "分析期开始前", "用于划分品牌老客与流入客群"],
     ["内部流入", "包含同部门流入与跨部门流入", "目标门店", "同一会员仅归入一个客群"],
+    ["一次客 / 多次客", "一次客为期间内1张会员交易小票；多次客为期间内2张及以上", "所选本期 / 同期", "仅统计至少一笔正向购买的会员"],
+    ["客件数", "会员净销售件数÷会员交易小票数", "所选本期 / 同期", "salegoodslist.sglsl，退货数量按负数冲减"],
     [],
     ["隐私说明"],
     ["本报告仅使用汇总指标，不包含会员姓名、手机号、会员卡号或其他个人识别信息。"],
@@ -469,19 +540,19 @@ function createDefinitionsSheet(report: BrandMemberReport) {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   applyBase(sheet, `A1:D${rows.length}`);
   applyTitle(sheet, "D", "数据口径说明", "供应商沟通版｜汇总数据口径与使用边界");
-  applyTable(sheet, 5, 9, "D");
-  styleRange(sheet, "A11:D11", sectionStyle);
-  merge(sheet, "A11:D11");
-  merge(sheet, "A12:D12");
-  merge(sheet, "B13:D13");
-  merge(sheet, "B14:D14");
-  styleRange(sheet, "A12:D12", { fill: { fgColor: { rgb: COLORS.tealPale } }, alignment: { wrapText: true, vertical: "center" }, border: { left: { style: "medium", color: { rgb: COLORS.teal } } } });
-  for (const row of [13, 14]) {
+  applyTable(sheet, 5, 11, "D");
+  styleRange(sheet, "A13:D13", sectionStyle);
+  merge(sheet, "A13:D13");
+  merge(sheet, "A14:D14");
+  merge(sheet, "B15:D15");
+  merge(sheet, "B16:D16");
+  styleRange(sheet, "A14:D14", { fill: { fgColor: { rgb: COLORS.tealPale } }, alignment: { wrapText: true, vertical: "center" }, border: { left: { style: "medium", color: { rgb: COLORS.teal } } } });
+  for (const row of [15, 16]) {
     styleRange(sheet, `A${row}`, { font: { name: FONT_NAME, bold: true, color: { rgb: COLORS.muted } } });
     styleRange(sheet, `A${row}:D${row}`, { border: thinBottom, alignment: { wrapText: true, vertical: "center" } });
   }
   sheet["!cols"] = [{ wch: 18 }, { wch: 46 }, { wch: 22 }, { wch: 28 }];
-  sheet["!rows"]![11] = { hpt: 38 };
+  sheet["!rows"]![13] = { hpt: 38 };
   return sheet;
 }
 
@@ -497,6 +568,7 @@ export function buildSupplierWorkbook(report: BrandMemberReport, storeName: stri
   };
   XLSX.utils.book_append_sheet(workbook, createOverviewSheet(report, storeName, conclusion), "经营摘要");
   XLSX.utils.book_append_sheet(workbook, createMemberStructureSheet(report), "会员结构");
+  XLSX.utils.book_append_sheet(workbook, createPurchaseFrequencySheet(report), "频次客件");
   XLSX.utils.book_append_sheet(workbook, createOldCustomerSheet(report), "老客经营");
   XLSX.utils.book_append_sheet(workbook, createInflowSheet(report), "流入来源");
   if (report.competitors.length) XLSX.utils.book_append_sheet(workbook, createCompetitorSheet(report), "竞品对比");

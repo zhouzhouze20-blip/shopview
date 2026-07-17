@@ -24,6 +24,11 @@ MEMBER_LEVEL_DEFINITIONS = (
     ("UNIDENTIFIED", "未标识会员", 5),
 )
 
+PURCHASE_FREQUENCY_DEFINITIONS = (
+    ("single_purchase", "一次客", 1),
+    ("repeat_purchase", "多次客", 2),
+)
+
 AI_FORBIDDEN_TERMS = (
     "同比",
     "环比",
@@ -56,6 +61,9 @@ AI_SUMMARY_FIELDS = (
     "refund_only_member_sales_revenue",
     "spend_per_buyer",
     "purchase_frequency",
+    "member_sales_quantity",
+    "items_per_ticket",
+    "average_item_price",
     "department_rank",
     "department_group_count",
     "old_customer_repurchase_rate",
@@ -103,6 +111,27 @@ def _safe_period_for_ai(source: Any) -> dict[str, Any]:
                 ),
             )
             for row in _mapping_rows(source.get("member_level_consumption"), 5)
+        ],
+        "purchase_frequency_analysis": [
+            _pick(
+                row,
+                (
+                    "code",
+                    "label",
+                    "buyer_count",
+                    "buyer_share",
+                    "sales_revenue",
+                    "sales_share",
+                    "ticket_count",
+                    "sales_quantity",
+                    "spend_per_buyer",
+                    "purchase_frequency",
+                    "average_ticket_value",
+                    "items_per_ticket",
+                    "average_item_price",
+                ),
+            )
+            for row in _mapping_rows(source.get("purchase_frequency_analysis"), 2)
         ],
         "old_customer_funnel": _pick(
             source.get("old_customer_funnel"),
@@ -267,6 +296,8 @@ def build_comparison(current: dict[str, Any], prior: dict[str, Any]) -> dict[str
         "member_sales_revenue",
         "spend_per_buyer",
         "purchase_frequency",
+        "items_per_ticket",
+        "average_item_price",
         "old_customer_repurchase_rate",
     )
     comparison: dict[str, Any] = {}
@@ -542,6 +573,114 @@ def _load_member_level_consumption(db: Session, params: dict[str, Any]) -> list[
     return rows
 
 
+def _load_purchase_frequency_analysis(db: Session, params: dict[str, Any]) -> list[dict[str, Any]]:
+    frequency_values = ", ".join(
+        f"('{code}', '{label}', {sort_order})"
+        for code, label, sort_order in PURCHASE_FREQUENCY_DEFINITIONS
+    )
+    rows = _rows(
+        db,
+        f"""
+        WITH member_lines AS MATERIALIZED (
+          SELECT
+            NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no,
+            s.sglbillno AS billno,
+            COALESCE(s.sglxssr, 0)::numeric AS sales_revenue,
+            COALESCE(s.sglsl, 0)::numeric AS sales_quantity
+          FROM salegoodslist s
+          JOIN salehead h
+            ON h.billno = s.sglbillno
+           AND h.mkt::text = s.sglmarket::text
+          WHERE s.sglmarket::text = :store_code
+            AND s.sglmfid = :target_group_code
+            AND s.sglhsrq BETWEEN :start_date AND :end_date
+            AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        ),
+        period_members AS MATERIALIZED (
+          SELECT
+            member_no,
+            SUM(sales_revenue) AS sales_revenue,
+            SUM(sales_quantity) AS sales_quantity,
+            COUNT(DISTINCT billno) AS ticket_count,
+            BOOL_OR(sales_revenue > 0) AS has_positive_purchase
+          FROM member_lines
+          GROUP BY member_no
+        ),
+        purchase_members AS MATERIALIZED (
+          SELECT
+            member_no,
+            sales_revenue,
+            sales_quantity,
+            ticket_count,
+            CASE WHEN ticket_count = 1 THEN 'single_purchase' ELSE 'repeat_purchase' END AS frequency_code
+          FROM period_members
+          WHERE has_positive_purchase IS TRUE
+        ),
+        frequency_totals AS (
+          SELECT
+            frequency_code AS code,
+            COUNT(*) AS buyer_count,
+            COALESCE(SUM(sales_revenue), 0) AS sales_revenue,
+            COALESCE(SUM(sales_quantity), 0) AS sales_quantity,
+            COALESCE(SUM(ticket_count), 0) AS ticket_count
+          FROM purchase_members
+          GROUP BY frequency_code
+        ),
+        all_totals AS (
+          SELECT
+            COALESCE(SUM(buyer_count), 0) AS buyer_count,
+            COALESCE(SUM(sales_revenue), 0) AS sales_revenue
+          FROM frequency_totals
+        ),
+        frequency_defs(code, label, sort_order) AS (VALUES {frequency_values})
+        SELECT
+          defs.code,
+          defs.label,
+          COALESCE(totals.buyer_count, 0) AS buyer_count,
+          COALESCE(totals.sales_revenue, 0) AS sales_revenue,
+          COALESCE(totals.sales_quantity, 0) AS sales_quantity,
+          COALESCE(totals.ticket_count, 0) AS ticket_count,
+          CASE
+            WHEN all_totals.buyer_count = 0 THEN NULL
+            ELSE COALESCE(totals.buyer_count, 0)::numeric / all_totals.buyer_count
+          END AS buyer_share,
+          CASE
+            WHEN all_totals.sales_revenue = 0 THEN NULL
+            ELSE COALESCE(totals.sales_revenue, 0) / all_totals.sales_revenue
+          END AS sales_share,
+          CASE
+            WHEN COALESCE(totals.buyer_count, 0) = 0 THEN 0
+            ELSE COALESCE(totals.sales_revenue, 0) / totals.buyer_count
+          END AS spend_per_buyer,
+          CASE
+            WHEN COALESCE(totals.buyer_count, 0) = 0 THEN 0
+            ELSE COALESCE(totals.ticket_count, 0)::numeric / totals.buyer_count
+          END AS purchase_frequency,
+          CASE
+            WHEN COALESCE(totals.ticket_count, 0) = 0 THEN 0
+            ELSE COALESCE(totals.sales_revenue, 0) / totals.ticket_count
+          END AS average_ticket_value,
+          CASE
+            WHEN COALESCE(totals.ticket_count, 0) = 0 THEN 0
+            ELSE COALESCE(totals.sales_quantity, 0) / totals.ticket_count
+          END AS items_per_ticket,
+          CASE
+            WHEN COALESCE(totals.sales_quantity, 0) = 0 THEN 0
+            ELSE COALESCE(totals.sales_revenue, 0) / totals.sales_quantity
+          END AS average_item_price
+        FROM frequency_defs defs
+        CROSS JOIN all_totals
+        LEFT JOIN frequency_totals totals ON totals.code = defs.code
+        ORDER BY defs.sort_order
+        """,
+        params,
+    )
+    for row in rows:
+        row["buyer_count"] = int(float(row.get("buyer_count") or 0))
+        row["ticket_count"] = int(float(row.get("ticket_count") or 0))
+    return rows
+
+
 def _load_period(
     db: Session,
     *,
@@ -643,6 +782,9 @@ def _load_period(
         "refund_only_member_sales_revenue": 0,
         "spend_per_buyer": 0,
         "purchase_frequency": 0,
+        "member_sales_quantity": 0,
+        "items_per_ticket": 0,
+        "average_item_price": 0,
     }
     segments: list[dict[str, Any]] = []
     if rows:
@@ -673,11 +815,25 @@ def _load_period(
         float(funnel.get("target_repurchase_count") or 0),
         float(funnel.get("historical_target_member_count") or 0),
     ) or 0
+    purchase_frequency_analysis = _load_purchase_frequency_analysis(db, params)
+    member_sales_quantity = sum(
+        float(row.get("sales_quantity") or 0) for row in purchase_frequency_analysis
+    )
+    summary["member_sales_quantity"] = member_sales_quantity
+    summary["items_per_ticket"] = _rate(
+        member_sales_quantity,
+        float(summary.get("member_ticket_count") or 0),
+    ) or 0
+    summary["average_item_price"] = _rate(
+        float(summary.get("member_sales_revenue") or 0),
+        member_sales_quantity,
+    ) or 0
     return {
         "period": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "summary": summary,
         "segments": segments,
         "member_level_consumption": _load_member_level_consumption(db, params),
+        "purchase_frequency_analysis": purchase_frequency_analysis,
         "old_customer_funnel": funnel,
         "inflow_sources": _load_inflow_sources(db, params),
     }
@@ -687,18 +843,21 @@ def _load_department_rank(db: Session, params: dict[str, Any]) -> dict[str, Any]
     row = _row(
         db,
         """
-        WITH group_sales AS (
+        WITH department_groups AS MATERIALIZED (
+          SELECT TRIM(BOTH FROM mfcode) AS group_code
+          FROM manaframe
+          WHERE TRIM(BOTH FROM mfpcode) = :target_department_code
+        ),
+        group_sales AS (
           SELECT
-            UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))) AS group_code,
+            s.sglmfid AS group_code,
             SUM(COALESCE(s.sglxssr, 0)) AS sales_revenue
-          FROM salegoodslist s
-          JOIN manaframe mf
-            ON UPPER(TRIM(BOTH FROM COALESCE(mf.mfcode, '')))
-               = UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, '')))
-          WHERE TRIM(BOTH FROM COALESCE(s.sglmarket::text, '')) = :store_code
-            AND UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) = :target_department_code
+          FROM department_groups groups
+          JOIN salegoodslist s
+            ON s.sglmfid = groups.group_code
+          WHERE s.sglmarket = :store_code
             AND s.sglhsrq BETWEEN :start_date AND :end_date
-          GROUP BY UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, '')))
+          GROUP BY s.sglmfid
         ),
         ranked AS (
           SELECT
@@ -1054,5 +1213,8 @@ def load_brand_member_analysis(
             "internal_inflow": "内部流入包含同部门流入和跨部门流入",
             "member_level": "会员等级取交易小票 salehead.custtype：01银星、02金星、03黑金、04黑钻，其他非空会员归为未标识会员；按等级内会员去重，期间等级变化的会员可能出现在多个等级",
             "member_level_average_ticket_value": "会员等级客单按该等级会员销售收入净额除以会员交易小票数计算",
+            "purchase_frequency_segments": "一次客为期间内1张会员交易小票，多次客为期间内2张及以上会员交易小票",
+            "items_per_ticket": "客件数按会员净销售件数 salegoodslist.sglsl 除以会员交易小票数计算，退货数量按负数冲减",
+            "average_item_price": "件单价按会员销售收入净额除以会员净销售件数计算",
         },
     }

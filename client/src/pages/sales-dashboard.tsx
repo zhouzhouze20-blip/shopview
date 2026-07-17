@@ -29,6 +29,7 @@ import {
 } from "@/lib/export-sales-excel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { getSalesDashboardData, isSalesDashboardTimeoutError } from "@/lib/sales-dashboard-request";
 
 type StoreSummary = {
   store_id: string;
@@ -307,6 +308,13 @@ function TableStatusRow(props: { colSpan: number; loading: boolean; emptyText: s
   );
 }
 
+function salesDataStatusText(error: unknown, emptyText: string): string {
+  if (!error) return emptyText;
+  return isSalesDashboardTimeoutError(error)
+    ? "数据请求超时，本次汇总按 0 显示。可缩短日期范围后重试。"
+    : "数据加载失败，本次汇总按 0 显示。请稍后重试。";
+}
+
 function SummaryMetricCard(props: { title: string; value: string; loading: boolean }) {
   return (
     <Card>
@@ -524,17 +532,18 @@ export default function SalesDashboardPage() {
 
   const storesQuery = useQuery<StoreSummary[]>({
     queryKey: ["/api/sales/summary/stores", commonParams],
-    queryFn: () => apiGet(`/api/sales/summary/stores${buildQuery(commonParams)}`),
+    queryFn: () => getSalesDashboardData(`/api/sales/summary/stores${buildQuery(commonParams)}`, apiGet),
   });
 
   const departmentsQuery = useQuery<DepartmentSummary[]>({
     queryKey: ["/api/sales/summary/departments", commonParams, selectedStore?.store_id],
     queryFn: () =>
-      apiGet(
+      getSalesDashboardData(
         `/api/sales/summary/departments${buildQuery({
           ...commonParams,
           store_id: selectedStore?.store_id,
         })}`,
+        apiGet,
       ),
     enabled: activeTab === "departments" || activeTab === "groups" || activeTab === "department-products" || activeTab === "tickets",
   });
@@ -552,7 +561,7 @@ export default function SalesDashboardPage() {
       keyword,
     ],
     queryFn: () =>
-      apiGet(
+      getSalesDashboardData(
         `/api/sales/summary/groups${buildQuery({
           ...commonParams,
           store_id: selectedStore?.store_id,
@@ -560,6 +569,7 @@ export default function SalesDashboardPage() {
           unassigned_department: groupsUnassigned ? true : undefined,
           keyword,
         })}`,
+        apiGet,
       ),
     enabled: activeTab === "groups" || activeTab === "tickets" || (activeTab === "department-products" && departmentProductView === "groups"),
   });
@@ -576,7 +586,7 @@ export default function SalesDashboardPage() {
       departmentProductSupplierCode,
     ],
     queryFn: () =>
-      apiGet(
+      getSalesDashboardData(
         `/api/sales/summary/department-goods${buildQuery({
           ...commonParams,
           store_id: selectedStore?.store_id,
@@ -587,6 +597,7 @@ export default function SalesDashboardPage() {
           keyword: departmentProductKeyword,
           limit: 500,
         })}`,
+        apiGet,
       ),
     enabled: activeTab === "department-products" && departmentProductView === "goods" && Boolean(selectedDepartment),
   });
@@ -601,7 +612,7 @@ export default function SalesDashboardPage() {
       departmentProductKeyword,
     ],
     queryFn: () =>
-      apiGet(
+      getSalesDashboardData(
         `/api/sales/summary/department-suppliers${buildQuery({
           ...commonParams,
           store_id: selectedStore?.store_id,
@@ -610,6 +621,7 @@ export default function SalesDashboardPage() {
           keyword: departmentProductKeyword,
           limit: 300,
         })}`,
+        apiGet,
       ),
     enabled: activeTab === "department-products" && departmentProductView === "suppliers" && Boolean(selectedDepartment),
   });
@@ -628,11 +640,12 @@ export default function SalesDashboardPage() {
       selectedProductTicketParams,
     ],
     queryFn: () =>
-      apiGet(
+      getSalesDashboardData(
         `/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets${buildQuery({
           ...ticketsQueryParams,
           ...selectedProductTicketParams,
         })}`,
+        apiGet,
       ),
     enabled: Boolean(selectedGroup?.group_code),
   });
@@ -677,10 +690,25 @@ export default function SalesDashboardPage() {
     (activeTab === "department-products" &&
       (departmentProductView === "goods" ? departmentGoodsInitialLoading : departmentSuppliersInitialLoading)) ||
     (activeTab === "tickets" && ticketsInitialLoading);
+  const activeDataError =
+    activeTab === "stores"
+      ? storesQuery.error
+      : activeTab === "departments"
+        ? departmentsQuery.error
+        : activeTab === "groups"
+          ? groupsQuery.error
+          : activeTab === "department-products"
+            ? departmentProductView === "goods"
+              ? departmentGoodsQuery.error
+              : departmentSuppliersQuery.error
+            : activeTab === "tickets"
+              ? ticketsQuery.error
+              : null;
 
   /** 与当前 Tab、日期及下钻一致：各 Tab 对应当前列表数据；门店 Tab 且在面包屑中选中了门店时只统计该门店一行 */
   const totals = useMemo(() => {
     const empty = { sales: 0, profit: 0, tickets: 0, groups: 0 };
+    if (activeDataError) return empty;
     if (activeTab === "tickets") {
       const rows = ticketsQuery.data ?? [];
       return rows.reduce(
@@ -755,6 +783,7 @@ export default function SalesDashboardPage() {
     );
   }, [
     activeTab,
+    activeDataError,
     departmentProductView,
     selectedStore,
     storesQuery.data,
@@ -1341,6 +1370,12 @@ export default function SalesDashboardPage() {
         <SummaryMetricCard title="柜组数" value={number(totals.groups)} loading={activeDataInitialLoading} />
       </div>
 
+      {activeDataError && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="alert">
+          {salesDataStatusText(activeDataError, "")}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
         <button className="font-medium text-slate-900 hover:text-blue-700" onClick={resetDrilldown}>
           门店
@@ -1419,11 +1454,11 @@ export default function SalesDashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {storesInitialLoading || (storesQuery.data ?? []).length === 0 ? (
+                  {storesInitialLoading || storesQuery.isError || (storesQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
                       colSpan={9}
                       loading={storesInitialLoading}
-                      emptyText="当前日期和权限范围内暂无门店销售数据。"
+                      emptyText={salesDataStatusText(storesQuery.error, "当前日期和权限范围内暂无门店销售数据。")}
                     />
                   ) : (
                     (storesQuery.data ?? []).map((row) => (
@@ -1444,7 +1479,7 @@ export default function SalesDashboardPage() {
                     ))
                   )}
                 </TableBody>
-                {(storesQuery.data ?? []).length > 0 && (
+                {!storesQuery.isError && (storesQuery.data ?? []).length > 0 && (
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold">合计</TableCell>
@@ -1503,11 +1538,11 @@ export default function SalesDashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {departmentsInitialLoading || (departmentsQuery.data ?? []).length === 0 ? (
+                  {departmentsInitialLoading || departmentsQuery.isError || (departmentsQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
                       colSpan={9}
                       loading={departmentsInitialLoading}
-                      emptyText="当前日期和权限范围内暂无部门销售数据。"
+                      emptyText={salesDataStatusText(departmentsQuery.error, "当前日期和权限范围内暂无部门销售数据。")}
                     />
                   ) : (
                     (departmentsQuery.data ?? []).map((row) => (
@@ -1528,7 +1563,7 @@ export default function SalesDashboardPage() {
                     ))
                   )}
                 </TableBody>
-                {(departmentsQuery.data ?? []).length > 0 && (
+                {!departmentsQuery.isError && (departmentsQuery.data ?? []).length > 0 && (
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold">合计</TableCell>
@@ -1649,11 +1684,11 @@ export default function SalesDashboardPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {departmentSuppliersInitialLoading || (departmentSuppliersQuery.data ?? []).length === 0 ? (
+                    {departmentSuppliersInitialLoading || departmentSuppliersQuery.isError || (departmentSuppliersQuery.data ?? []).length === 0 ? (
                       <TableStatusRow
                         colSpan={12}
                         loading={departmentSuppliersInitialLoading}
-                        emptyText="当前筛选条件下暂无供应商汇总数据。"
+                        emptyText={salesDataStatusText(departmentSuppliersQuery.error, "当前筛选条件下暂无供应商汇总数据。")}
                       />
                     ) : (
                       (departmentSuppliersQuery.data ?? []).map((row) => (
@@ -1684,7 +1719,7 @@ export default function SalesDashboardPage() {
                       ))
                     )}
                   </TableBody>
-                  {(departmentSuppliersQuery.data ?? []).length > 0 && (
+                  {!departmentSuppliersQuery.isError && (departmentSuppliersQuery.data ?? []).length > 0 && (
                     <TableFooter>
                       <TableRow className="hover:bg-muted/50">
                         <TableCell className="py-2 font-semibold">合计</TableCell>
@@ -1724,11 +1759,11 @@ export default function SalesDashboardPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {departmentGoodsInitialLoading || (departmentGoodsQuery.data ?? []).length === 0 ? (
+                    {departmentGoodsInitialLoading || departmentGoodsQuery.isError || (departmentGoodsQuery.data ?? []).length === 0 ? (
                       <TableStatusRow
                         colSpan={14}
                         loading={departmentGoodsInitialLoading}
-                        emptyText="当前筛选条件下暂无商品销售明细。"
+                        emptyText={salesDataStatusText(departmentGoodsQuery.error, "当前筛选条件下暂无商品销售明细。")}
                       />
                     ) : (
                       (departmentGoodsQuery.data ?? []).map((row) => (
@@ -1767,7 +1802,7 @@ export default function SalesDashboardPage() {
                       ))
                     )}
                   </TableBody>
-                  {(departmentGoodsQuery.data ?? []).length > 0 && (
+                  {!departmentGoodsQuery.isError && (departmentGoodsQuery.data ?? []).length > 0 && (
                     <TableFooter>
                       <TableRow className="hover:bg-muted/50">
                         <TableCell className="py-2 font-semibold" colSpan={5}>合计</TableCell>
@@ -1850,11 +1885,11 @@ export default function SalesDashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {groupsInitialLoading || (groupsQuery.data ?? []).length === 0 ? (
+                  {groupsInitialLoading || groupsQuery.isError || (groupsQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
                       colSpan={showPricedSalesAmount ? 10 : 9}
                       loading={groupsInitialLoading}
-                      emptyText="当前筛选条件下暂无柜组销售数据。"
+                      emptyText={salesDataStatusText(groupsQuery.error, "当前筛选条件下暂无柜组销售数据。")}
                     />
                   ) : (
                     (groupsQuery.data ?? []).map((row) => (
@@ -1890,7 +1925,7 @@ export default function SalesDashboardPage() {
                     ))
                   )}
                 </TableBody>
-                {(groupsQuery.data ?? []).length > 0 && (
+                {!groupsQuery.isError && (groupsQuery.data ?? []).length > 0 && (
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold">合计</TableCell>
@@ -1986,15 +2021,16 @@ export default function SalesDashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {ticketsInitialLoading || (ticketsQuery.data ?? []).length === 0 ? (
+                  {ticketsInitialLoading || ticketsQuery.isError || (ticketsQuery.data ?? []).length === 0 ? (
                     <TableStatusRow
                       colSpan={showPricedSalesAmount ? 14 : 13}
                       loading={ticketsInitialLoading}
-                      emptyText={
+                      emptyText={salesDataStatusText(
+                        ticketsQuery.error,
                         selectedGroup
                           ? `${ticketsViewMode === "prior" ? "同期" : "本期"}区间暂无小票数据。`
-                          : "请先选择柜组查看小票。"
-                      }
+                          : "请先选择柜组查看小票。",
+                      )}
                     />
                   ) : (
                     (ticketsQuery.data ?? []).map((row) => (
@@ -2023,7 +2059,7 @@ export default function SalesDashboardPage() {
                     ))
                   )}
                 </TableBody>
-                {(ticketsQuery.data ?? []).length > 0 && (
+                {!ticketsQuery.isError && (ticketsQuery.data ?? []).length > 0 && (
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold" colSpan={5}>

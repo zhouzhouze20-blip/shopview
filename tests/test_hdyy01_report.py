@@ -13,7 +13,7 @@ from python_app.services.hdyy01_report import (
     load_hdyy01_report,
     normalize_row,
 )
-from python_app.services.od0002_report import EXCLUDED_DEPARTMENT_CODES
+from python_app.services.od0002_report import EXCLUDED_DEPARTMENT_CODES, FLOOR_NAMES
 
 
 START = date(2026, 7, 1)
@@ -291,6 +291,7 @@ def report_row(**overrides):
         "group_name": "A柜组",
         "area": Decimal("10.5"),
         "floor_code": "02",
+        "floor_name": "1F",
         "level1_code": "10",
         "level1_name": "服装",
         "level2_code": "1001",
@@ -307,6 +308,23 @@ def report_row(**overrides):
     }
     row.update(overrides)
     return row
+
+
+def test_query_reuses_od0002_floor_mapping_and_payload_preserves_floor_name():
+    sql, _ = build_report_query(START, END, TrustedScopeSql(""), {})
+    compact = compact_sql(sql)
+
+    assert "case nullif(trim(both from mf.mflc), '')" in compact
+    for code, name in FLOOR_NAMES.items():
+        assert f"when '{code.lower()}' then '{name.lower()}'" in compact
+    assert "end as floor_name" in compact
+
+    normalized = normalize_row(report_row(floor_code="02", floor_name="1F"))
+    assert normalized["floor_code"] == "02"
+    assert normalized["floor_name"] == "1F"
+
+    unmatched = normalize_row(report_row(floor_code=None, floor_name=None))
+    assert unmatched["floor_name"] == "未匹配"
 
 
 def test_query_keeps_signed_returns_and_counts_only_positive_net_tickets():

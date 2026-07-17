@@ -18,6 +18,9 @@ const period = (start, end) => ({
     refund_only_member_sales_revenue: 0,
     spend_per_buyer: 4000,
     purchase_frequency: 1.25,
+    member_sales_quantity: 50,
+    items_per_ticket: 2,
+    average_item_price: 1600,
     department_rank: 3,
     department_group_count: 20,
     old_customer_repurchase_rate: 0.2,
@@ -34,6 +37,10 @@ const period = (start, end) => ({
     { level_code: "03", level_label: "黑金会员", buyer_count: 5, sales_revenue: 22000, ticket_count: 7, buyer_share: 0.25, sales_share: 0.275, spend_per_buyer: 4400, purchase_frequency: 1.4, average_ticket_value: 3142.857 },
     { level_code: "04", level_label: "黑钻会员", buyer_count: 4, sales_revenue: 20000, ticket_count: 5, buyer_share: 0.2, sales_share: 0.25, spend_per_buyer: 5000, purchase_frequency: 1.25, average_ticket_value: 4000 },
     { level_code: "UNIDENTIFIED", level_label: "未标识会员", buyer_count: 2, sales_revenue: 8000, ticket_count: 2, buyer_share: 0.1, sales_share: 0.1, spend_per_buyer: 4000, purchase_frequency: 1, average_ticket_value: 4000 },
+  ],
+  purchase_frequency_analysis: [
+    { code: "single_purchase", label: "一次客", buyer_count: 15, buyer_share: 0.75, sales_revenue: 50000, sales_share: 0.625, ticket_count: 15, sales_quantity: 27, spend_per_buyer: 3333.33, purchase_frequency: 1, average_ticket_value: 3333.33, items_per_ticket: 1.8, average_item_price: 1851.85 },
+    { code: "repeat_purchase", label: "多次客", buyer_count: 5, buyer_share: 0.25, sales_revenue: 30000, sales_share: 0.375, ticket_count: 10, sales_quantity: 23, spend_per_buyer: 6000, purchase_frequency: 2, average_ticket_value: 3000, items_per_ticket: 2.3, average_item_price: 1304.35 },
   ],
   old_customer_funnel: { historical_target_member_count: 100, store_visit_count: 40, department_visit_count: 25, target_repurchase_count: 10 },
   inflow_sources: [{ segment_code: "same_department_inflow", group_code: "G2", group_name: "来源柜组", department_name: "目标部门", buyer_count: 5, historical_sales: 120000 }],
@@ -64,7 +71,7 @@ const report = {
 test("supplier workbook has send-ready sections and styles", () => {
   const workbook = buildSupplierWorkbook(report, "常州购物中心", "销售收入与购买会员数均较同期增长。");
 
-  assert.deepEqual(workbook.SheetNames, ["经营摘要", "会员结构", "老客经营", "流入来源", "数据口径"]);
+  assert.deepEqual(workbook.SheetNames, ["经营摘要", "会员结构", "频次客件", "老客经营", "流入来源", "数据口径"]);
   const overview = workbook.Sheets["经营摘要"];
   assert.equal(overview.A1.v, "品牌会员经营沟通简报");
   assert.equal(overview.A10.v, "销售收入与购买会员数均较同期增长。");
@@ -75,7 +82,7 @@ test("supplier workbook has send-ready sections and styles", () => {
   assert.equal(overview.E14.z, "0.0%");
   assert.equal(overview.D19.v, "持平");
   assert.ok(overview["!merges"].length >= 10);
-  assert.equal(workbook.Sheets["数据口径"].A12.v.includes("不包含会员姓名"), true);
+  assert.equal(workbook.Sheets["数据口径"].A14.v.includes("不包含会员姓名"), true);
   assert.equal(workbook.Sheets["会员结构"].A17.v, "会员等级消费分析");
   assert.equal(workbook.Sheets["会员结构"].A19.v, "银星会员");
   assert.equal(workbook.Sheets["会员结构"].D19.z, "#,##0;[Red]-#,##0");
@@ -85,4 +92,9 @@ test("supplier workbook has send-ready sections and styles", () => {
   assert.equal(workbook.Sheets["会员结构"].O18.v, "同期客单（元）");
   assert.equal(workbook.Sheets["会员结构"].O19.v, 2400);
   assert.equal(workbook.Sheets["会员结构"].O19.z, "#,##0;[Red]-#,##0");
+  assert.equal(workbook.Sheets["频次客件"].A6.v, "一次客");
+  assert.equal(workbook.Sheets["频次客件"].K6.v, 1.8);
+  assert.equal(workbook.Sheets["频次客件"].P6.v, 1.8);
+  assert.equal(workbook.Sheets["频次客件"].K6.z, "0.00");
+  assert.equal(workbook.Sheets["数据口径"].A10.v, "一次客 / 多次客");
 });

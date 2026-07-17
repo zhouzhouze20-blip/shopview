@@ -23,12 +23,7 @@ DETAIL_COLUMNS = (
     ("柜组编码", "group_code", "text"),
     ("柜组名称", "group_name", "text"),
     ("面积", "area", "decimal"),
-    ("楼层", "floor_code", "text"),
-    ("一级编码", "level1_code", "classification"),
-    ("一级名称", "level1_name", "classification"),
-    ("二级编码", "level2_code", "classification"),
-    ("二级名称", "level2_name", "classification"),
-    ("等级", "grade_label", "classification"),
+    ("楼层", "floor_name", "text"),
     ("数量", "quantity", "quantity"),
     ("销售收入", "sales_amount", "money"),
     ("含税销售成本", "tax_cost", "money"),
@@ -111,7 +106,7 @@ def _write_detail_sheet(sheet, report: dict[str, Any]) -> None:
     sheet.auto_filter.ref = f"A4:{final_column}{last_data_row}"
     sheet.row_dimensions[1].height = 26
     sheet.row_dimensions[4].height = 28
-    widths = (18, 20, 15, 22, 12, 10, 13, 16, 13, 16, 10, 13, 15, 15, 15, 13, 15, 15, 16)
+    widths = (18, 20, 15, 22, 12, 10, 13, 15, 15, 15, 13, 15, 15, 16)
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(index)].width = width
 

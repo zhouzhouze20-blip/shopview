@@ -76,12 +76,7 @@ const HDYY01_COLUMNS: readonly Hdyy01Column[] = [
   { label: "柜组编码", className: "min-w-28", render: (row) => textCell(row.group_code) },
   { label: "柜组名称", className: "min-w-36", render: (row) => textCell(row.group_name) },
   { label: "面积", className: "min-w-24 text-right", render: (row) => formatHdyy01Area(row.area) },
-  { label: "楼层", className: "min-w-20", render: (row) => textCell(row.floor_code) },
-  { label: "一级编码", className: "min-w-24", render: (row) => textCell(row.level1_code) },
-  { label: "一级名称", className: "min-w-28", render: (row) => textCell(row.level1_name) },
-  { label: "二级编码", className: "min-w-24", render: (row) => textCell(row.level2_code) },
-  { label: "二级名称", className: "min-w-28", render: (row) => textCell(row.level2_name) },
-  { label: "等级", className: "min-w-20", render: (row) => textCell(row.grade_label) },
+  { label: "楼层", className: "min-w-20", render: (row) => textCell(row.floor_name) },
   { label: "数量", className: "min-w-24 text-right", render: (row) => formatHdyy01Quantity(row.quantity) },
   { label: "销售收入", className: "min-w-28 text-right", render: (row) => formatHdyy01Money(row.sales_amount) },
   { label: "含税销售成本", className: "min-w-32 text-right", render: (row) => formatHdyy01Money(row.tax_cost) },
@@ -350,7 +345,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
             )
           ) : (
             <div className="max-h-[65vh] overflow-x-auto overflow-y-auto rounded-md border">
-              <Table className="min-w-[2200px]">
+              <Table className="min-w-[1600px]">
                 <TableHeader className="sticky top-0 z-20 bg-white">
                   <TableRow>
                     {HDYY01_COLUMNS.map((column) => (
@@ -376,7 +371,7 @@ export default function Hdyy01GroupOperationAnalysisPage() {
                   <TableFooter>
                     <TableRow>
                       <TableCell className="py-2 font-medium">合计</TableCell>
-                      {Array.from({ length: 10 }, (_, index) => <TableCell key={index} />)}
+                      {Array.from({ length: 5 }, (_, index) => <TableCell key={index} />)}
                       <TableCell className="py-2 text-right tabular-nums">{formatHdyy01Quantity(reportQuery.data.total.quantity)}</TableCell>
                       <TableCell className="py-2 text-right tabular-nums">{formatHdyy01Money(reportQuery.data.total.sales_amount)}</TableCell>
                       <TableCell className="py-2 text-right tabular-nums">{formatHdyy01Money(reportQuery.data.total.tax_cost)}</TableCell>
