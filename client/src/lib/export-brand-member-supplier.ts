@@ -298,7 +298,7 @@ function createMemberStructureSheet(report: BrandMemberReport) {
     ["外部招新", "分析期开始前没有门店正向购买记录的会员"],
     [],
     ["会员等级消费分析"],
-    ["会员等级", "本期购买会员", "人数占比", "本期销售收入（元）", "销售占比", "会员人均消费（元）", "消费频次", "同期销售收入（元）"],
+    ["会员等级", "本期购买会员", "本期人数占比", "本期销售收入（元）", "本期销售占比", "本期会员人均消费（元）", "本期消费频次", "本期客单（元）", "同期购买会员", "同期人数占比", "同期销售收入（元）", "同期销售占比", "同期会员人均消费（元）", "同期消费频次", "同期客单（元）"],
     ...current.member_level_consumption.map((row) => {
       const priorRow = prior.member_level_consumption.find((item) => item.level_code === row.level_code);
       return [
@@ -309,25 +309,32 @@ function createMemberStructureSheet(report: BrandMemberReport) {
         row.sales_share,
         roundMoney(row.spend_per_buyer),
         roundDecimal(row.purchase_frequency),
+        roundMoney(row.average_ticket_value),
+        priorRow?.buyer_count ?? 0,
+        priorRow?.buyer_share ?? null,
         roundMoney(priorRow?.sales_revenue ?? 0),
+        priorRow?.sales_share ?? null,
+        roundMoney(priorRow?.spend_per_buyer ?? 0),
+        roundDecimal(priorRow?.purchase_frequency ?? 0),
+        roundMoney(priorRow?.average_ticket_value ?? 0),
       ];
     }),
-    ["说明：会员等级取交易小票 salehead.custtype，按等级内会员去重；期间等级变化的会员可能出现在多个等级。"],
+    ["说明：会员等级取交易小票 salehead.custtype，按等级内会员去重；期间等级变化的会员可能出现在多个等级。客单＝销售收入净额÷会员交易小票数。"],
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  applyBase(sheet, `A1:H${rows.length}`);
-  applyTitle(sheet, "H", "会员客群结构", `${report.target.group_name}｜本期与同期客群构成对比`);
+  applyBase(sheet, `A1:O${rows.length}`);
+  applyTitle(sheet, "O", "会员客群结构", `${report.target.group_name}｜本期与同期客群构成对比`);
   applyTable(sheet, 5, 9, "H");
-  styleRange(sheet, "A11:H11", sectionStyle);
-  merge(sheet, "A11:H11");
+  styleRange(sheet, "A11:O11", sectionStyle);
+  merge(sheet, "A11:O11");
   for (let row = 12; row <= 15; row += 1) {
-    merge(sheet, `B${row}:H${row}`);
-    styleRange(sheet, `A${row}:H${row}`, { border: thinBottom, alignment: { wrapText: true, vertical: "center" } });
+    merge(sheet, `B${row}:O${row}`);
+    styleRange(sheet, `A${row}:O${row}`, { border: thinBottom, alignment: { wrapText: true, vertical: "center" } });
     styleRange(sheet, `A${row}`, { font: { name: FONT_NAME, bold: true, color: { rgb: COLORS.tealDark } } });
   }
-  styleRange(sheet, "A17:H17", sectionStyle);
-  merge(sheet, "A17:H17");
-  applyTable(sheet, 18, 23, "H");
+  styleRange(sheet, "A17:O17", sectionStyle);
+  merge(sheet, "A17:O17");
+  applyTable(sheet, 18, 23, "O");
   setNumberFormat(sheet, "B6:B9", COUNT_FORMAT);
   setNumberFormat(sheet, "C6:C9", PERCENT_FORMAT);
   setNumberFormat(sheet, "D6:D9", MONEY_FORMAT);
@@ -342,9 +349,19 @@ function createMemberStructureSheet(report: BrandMemberReport) {
   setNumberFormat(sheet, "F19:F23", MONEY_FORMAT);
   setNumberFormat(sheet, "G19:G23", "0.00");
   setNumberFormat(sheet, "H19:H23", MONEY_FORMAT);
-  merge(sheet, "A24:H24");
-  styleRange(sheet, "A24:H24", { font: { name: FONT_NAME, sz: 9, italic: true, color: { rgb: COLORS.muted } }, alignment: { wrapText: true, vertical: "center" } });
-  sheet["!cols"] = [{ wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }];
+  setNumberFormat(sheet, "I19:I23", COUNT_FORMAT);
+  setNumberFormat(sheet, "J19:J23", PERCENT_FORMAT);
+  setNumberFormat(sheet, "K19:K23", MONEY_FORMAT);
+  setNumberFormat(sheet, "L19:L23", PERCENT_FORMAT);
+  setNumberFormat(sheet, "M19:M23", MONEY_FORMAT);
+  setNumberFormat(sheet, "N19:N23", "0.00");
+  setNumberFormat(sheet, "O19:O23", MONEY_FORMAT);
+  merge(sheet, "A24:O24");
+  styleRange(sheet, "A24:O24", { font: { name: FONT_NAME, sz: 9, italic: true, color: { rgb: COLORS.muted } }, alignment: { wrapText: true, vertical: "center" } });
+  sheet["!cols"] = [
+    { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 16 },
+    { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 16 },
+  ];
   return sheet;
 }
 

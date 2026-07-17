@@ -320,29 +320,26 @@ def list_group_options(db: Session, store_code: str) -> list[dict[str, Any]]:
     return _rows(
         db,
         """
-        WITH sold_groups AS MATERIALIZED (
-          SELECT DISTINCT UPPER(TRIM(BOTH FROM COALESCE(sglmfid, ''))) AS group_code
-          FROM salegoodslist
-          WHERE TRIM(BOTH FROM COALESCE(sglmarket::text, '')) = :store_code
-            AND NULLIF(TRIM(BOTH FROM COALESCE(sglmfid, '')), '') IS NOT NULL
-        )
         SELECT
-          sold.group_code,
-          COALESCE(NULLIF(TRIM(BOTH FROM mf.mfcname), ''), sold.group_code) AS group_name,
+          UPPER(TRIM(BOTH FROM mf.mfcode)) AS group_code,
+          COALESCE(NULLIF(TRIM(BOTH FROM mf.mfcname), ''), TRIM(BOTH FROM mf.mfcode)) AS group_name,
           NULLIF(TRIM(BOTH FROM dept.mfcode), '') AS department_code,
           NULLIF(TRIM(BOTH FROM dept.mfcname), '') AS department_name,
           st.store_id::varchar AS scope_store_id
-        FROM sold_groups sold
-        LEFT JOIN manaframe mf
-          ON UPPER(TRIM(BOTH FROM COALESCE(mf.mfcode, ''))) = sold.group_code
+        FROM manaframe mf
         LEFT JOIN manaframe dept
           ON UPPER(TRIM(BOTH FROM COALESCE(dept.mfcode, '')))
              = UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, '')))
         LEFT JOIN stores st
           ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = :store_code
-        ORDER BY department_name NULLS LAST, group_name, sold.group_code
+        WHERE TRIM(BOTH FROM mf.mfcode) LIKE :store_prefix
+          AND LENGTH(TRIM(BOTH FROM mf.mfcode)) = 10
+        ORDER BY department_name NULLS LAST, group_name, group_code
         """,
-        {"store_code": store_code.strip()},
+        {
+            "store_code": store_code.strip(),
+            "store_prefix": f"{store_code.strip()}%",
+        },
     )
 
 
@@ -527,7 +524,11 @@ def _load_member_level_consumption(db: Session, params: dict[str, Any]) -> list[
           CASE
             WHEN COALESCE(totals.buyer_count, 0) = 0 THEN 0
             ELSE COALESCE(totals.ticket_count, 0)::numeric / totals.buyer_count
-          END AS purchase_frequency
+          END AS purchase_frequency,
+          CASE
+            WHEN COALESCE(totals.ticket_count, 0) = 0 THEN 0
+            ELSE COALESCE(totals.sales_revenue, 0) / totals.ticket_count
+          END AS average_ticket_value
         FROM level_defs defs
         CROSS JOIN all_totals
         LEFT JOIN level_totals totals ON totals.level_code = defs.level_code
@@ -1052,5 +1053,6 @@ def load_brand_member_analysis(
             "history_cutoff": "分别追溯至本期或同期开始日期之前的全部历史",
             "internal_inflow": "内部流入包含同部门流入和跨部门流入",
             "member_level": "会员等级取交易小票 salehead.custtype：01银星、02金星、03黑金、04黑钻，其他非空会员归为未标识会员；按等级内会员去重，期间等级变化的会员可能出现在多个等级",
+            "member_level_average_ticket_value": "会员等级客单按该等级会员销售收入净额除以会员交易小票数计算",
         },
     }

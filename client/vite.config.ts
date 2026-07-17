@@ -1,8 +1,16 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import fs from 'fs'
 
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'
+const versionFile = [
+  path.resolve(__dirname, '../VERSION'),
+  path.resolve(__dirname, 'VERSION'),
+].find((candidate) => fs.existsSync(candidate))
+const appVersion = versionFile
+  ? fs.readFileSync(versionFile, 'utf8').trim()
+  : '1.0.0'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -32,8 +40,7 @@ export default defineConfig({
     assetsDir: 'assets',
     base: '/static/'
   },
-  // 移除硬编码的API URL，让前端根据域名自动判断
-  // define: {
-  //   'import.meta.env.VITE_API_URL': JSON.stringify('http://192.168.98.81:7000')
-  // }
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
+  },
 })

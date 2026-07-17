@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from datetime import datetime
 import uuid
 
+from app_version import APP_VERSION
+
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,7 +57,7 @@ from routers import (
 app = FastAPI(
     title="百货柜位管理系统",
     description="Department Store Counter Management System",
-    version="1.0.0",
+    version=APP_VERSION,
     docs_url="/api/docs",
     redoc_url="/api/redoc"
 )
@@ -378,7 +380,7 @@ async def health_check():
         return {
             "status": "healthy" if db_status == "connected" else "degraded",
             "service": "百货柜位管理系统",
-            "version": "1.0.0",
+            "version": APP_VERSION,
             "database": {
                 "status": db_status,
                 "message": db_message
@@ -389,7 +391,7 @@ async def health_check():
         return {
             "status": "unhealthy",
             "service": "百货柜位管理系统",
-            "version": "1.0.0",
+            "version": APP_VERSION,
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
@@ -526,7 +528,7 @@ async def root():
         return index_html
 
     # 如果所有前端文件都不存在，返回功能完整的HTML页面
-    return """
+    fallback_html = """
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head>
@@ -647,7 +649,7 @@ async def root():
             <div class="grid">
                 <div class="card api-info">
                     <h3>📊 系统状态</h3>
-                    <p><strong>版本:</strong> 1.0.0</p>
+                    <p><strong>版本:</strong> __APP_VERSION__</p>
                     <p><strong>状态:</strong> <span class="status">运行中</span></p>
                     <p><strong>门店:</strong> 常州购物中心, 常州新世纪</p>
                     <p><strong>数据库:</strong> 已连接</p>
@@ -680,6 +682,7 @@ async def root():
     </body>
     </html>
     """
+    return fallback_html.replace("__APP_VERSION__", APP_VERSION)
 
 # 调试接口 - 检查文件结构
 @app.get("/api/debug/files")
@@ -737,7 +740,7 @@ async def api_info():
     """API信息接口"""
     return {
         "message": "百货柜位管理系统 API",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "docs": "/api/docs",
         "debug": "/api/debug/files",
         "stores": ["常州购物中心", "常州新世纪"],

@@ -158,8 +158,17 @@ class SalesTicketFilterTests(unittest.TestCase):
             patch.object(sales_router, "require_permission", lambda *_args, **_kwargs: None),
             patch.object(sales_router, "load_business_scope", lambda *_args, **_kwargs: None),
             patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
-            patch.object(sales_router, "_table_exists", lambda _db, table: table == "order_point"),
-            patch.object(sales_router, "_column_exists", lambda _db, table, column: table == "order_point" and column == "point_type"),
+            patch.object(
+                sales_router,
+                "_table_exists",
+                lambda _db, table: table in {"order_point", "salehead", "salepay"},
+            ),
+            patch.object(
+                sales_router,
+                "_column_exists",
+                lambda _db, table, column: (table, column)
+                in {("order_point", "point_type"), ("salehead", "djlb"), ("salehead", "rqsj")},
+            ),
             patch.object(sales_router, "_fetch_mappings", fake_fetch),
         ):
             asyncio.run(
@@ -177,8 +186,19 @@ class SalesTicketFilterTests(unittest.TestCase):
             )
 
         self.assertIn("s.sglsjje", captured["sql"])
+        self.assertIn("s.sglsyjid as cash_register_no", captured["sql"])
+        self.assertIn("min(cash_register_no) as cash_register_no", captured["sql"])
+        self.assertIn("tr.cash_register_no", captured["sql"])
+        self.assertIn("coalesce(sh.rqsj, tr.sale_datetime) as sale_datetime", captured["sql"])
+        self.assertNotIn("sglchecker", captured["sql"])
         self.assertIn("coalesce(sum(sglsjje), 0) as priced_sales_amount", captured["sql"])
         self.assertIn("tr.priced_sales_amount", captured["sql"])
+        self.assertIn("from salepay p", captured["sql"])
+        self.assertIn("p.paycode::text, '')) = '0500'", captured["sql"])
+        self.assertIn("sum(coalesce(p.je, 0))", captured["sql"])
+        self.assertIn("sh.djlb::text", captured["sql"])
+        self.assertIn("then -abs(coalesce(lp.lq_amount, 0))", captured["sql"])
+        self.assertNotIn("sum(sglgcert)", captured["sql"])
         self.assertIn("'香奈儿活动补发'", captured["sql"])
 
     def test_ticket_detail_falls_back_to_goodsbase_name(self):

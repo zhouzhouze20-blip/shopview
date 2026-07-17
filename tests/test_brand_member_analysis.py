@@ -22,6 +22,7 @@ from services.brand_member_analysis import (
     _load_member_level_consumption,
     build_comparison,
     build_rule_conclusion,
+    list_group_options,
     normalize_ai_conclusion_terms,
     sanitize_ai_snapshot,
     validate_ai_conclusion,
@@ -138,6 +139,33 @@ def test_group_options_apply_target_deny_even_with_all_access():
     assert [item["target_selectable"] for item in options] == [True, False]
 
 
+def test_group_options_load_directly_from_manaframe_without_scanning_sales():
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    db = CaptureDb()
+
+    assert list_group_options(db, "601") == []
+    compact = " ".join(db.sql.split()).lower()
+    assert "from manaframe mf" in compact
+    assert "from salegoodslist" not in compact
+    assert "length(trim(both from mf.mfcode)) = 10" in compact
+    assert db.params == {"store_code": "601", "store_prefix": "601%"}
+
+
 def test_report_target_scope_rejects_an_out_of_scope_group():
     scope = DataScope(allow={"department": {"D1"}})
 
@@ -210,6 +238,9 @@ def test_member_level_consumption_uses_salehead_customer_type_and_standard_level
     assert "ELSE 'UNIDENTIFIED'" in compact
     assert "BOOL_OR(sales_revenue > 0)" in compact
     assert "WHERE has_positive_purchase IS TRUE" in compact
+    assert "END AS average_ticket_value" in compact
+    assert "WHEN COALESCE(totals.ticket_count, 0) = 0 THEN 0" in compact
+    assert "COALESCE(totals.sales_revenue, 0) / totals.ticket_count" in compact
     assert db.params == params
 
 

@@ -59,6 +59,7 @@ export interface BrandMemberLevelConsumption {
   sales_share: number | null;
   spend_per_buyer: number;
   purchase_frequency: number;
+  average_ticket_value: number;
 }
 
 export interface BrandMemberPeriod {

@@ -13,6 +13,9 @@ from sqlalchemy import text
 from services.department_display_order import department_display_sort_key
 
 
+OD0002_QUERY_TIMEOUT_SECONDS = 120
+
+
 EXCLUDED_DEPARTMENT_CODES = frozenset(
     {
         "6010115",
@@ -668,6 +671,10 @@ def load_od0002_report(
         scope_params,
         selected_store,
         selected_department,
+    )
+    db.execute(
+        text(f"SET LOCAL statement_timeout = '{OD0002_QUERY_TIMEOUT_SECONDS}s'"),
+        {},
     )
     rows = db.execute(text(sql), params).mappings().all()
     dimensions, quality = normalize_rows(rows)

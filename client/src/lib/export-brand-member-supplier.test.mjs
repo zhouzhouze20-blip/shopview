@@ -29,11 +29,11 @@ const period = (start, end) => ({
     { code: "external_new", label: "外部招新", buyer_count: 2, sales_revenue: 5000, ticket_count: 3, buyer_share: 0.1, sales_share: 0.0625 },
   ],
   member_level_consumption: [
-    { level_code: "01", level_label: "银星会员", buyer_count: 4, sales_revenue: 12000, ticket_count: 5, buyer_share: 0.2, sales_share: 0.15, spend_per_buyer: 3000, purchase_frequency: 1.25 },
-    { level_code: "02", level_label: "金星会员", buyer_count: 5, sales_revenue: 18000, ticket_count: 6, buyer_share: 0.25, sales_share: 0.225, spend_per_buyer: 3600, purchase_frequency: 1.2 },
-    { level_code: "03", level_label: "黑金会员", buyer_count: 5, sales_revenue: 22000, ticket_count: 7, buyer_share: 0.25, sales_share: 0.275, spend_per_buyer: 4400, purchase_frequency: 1.4 },
-    { level_code: "04", level_label: "黑钻会员", buyer_count: 4, sales_revenue: 20000, ticket_count: 5, buyer_share: 0.2, sales_share: 0.25, spend_per_buyer: 5000, purchase_frequency: 1.25 },
-    { level_code: "UNIDENTIFIED", level_label: "未标识会员", buyer_count: 2, sales_revenue: 8000, ticket_count: 2, buyer_share: 0.1, sales_share: 0.1, spend_per_buyer: 4000, purchase_frequency: 1 },
+    { level_code: "01", level_label: "银星会员", buyer_count: 4, sales_revenue: 12000, ticket_count: 5, buyer_share: 0.2, sales_share: 0.15, spend_per_buyer: 3000, purchase_frequency: 1.25, average_ticket_value: 2400 },
+    { level_code: "02", level_label: "金星会员", buyer_count: 5, sales_revenue: 18000, ticket_count: 6, buyer_share: 0.25, sales_share: 0.225, spend_per_buyer: 3600, purchase_frequency: 1.2, average_ticket_value: 3000 },
+    { level_code: "03", level_label: "黑金会员", buyer_count: 5, sales_revenue: 22000, ticket_count: 7, buyer_share: 0.25, sales_share: 0.275, spend_per_buyer: 4400, purchase_frequency: 1.4, average_ticket_value: 3142.857 },
+    { level_code: "04", level_label: "黑钻会员", buyer_count: 4, sales_revenue: 20000, ticket_count: 5, buyer_share: 0.2, sales_share: 0.25, spend_per_buyer: 5000, purchase_frequency: 1.25, average_ticket_value: 4000 },
+    { level_code: "UNIDENTIFIED", level_label: "未标识会员", buyer_count: 2, sales_revenue: 8000, ticket_count: 2, buyer_share: 0.1, sales_share: 0.1, spend_per_buyer: 4000, purchase_frequency: 1, average_ticket_value: 4000 },
   ],
   old_customer_funnel: { historical_target_member_count: 100, store_visit_count: 40, department_visit_count: 25, target_repurchase_count: 10 },
   inflow_sources: [{ segment_code: "same_department_inflow", group_code: "G2", group_name: "来源柜组", department_name: "目标部门", buyer_count: 5, historical_sales: 120000 }],
@@ -79,4 +79,10 @@ test("supplier workbook has send-ready sections and styles", () => {
   assert.equal(workbook.Sheets["会员结构"].A17.v, "会员等级消费分析");
   assert.equal(workbook.Sheets["会员结构"].A19.v, "银星会员");
   assert.equal(workbook.Sheets["会员结构"].D19.z, "#,##0;[Red]-#,##0");
+  assert.equal(workbook.Sheets["会员结构"].H18.v, "本期客单（元）");
+  assert.equal(workbook.Sheets["会员结构"].H19.v, 2400);
+  assert.equal(workbook.Sheets["会员结构"].I18.v, "同期购买会员");
+  assert.equal(workbook.Sheets["会员结构"].O18.v, "同期客单（元）");
+  assert.equal(workbook.Sheets["会员结构"].O19.v, 2400);
+  assert.equal(workbook.Sheets["会员结构"].O19.z, "#,##0;[Red]-#,##0");
 });

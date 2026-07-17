@@ -14,6 +14,7 @@ COPY client/package*.json ./
 RUN npm ci --include=optional --legacy-peer-deps
 
 COPY client/ ./
+COPY VERSION ./VERSION
 
 RUN npm run build:no-check
 
@@ -58,6 +59,7 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     -r python_requirements.txt
 
 COPY python_app/ ./python_app/
+COPY VERSION ./VERSION
 COPY --from=frontend-builder /app/dist ./static
 COPY static/WW_verify*.txt ./static/
 COPY docker-entrypoint.sh ./docker-entrypoint.sh

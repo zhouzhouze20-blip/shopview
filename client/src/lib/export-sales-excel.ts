@@ -9,6 +9,15 @@ function n(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 
+export function formatTicketSaleDateTime(saleDateTime: unknown, saleDate?: unknown): string {
+  const value = String(saleDateTime ?? saleDate ?? "").trim();
+  if (!value) return "—";
+  const normalized = value.replace("T", " ");
+  const match = normalized.match(/^(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?/);
+  if (!match) return normalized;
+  return match[2] ? `${match[1]} ${match[2]}` : match[1];
+}
+
 /** 毛利率等：比率为 0–1，导出为百分比数值（如 12.34 表示 12.34%） */
 function marginPctDisplay(ratio: unknown): number {
   const r = n(ratio);
@@ -468,8 +477,8 @@ export type TicketSummaryExport = {
   billno: string | number;
   sale_date?: string | null;
   sale_datetime?: string | null;
+  cash_register_no?: string | null;
   invoice_no?: string | number | null;
-  cashier?: string | null;
   quantity: number;
   priced_sales_amount: number;
   effective_sales: number;
@@ -492,8 +501,8 @@ export function buildTicketExportTable(
     "单据号",
     "日期",
     "销售类型",
+    "收银机号",
     "小票号",
-    "收银员",
     "销售收入",
     "毛利",
     "毛利率(%)",
@@ -524,10 +533,10 @@ export function buildTicketExportTable(
     sumBirthdayMonthMemberPoint += n(row.birthday_month_member_point);
     const values: (string | number)[] = [
       row.billno,
-      String(row.sale_datetime || row.sale_date || "").trim() || "—",
+      formatTicketSaleDateTime(row.sale_datetime, row.sale_date),
       String(row.transaction_type || "").trim() || "—",
+      String(row.cash_register_no || "").trim() || "—",
       row.invoice_no != null && `${row.invoice_no}` !== "" ? row.invoice_no : "—",
-      row.cashier || "—",
       n(row.effective_sales),
       n(row.net_profit),
       marginPctDisplay(row.ticket_margin),

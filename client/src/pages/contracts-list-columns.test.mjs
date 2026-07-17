@@ -21,6 +21,14 @@ function tableHeadLabels(headerSource) {
   return Array.from(headerSource.matchAll(/<TableHead[^>]*>([^<]+)<\/TableHead>/g), (match) => match[1].trim());
 }
 
+function unitContractDialogSource() {
+  const titleIndex = source.indexOf("柜位合同 {detail?.unit.unit_code || selectedUnitCode || \"\"}");
+  assert.notEqual(titleIndex, -1, "unit contract dialog title should exist");
+  const dialogEnd = source.indexOf("open={contractDetailOpen}", titleIndex);
+  assert.notEqual(dialogEnd, -1, "unit contract dialog should close before contract detail dialog");
+  return source.slice(titleIndex, dialogEnd);
+}
+
 test("contract list table starts with department contract number date range and counter number", () => {
   const labels = tableHeadLabels(contractListHeaderSource());
 
@@ -48,6 +56,51 @@ test("contract list dates stay on one line and expired contracts are red", () =>
   );
   assert.match(source, /<TableCell className="whitespace-nowrap">\{fmtDate\(item\.cmeffdate\)\}<\/TableCell>/);
   assert.match(source, /<TableCell className="whitespace-nowrap">\{fmtDate\(item\.cmlapdate\)\}<\/TableCell>/);
+});
+
+test("unit contract active card and table follow contract list fields", () => {
+  const dialogSource = unitContractDialogSource();
+  const expectedLabels = [
+    "部门",
+    "合同编号",
+    "开始日期",
+    "结束日期",
+    "供应商",
+    "经营方式",
+    "柜位号",
+    "柜组",
+    "月目标销售额",
+    "付款方式",
+    "是否清算",
+    "结算位置",
+    "录入员",
+  ];
+
+  for (const label of expectedLabels) {
+    assert.match(dialogSource, new RegExp(`>${label}<`));
+  }
+  assert.equal(dialogSource.includes(">主题<"), false);
+  assert.equal(dialogSource.includes(">品牌<"), false);
+  assert.equal(dialogSource.includes(">经营范围有效期<"), false);
+  assert.equal(dialogSource.includes(">面积<"), false);
+  assert.match(dialogSource, /formatOperationMethod\(activeContract\.cmwmid\)/);
+  assert.match(dialogSource, /renderGroupInfo\(item\.department_codes, item\.department_names\)/);
+  assert.match(dialogSource, /renderGroupInfo\(item\.group_codes, item\.group_names\)/);
+});
+
+test("unit contract dialog uses a near full-screen compact layout", () => {
+  const dialogSource = unitContractDialogSource();
+
+  assert.match(
+    source,
+    /<DialogContent className="[^\"]*h-\[94vh\][^\"]*w-\[96vw\][^\"]*max-w-\[96vw\][^\"]*max-h-\[94vh\]/,
+  );
+  assert.match(dialogSource, /xl:grid-cols-7/);
+  assert.match(dialogSource, /<Table className="[^\"]*text-\[11px\][^\"]*xl:text-xs/);
+  assert.match(dialogSource, /\[&_th\]:h-10/);
+  assert.match(dialogSource, /\[&_th\]:px-2/);
+  assert.match(dialogSource, /\[&_td\]:px-2/);
+  assert.match(dialogSource, /\[&_td\]:py-2/);
 });
 
 test("contract detail dialog omits the main contract info card", () => {

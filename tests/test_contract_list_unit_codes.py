@@ -114,6 +114,55 @@ class ContractListUnitCodesTest(unittest.TestCase):
         self.assertIn("is_expired_contract", sql)
         self.assertLess(sql.index("is_current_contract"), sql.index("is_expired_contract"))
 
+    def test_contract_list_can_filter_exact_contract_numbers_for_unit_dialog(self):
+        db = _FakeDb()
+        scope = SimpleNamespace(all_access=True, allow={}, deny={})
+
+        with patch.object(contracts_router, "_table_exists", return_value=True):
+            contracts_router._load_contract_list_items(
+                db,
+                scope,
+                contract_numbers=[" 80335004 ", "80355001"],
+                limit=None,
+            )
+
+        sql = "\n".join(db.sql).lower()
+        params = db.params[-1]
+        self.assertIn("cm.cmcontno", sql)
+        self.assertIn("any(:contract_numbers)", sql)
+        self.assertEqual(params["contract_numbers"], ["80335004", "80355001"])
+
+    def test_unit_contract_rows_reuse_contract_list_fields_and_order(self):
+        unit_rows = [
+            {"cmcontno": "OLD", "cmtitle": "旧合同", "is_current_effective": False},
+            {"cmcontno": "CURRENT", "cmtitle": "当前合同旧主题", "is_current_effective": False},
+        ]
+        list_rows = [
+            {
+                "cmcontno": "CURRENT",
+                "department_codes": "6010103",
+                "department_names": "中心六部(儿童)",
+                "unit_codes": "C505",
+                "group_codes": "6010103193",
+                "group_names": "卡仕宝厅",
+                "is_clear": False,
+                "is_current_contract": True,
+            },
+            {
+                "cmcontno": "OLD",
+                "department_codes": "6010112",
+                "is_current_contract": False,
+            },
+        ]
+
+        rows = contracts_router._align_unit_contracts_to_list(unit_rows, list_rows)
+
+        self.assertEqual([row["cmcontno"] for row in rows], ["CURRENT", "OLD"])
+        self.assertEqual(rows[0]["department_codes"], "6010103")
+        self.assertEqual(rows[0]["unit_codes"], "C505")
+        self.assertEqual(rows[0]["group_names"], "卡仕宝厅")
+        self.assertIs(rows[0]["is_current_effective"], True)
+
     def test_contract_cycle_item_name_comes_from_codecharge(self):
         join_sql = contracts_router._charge_item_join_sql(True, "ccl.cclitemid").lower()
         select_sql = contracts_router._charge_item_name_select_sql(True).lower()

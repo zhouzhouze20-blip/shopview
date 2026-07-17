@@ -7,6 +7,7 @@ import { Check, ChevronDown, ChevronLeft, Eye, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { APP_BRAND } from "@/lib/app-branding";
+import { APP_VERSION } from "@/lib/app-version";
 import { filterAccessibleModuleTree, isAdminUser } from "@/lib/module-permissions";
 import { filterAdminViewUsers, getNextAdminViewSearchState } from "@/lib/admin-view-search";
 import { navigationItems } from "@/lib/navigation-items";
@@ -314,7 +315,7 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
           </div>
         ) : null}
         <div className="text-xs text-slate-500 mt-1">
-          版本: v1.0.0
+          版本: v{APP_VERSION}
         </div>
       </div>
     </nav>

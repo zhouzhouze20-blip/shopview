@@ -2087,7 +2087,10 @@ async def group_tickets(
     """
     按小票汇总 salegoodslist 行：零售价=sum(sglsjje)，销售收入=sum(sglxssr)，
     毛利=sum(sgln2)，小票毛利率=sum(sgln2)/sum(sglxssr)；
-    授权折扣=sum(sglgrantzk)，面值卡(MZK)=sum(sglfcard)，礼券(LQ)=sum(sglgcert)-sum(sgltimes)。
+    授权折扣=sum(sglgrantzk)，面值卡(MZK)=sum(sglfcard)。
+    礼券(LQ)=sum(salepay.je where paycode='0500')；salehead.djlb=4 时按负数返回。
+    收银机号取 salegoodslist.sglsyjid。
+    交易时间优先取 salehead.rqsj，缺失时回退 salegoodslist.sglsaledate。
     附带：order_point 中消费加积分与生日月会员加积分。
 
     salehead 若存在 djlx 优先否则 djlb：1→销售，4→退货，其余返回原始码。
@@ -2113,7 +2116,10 @@ async def group_tickets(
     group_join = _counter_group_join_sql(has_counter_groups)
     scope_select = _group_scope_select_sql(has_counter_groups, has_stores=has_stores)
     has_salehead = _table_exists(db, "salehead")
+    has_salepay = _table_exists(db, "salepay")
     has_order_point = _table_exists(db, "order_point")
+    has_salehead_djlb = has_salehead and _column_exists(db, "salehead", "djlb")
+    has_salehead_rqsj = has_salehead and _column_exists(db, "salehead", "rqsj")
     dj_kind_col = (
         "djlx"
         if has_salehead and _column_exists(db, "salehead", "djlx")
@@ -2122,10 +2128,42 @@ async def group_tickets(
         else None
     )
     head_join = ""
-    if has_salehead and dj_kind_col:
+    if has_salehead and (dj_kind_col or has_salehead_djlb or has_salehead_rqsj):
         head_join = f"""
         LEFT JOIN salehead sh ON sh.billno::text = TRIM(BOTH FROM s.sglbillno::text)
         """
+    sale_datetime_expr = (
+        "COALESCE(sh.rqsj, tr.sale_datetime) AS sale_datetime"
+        if has_salehead_rqsj
+        else "tr.sale_datetime"
+    )
+    if has_salepay:
+        lq_pay_join = """
+        , lq_pay AS (
+          SELECT
+            TRIM(BOTH FROM p.billno::text) AS billno,
+            COALESCE(SUM(COALESCE(p.je, 0)), 0) AS lq_amount
+          FROM salepay p
+          WHERE TRIM(BOTH FROM COALESCE(p.paycode::text, '')) = '0500'
+            AND TRIM(BOTH FROM p.billno::text) IN (SELECT billno FROM ticket_rows)
+          GROUP BY TRIM(BOTH FROM p.billno::text)
+        )
+        """
+        lq_final_join = "LEFT JOIN lq_pay lp ON lp.billno = tr.billno"
+        if has_salehead_djlb:
+            lq_expr = """
+              CASE
+                WHEN TRIM(BOTH FROM COALESCE(sh.djlb::text, '')) = '4'
+                  THEN -ABS(COALESCE(lp.lq_amount, 0))
+                ELSE COALESCE(lp.lq_amount, 0)
+              END AS lq
+            """
+        else:
+            lq_expr = "COALESCE(lp.lq_amount, 0) AS lq"
+    else:
+        lq_pay_join = ""
+        lq_final_join = ""
+        lq_expr = "0 AS lq"
     point_join = ""
     if has_order_point:
         has_point_remark = _column_exists(db, "order_point", "remark")
@@ -2188,16 +2226,14 @@ async def group_tickets(
             TRIM(BOTH FROM s.sglbillno::text) AS billno,
             s.sgldate AS sale_date,
             s.sglsaledate AS sale_datetime,
+            s.sglsyjid AS cash_register_no,
             s.sglinvno AS invoice_no,
-            s.sglchecker AS cashier,
             s.sglsl,
             s.sglsjje,
             s.sglxssr,
             s.sgln2,
             s.sglgrantzk,
-            s.sglfcard,
-            s.sglgcert,
-            s.sgltimes
+            s.sglfcard
           FROM {table_name} s
           {group_join}
           {mkt_join}
@@ -2213,8 +2249,8 @@ async def group_tickets(
             billno,
             MIN(sale_date) AS sale_date,
             MIN(sale_datetime) AS sale_datetime,
+            MIN(cash_register_no) AS cash_register_no,
             MIN(invoice_no) AS invoice_no,
-            MIN(cashier) AS cashier,
             COUNT(*) AS line_count,
             COALESCE(SUM(sglsl), 0) AS quantity,
             COALESCE(SUM(sglsjje), 0) AS priced_sales_amount,
@@ -2225,13 +2261,13 @@ async def group_tickets(
               ELSE COALESCE(SUM(sgln2), 0) / NULLIF(COALESCE(SUM(sglxssr), 0), 0)
             END AS ticket_margin,
             COALESCE(SUM(sglgrantzk), 0) AS authorized_discount,
-            COALESCE(SUM(sglfcard), 0) AS mzk,
-            COALESCE(SUM(sglgcert), 0) - COALESCE(SUM(sgltimes), 0) AS lq
+            COALESCE(SUM(sglfcard), 0) AS mzk
           FROM base
           GROUP BY billno
           ORDER BY sale_date DESC, billno DESC
           LIMIT :limit
         )
+        {lq_pay_join}
         {point_join}
         SELECT
           tr.group_code,
@@ -2241,9 +2277,9 @@ async def group_tickets(
           tr.store_id,
           tr.billno,
           tr.sale_date,
-          tr.sale_datetime,
+          {sale_datetime_expr},
+          tr.cash_register_no,
           tr.invoice_no,
-          tr.cashier,
           tr.line_count,
           tr.quantity,
           tr.priced_sales_amount,
@@ -2252,13 +2288,14 @@ async def group_tickets(
           tr.ticket_margin,
           tr.authorized_discount,
           tr.mzk,
-          tr.lq,
+          {lq_expr},
           {point_expr},
           {consumption_point_expr},
           {birthday_month_member_point_expr},
           {txn_expr}
         FROM ticket_rows tr
         {head_join.replace("s.sglbillno::text", "tr.billno") if head_join else ""}
+        {lq_final_join}
         {point_final_join}
         ORDER BY tr.sale_date DESC, tr.billno DESC
         """,

@@ -105,6 +105,9 @@ test("sales dashboard wires the conditional retail price column through page and
   const ticketTabSource = pageSource.slice(ticketTabStart, ticketTabEnd);
   assert.ok(ticketTabStart >= 0 && ticketTabEnd > ticketTabStart);
   assert.doesNotMatch(ticketTabSource, />商品数</);
+  assert.doesNotMatch(ticketTabSource, />收银员</);
+  assert.match(ticketTabSource, />收银机号<\/TableHead>[\s\S]*>小票号<\/TableHead>/);
+  assert.match(ticketTabSource, /row\.cash_register_no/);
   assert.doesNotMatch(ticketTabSource, /ticketsTableTotals\.quantity/);
   assert.match(ticketTabSource, /showPricedSalesAmount \? 14 : 13/);
 });

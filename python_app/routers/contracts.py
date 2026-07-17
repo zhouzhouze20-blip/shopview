@@ -353,6 +353,43 @@ def _contract_key(data: dict[str, Any]) -> str:
     return str(data.get("cmcontno") or data.get("cmfcontno") or "").strip().upper()
 
 
+def _align_unit_contracts_to_list(
+    unit_contracts: list[dict[str, Any]],
+    contract_list_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """用合同列表的汇总字段、当前生效口径和排序补齐柜位弹窗合同。"""
+    list_items_by_key = {
+        key: item
+        for item in contract_list_items
+        if (key := _contract_key(item))
+    }
+    list_order = {
+        key: index
+        for index, item in enumerate(contract_list_items)
+        if (key := _contract_key(item))
+    }
+
+    aligned: list[dict[str, Any]] = []
+    for index, unit_item in enumerate(unit_contracts):
+        key = _contract_key(unit_item)
+        list_item = list_items_by_key.get(key)
+        if list_item is None:
+            aligned.append({**unit_item, "_unit_contract_order": (1, index)})
+            continue
+
+        item = {**unit_item, **list_item}
+        item["is_current_effective"] = bool(
+            list_item.get("is_current_contract", unit_item.get("is_current_effective")),
+        )
+        item["_unit_contract_order"] = (0, list_order[key])
+        aligned.append(item)
+
+    aligned.sort(key=lambda item: item["_unit_contract_order"])
+    for item in aligned:
+        item.pop("_unit_contract_order", None)
+    return aligned
+
+
 def _contract_dashboard_stats_from_items(items: list[dict[str, Any]]) -> dict[str, int]:
     """
     在营：cmstatus 为已生效 (Y) 且当前日期落在 [cmeffdate, cmlapdate]。
@@ -425,6 +462,7 @@ def _load_contract_list_items(
     group_code: str | None = None,
     department_code: str | None = None,
     supplier_code: str | None = None,
+    contract_numbers: list[str] | None = None,
     skip: int = 0,
     limit: int | None = 100,
 ) -> list[dict[str, Any]]:
@@ -656,6 +694,20 @@ def _load_contract_list_items(
     if normalized_supplier:
         sql += " AND upper(trim(COALESCE(cm.cmsupid, ''))) = upper(trim(:supplier_code))"
         params["supplier_code"] = normalized_supplier
+
+    normalized_contract_numbers = list(
+        dict.fromkeys(
+            str(contract_number or "").strip().upper()
+            for contract_number in (contract_numbers or [])
+            if str(contract_number or "").strip()
+        ),
+    )
+    if contract_numbers is not None:
+        if normalized_contract_numbers:
+            sql += " AND upper(trim(COALESCE(cm.cmcontno, ''))) = ANY(:contract_numbers)"
+            params["contract_numbers"] = normalized_contract_numbers
+        else:
+            sql += " AND 1=0"
 
     sql += """
         ORDER BY
@@ -1179,6 +1231,16 @@ async def get_contracts_by_unit(
             )
             data["is_current_effective"] = bool(data.get("is_current_effective"))
             contracts.append(_strip_scope_fields(data))
+
+        contract_numbers = [_contract_key(item) for item in contracts if _contract_key(item)]
+        if contract_numbers:
+            contract_list_items = _load_contract_list_items(
+                db,
+                contract_scope,
+                contract_numbers=contract_numbers,
+                limit=None,
+            )
+            contracts = _align_unit_contracts_to_list(contracts, contract_list_items)
 
         active_contracts = [item for item in contracts if item["is_current_effective"]]
         return {

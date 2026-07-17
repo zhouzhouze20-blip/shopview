@@ -583,20 +583,32 @@ export default function BrandMemberAnalysisPage() {
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Users className="h-4 w-4 text-violet-700" />会员等级消费分析
                 </CardTitle>
-                <div className="text-xs text-slate-500">按交易小票记录的会员等级汇总，仅统计期间内至少有一笔正向购买的会员；按等级内去重。</div>
+                <div className="text-xs text-slate-500">按交易小票记录的会员等级汇总，仅统计期间内至少有一笔正向购买的会员；按等级内去重。客单＝销售收入净额÷会员交易小票数。</div>
               </CardHeader>
               <CardContent>
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[1680px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>会员等级</TableHead>
-                      <TableHead className="text-right">购买会员</TableHead>
-                      <TableHead className="text-right">人数占比</TableHead>
-                      <TableHead className="text-right">销售收入</TableHead>
-                      <TableHead className="text-right">销售占比</TableHead>
-                      <TableHead className="text-right">会员人均消费</TableHead>
-                      <TableHead className="text-right">消费频次</TableHead>
-                      <TableHead className="text-right">同期销售收入</TableHead>
+                      <TableHead rowSpan={2} className="whitespace-nowrap align-middle">会员等级</TableHead>
+                      <TableHead colSpan={7} className="border-l text-center">本期</TableHead>
+                      <TableHead colSpan={7} className="border-l text-center">同期</TableHead>
+                    </TableRow>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap border-l text-right">购买会员</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">人数占比</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">销售收入</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">销售占比</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">会员人均消费</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">消费频次</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">客单</TableHead>
+                      <TableHead className="whitespace-nowrap border-l text-right">购买会员</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">人数占比</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">销售收入</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">销售占比</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">会员人均消费</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">消费频次</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">客单</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -613,12 +625,20 @@ export default function BrandMemberAnalysisPage() {
                           <TableCell className="text-right">{formatBrandShare(row.sales_share)}</TableCell>
                           <TableCell className="text-right">{formatBrandMoney(row.spend_per_buyer)}</TableCell>
                           <TableCell className="text-right">{formatBrandNumber(row.purchase_frequency, 2)}</TableCell>
+                          <TableCell className="text-right">{formatBrandMoney(row.average_ticket_value)}</TableCell>
+                          <TableCell className="border-l text-right text-slate-500">{formatBrandNumber(priorRow?.buyer_count ?? 0)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatBrandShare(priorRow?.buyer_share ?? null)}</TableCell>
                           <TableCell className="text-right text-slate-500">{formatBrandMoney(priorRow?.sales_revenue ?? 0)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatBrandShare(priorRow?.sales_share ?? null)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatBrandMoney(priorRow?.spend_per_buyer ?? 0)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatBrandNumber(priorRow?.purchase_frequency ?? 0, 2)}</TableCell>
+                          <TableCell className="text-right text-slate-500">{formatBrandMoney(priorRow?.average_ticket_value ?? 0)}</TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
+                </div>
               </CardContent>
             </Card>
 

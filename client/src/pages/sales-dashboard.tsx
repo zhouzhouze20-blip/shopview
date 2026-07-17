@@ -25,6 +25,7 @@ import {
   exportGroupsToExcel,
   exportStoresToExcel,
   exportTicketsToExcel,
+  formatTicketSaleDateTime,
 } from "@/lib/export-sales-excel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -129,8 +130,8 @@ type TicketSummary = {
   billno: string | number;
   sale_date?: string | null;
   sale_datetime?: string | null;
+  cash_register_no?: string | null;
   invoice_no?: string | number | null;
-  cashier?: string | null;
   line_count: number;
   /** 商品件数：salegoodslist 汇总 sglsl */
   quantity: number;
@@ -146,7 +147,7 @@ type TicketSummary = {
   authorized_discount?: number;
   /** 面值卡 MZK：sum(sglfcard) */
   mzk?: number;
-  /** 礼券 LQ：sum(sglgcert)-sum(sgltimes) */
+  /** 礼券 LQ：salepay 中 paycode=0500 的付款金额，djlb=4 时为负数 */
   lq?: number;
   /** 小票积分合计：order_point.point，仅用于接口兼容 */
   point?: number;
@@ -1971,8 +1972,8 @@ export default function SalesDashboardPage() {
                     <TableHead>单据号</TableHead>
                     <TableHead>日期</TableHead>
                     <TableHead>销售类型</TableHead>
+                    <TableHead>收银机号</TableHead>
                     <TableHead>小票号</TableHead>
-                    <TableHead>收银员</TableHead>
                     {showPricedSalesAmount && <TableHead className="text-right">零售价</TableHead>}
                     <TableHead className="text-right">销售收入</TableHead>
                     <TableHead className="text-right">毛利</TableHead>
@@ -1999,10 +2000,12 @@ export default function SalesDashboardPage() {
                     (ticketsQuery.data ?? []).map((row) => (
                       <TableRow key={`${row.billno}`} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedBillno(`${row.billno}`)}>
                         <TableCell className="py-2 font-medium">{row.billno}</TableCell>
-                        <TableCell className="py-2">{row.sale_datetime || row.sale_date || "-"}</TableCell>
+                        <TableCell className="py-2 whitespace-nowrap">
+                          {formatTicketSaleDateTime(row.sale_datetime, row.sale_date)}
+                        </TableCell>
                         <TableCell className="py-2">{row.transaction_type?.trim() || "-"}</TableCell>
+                        <TableCell className="py-2">{row.cash_register_no || "-"}</TableCell>
                         <TableCell className="py-2">{row.invoice_no || "-"}</TableCell>
-                        <TableCell className="py-2">{row.cashier || "-"}</TableCell>
                         {showPricedSalesAmount && (
                           <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">
                             {money(row.priced_sales_amount)}

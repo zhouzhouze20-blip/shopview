@@ -67,6 +67,14 @@ export interface ErpContractItem {
   cmfax?: string | null;
   cmemail?: string | null;
   cmchar9?: string | null;
+  unit_codes?: string | null;
+  group_codes?: string | null;
+  group_names?: string | null;
+  department_codes?: string | null;
+  department_names?: string | null;
+  contract_modes?: string | null;
+  is_clear?: boolean | null;
+  clear_flags?: string | null;
   cmsptype?: string | null;
   signdate?: string | null;
   deliverydate?: string | null;
@@ -76,6 +84,7 @@ export interface ErpContractItem {
   zxqsrq?: string | null;
   zxjzrq?: string | null;
   is_current_effective: boolean;
+  is_current_contract?: boolean;
   status_label: string;
 }
 

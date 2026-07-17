@@ -1265,7 +1265,7 @@ export default function ContractsPage({
       </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-5xl max-h-[86vh] overflow-y-auto">
+        <DialogContent className="h-[94vh] w-[96vw] max-w-[96vw] max-h-[94vh] gap-3 overflow-y-auto p-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="w-5 h-5" />
@@ -1282,19 +1282,19 @@ export default function ContractsPage({
           ) : !detail ? (
             <div className="py-10 text-center text-muted-foreground">暂无数据</div>
           ) : (
-            <div className="space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                <div className="rounded border p-3">
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">柜位号</div>
-                  <div className="text-lg font-semibold">{detail.unit.unit_code}</div>
+                  <div className="text-base font-semibold">{detail.unit.unit_code}</div>
                 </div>
-                <div className="rounded border p-3">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">合同经营限制</div>
-                  <div className="text-lg font-semibold">
+                  <div className="text-base font-semibold">
                     {CONTRACT_MODE_LABELS[String(detail.unit.contract_mode || "EXCLUSIVE")] || detail.unit.contract_mode || "独占经营"}
                   </div>
                 </div>
-                <div className="rounded border p-3">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">经营状态</div>
                   <div className="mt-1">
                     <Badge variant="outline" className={cn("font-medium", getStatusMeta(detailUnitStatus).badgeClassName)}>
@@ -1302,58 +1302,92 @@ export default function ContractsPage({
                     </Badge>
                   </div>
                 </div>
-                <div className="rounded border p-3">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">楼层</div>
-                  <div className="text-lg font-semibold">
+                  <div className="text-base font-semibold">
                     {detail.unit.building_code || "-"}-{detail.unit.floor_code || "-"}
                   </div>
                 </div>
-                <div className="rounded border p-3">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">合同数</div>
-                  <div className="text-lg font-semibold">{contractRows.length}</div>
+                  <div className="text-base font-semibold">{contractRows.length}</div>
                 </div>
-                <div className="rounded border p-3">
+                <div className="rounded border p-2.5">
                   <div className="text-xs text-muted-foreground">正式生效</div>
-                  <div className="text-lg font-semibold">{activeContractCount}</div>
+                  <div className="text-base font-semibold">{activeContractCount}</div>
                 </div>
               </div>
 
               <Card>
-                <CardHeader>
-                  <CardTitle>正式生效合同</CardTitle>
+                <CardHeader className="px-4 py-3">
+                  <CardTitle className="text-lg">正式生效合同</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="px-4 pb-3">
                   {activeContract ? (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div className="grid grid-cols-1 gap-x-4 gap-y-3 text-xs md:grid-cols-4 xl:grid-cols-7">
+                      <div>
+                        <div className="text-muted-foreground">部门</div>
+                        <div className="font-semibold">
+                          {renderGroupInfo(activeContract.department_codes, activeContract.department_names)}
+                        </div>
+                      </div>
                       <div>
                         <div className="text-muted-foreground">合同编号</div>
                         <Button
                           variant="link"
                           className="h-auto p-0 font-semibold text-left"
-                          onClick={() => openContractDetail(activeContract.cmfcontno)}
+                          onClick={() => openContractDetail(activeContract.cmcontno || activeContract.cmfcontno)}
                         >
-                          {activeContract.cmfcontno}
+                          {activeContract.cmcontno || activeContract.cmfcontno}
                         </Button>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">主题</div>
-                        <div className="font-semibold">{activeContract.cmtitle || "-"}</div>
+                        <div className="text-muted-foreground">开始日期</div>
+                        <div className="font-semibold">{fmtDate(activeContract.cmeffdate)}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">结束日期</div>
+                        <div className="font-semibold">{fmtDate(activeContract.cmlapdate)}</div>
                       </div>
                       <div>
                         <div className="text-muted-foreground">供应商</div>
                         <div className="font-semibold">{renderSupplierInfo(activeContract.cmsupid, activeContract.supplier_name)}</div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">有效期</div>
-                        <div>{fmtDate(activeContract.cmeffdate)} 至 {fmtDate(activeContract.cmlapdate)}</div>
+                        <div className="text-muted-foreground">经营方式</div>
+                        <div className="font-semibold">{formatOperationMethod(activeContract.cmwmid)}</div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">品牌</div>
-                        <div>{activeContract.cmppname || activeContract.cmfbrand || "-"}</div>
+                        <div className="text-muted-foreground">柜位号</div>
+                        <div className="font-semibold">{fmtValue(activeContract.unit_codes || detail.unit.unit_code)}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">柜组</div>
+                        <div className="font-semibold">
+                          {renderGroupInfo(activeContract.group_codes, activeContract.group_names)}
+                        </div>
                       </div>
                       <div>
                         <div className="text-muted-foreground">月目标销售额</div>
-                        <div>{fmtMoney(activeContract.cmmoney)}</div>
+                        <div className="font-semibold">{fmtMoney(activeContract.cmmoney)}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">付款方式</div>
+                        <div className="font-semibold">{fmtValue(activeContract.cmpaycode)}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">是否清算</div>
+                        <div className="font-semibold">
+                          {activeContract.is_clear == null ? "-" : activeContract.is_clear ? "是" : "否"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">结算位置</div>
+                        <div className="font-semibold">{fmtValue(activeContract.cmjsmkt)}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">录入员</div>
+                        <div className="font-semibold">{fmtValue(activeContract.cminputor)}</div>
                       </div>
                     </div>
                   ) : (
@@ -1362,66 +1396,77 @@ export default function ContractsPage({
                 </CardContent>
               </Card>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>状态</TableHead>
-                    <TableHead>合同编号</TableHead>
-                    <TableHead>主题</TableHead>
-                    <TableHead>供应商</TableHead>
-                    <TableHead>品牌</TableHead>
-                    <TableHead>合同有效期</TableHead>
-                    <TableHead>经营范围有效期</TableHead>
-                    <TableHead>面积</TableHead>
-                    <TableHead>操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {contractRows.length ? (
-                    contractRows.map((item) => (
-                      <TableRow key={`${item.cmfcontno}-${item.cmfbrand || ""}`}>
-                        <TableCell>
-                          <Badge variant={item.is_current_effective ? "default" : "secondary"}>
-                            {item.is_current_effective ? "正式生效" : item.status_label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          <Button
-                            variant="link"
-                            className="h-auto p-0 text-left font-medium"
-                            onClick={() => openContractDetail(item.cmfcontno)}
-                          >
-                            {item.cmfcontno}
-                          </Button>
-                        </TableCell>
-                        <TableCell>{item.cmtitle || "-"}</TableCell>
-                        <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
-                        <TableCell>{item.cmppname || item.cmfbrand || "-"}</TableCell>
-                        <TableCell>{fmtDate(item.cmeffdate)} 至 {fmtDate(item.cmlapdate)}</TableCell>
-                        <TableCell>{fmtDate(item.cmfeffdate)} 至 {fmtDate(item.cmflapdate)}</TableCell>
-                        <TableCell>{fmtMoney(item.cmfjzmj ?? item.cmfsymj ?? item.cmfzjmj)}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!isFutureDate(item.cmeffdate)}
-                            onClick={() => startDecorationFromContract(item.cmfcontno)}
-                          >
-                            <HardHat className="mr-2 h-4 w-4" />
-                            发起装修
-                          </Button>
+              <div className="overflow-x-auto rounded-md border">
+                <Table className="text-[11px] xl:text-xs [&_th]:h-10 [&_th]:px-2 [&_td]:px-2 [&_td]:py-2">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="min-w-[120px]">部门</TableHead>
+                      <TableHead className="whitespace-nowrap">合同编号</TableHead>
+                      <TableHead className="whitespace-nowrap">开始日期</TableHead>
+                      <TableHead className="whitespace-nowrap">结束日期</TableHead>
+                      <TableHead className="min-w-[160px]">供应商</TableHead>
+                      <TableHead className="whitespace-nowrap">经营方式</TableHead>
+                      <TableHead className="whitespace-nowrap">柜位号</TableHead>
+                      <TableHead className="min-w-[130px]">柜组</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">月目标销售额</TableHead>
+                      <TableHead className="whitespace-nowrap">付款方式</TableHead>
+                      <TableHead className="whitespace-nowrap">是否清算</TableHead>
+                      <TableHead className="whitespace-nowrap">结算位置</TableHead>
+                      <TableHead className="whitespace-nowrap">录入员</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {contractRows.length ? (
+                      contractRows.map((item) => {
+                        const contractNo = item.cmcontno || item.cmfcontno;
+                        return (
+                          <TableRow key={contractNo} className={cn(isPastDate(item.cmlapdate) && "text-red-600")}>
+                            <TableCell>{renderGroupInfo(item.department_codes, item.department_names)}</TableCell>
+                            <TableCell className="font-medium">
+                              <Button
+                                variant="link"
+                                className="h-auto p-0 text-left font-medium"
+                                onClick={() => openContractDetail(contractNo)}
+                              >
+                                {contractNo}
+                              </Button>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">{fmtDate(item.cmeffdate)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{fmtDate(item.cmlapdate)}</TableCell>
+                            <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
+                            <TableCell>{formatOperationMethod(item.cmwmid)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{fmtValue(item.unit_codes || detail.unit.unit_code)}</TableCell>
+                            <TableCell>{renderGroupInfo(item.group_codes, item.group_names)}</TableCell>
+                            <TableCell className="text-right">{fmtMoney(item.cmmoney)}</TableCell>
+                            <TableCell>{fmtValue(item.cmpaycode)}</TableCell>
+                            <TableCell>{item.is_clear == null ? "-" : item.is_clear ? "是" : "否"}</TableCell>
+                            <TableCell>{fmtValue(item.cmjsmkt)}</TableCell>
+                            <TableCell>{fmtValue(item.cminputor)}</TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!isFutureDate(item.cmeffdate)}
+                                onClick={() => startDecorationFromContract(contractNo)}
+                              >
+                                <HardHat className="mr-2 h-4 w-4" />
+                                发起装修
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
+                          这个柜位没有匹配到 ERP 合同
                         </TableCell>
                       </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                        这个柜位没有匹配到 ERP 合同
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </DialogContent>

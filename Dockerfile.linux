@@ -23,6 +23,7 @@ RUN npm ci --include=optional --legacy-peer-deps || \
 
 # 复制前端源代码
 COPY client/ ./
+COPY VERSION ./VERSION
 
 # 构建前端应用
 RUN npm run build
@@ -65,6 +66,7 @@ RUN pip install --no-cache-dir -r python_requirements.txt
 
 # 复制Python应用代码
 COPY python_app/ ./python_app/
+COPY VERSION ./VERSION
 
 # 复制容器启动脚本
 COPY docker-entrypoint.sh ./docker-entrypoint.sh

@@ -1,6 +1,8 @@
 import asyncio
 import os
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -8,6 +10,7 @@ from sqlalchemy import create_engine, text
 from python_app.services.od0002_report import (
     EXCLUDED_DEPARTMENT_CODES,
     FLOOR_NAMES,
+    OD0002_QUERY_TIMEOUT_SECONDS,
     TrustedScopeSql,
     build_authorized_departments_query,
     build_authorized_stores_query,
@@ -606,8 +609,11 @@ def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
         selected_store=None,
     )
 
-    assert len(db.calls) == 1
-    sql, params = db.calls[0]
+    assert len(db.calls) == 2
+    timeout_sql, timeout_params = db.calls[0]
+    assert timeout_sql == f"SET LOCAL statement_timeout = '{OD0002_QUERY_TIMEOUT_SECONDS}s'"
+    assert timeout_params == {}
+    sql, params = db.calls[1]
     assert ":start_date" in sql and ":scope_allow_store" in sql
     assert params["start_date"] == date(2026, 1, 1)
     assert params["scope_allow_store"] == ["601", "602"]
@@ -631,6 +637,18 @@ def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
     assert payload["selected_store"] is None
     assert payload["quality"]["unmatched_floor_group_count"] == 0
     assert payload["generated_at"]
+
+
+def test_nginx_gives_od0002_enough_time_to_return_after_database_timeout():
+    source = (Path(__file__).parents[1] / "config" / "nginx.conf").read_text()
+    match = re.search(
+        r"location \^~ /api/sales/reports/od0002 \{(?P<body>.*?)\n\s*\}",
+        source,
+        re.DOTALL,
+    )
+
+    assert match is not None
+    assert "proxy_read_timeout 130s;" in match.group("body")
 
 
 def test_report_query_adds_department_category_dimension_without_merging_departments():
