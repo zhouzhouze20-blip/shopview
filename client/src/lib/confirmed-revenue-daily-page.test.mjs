@@ -6,6 +6,7 @@ const page = readFileSync(resolve("client/src/pages/activity-analysis/confirmed-
 const dashboard = readFileSync(resolve("client/src/pages/main-dashboard.tsx"), "utf8");
 
 assert.match(page, /确认收入占比/);
+assert.match(page, /按业务发生日查看/);
 assert.match(page, /coupon-confirmed-revenue-daily/);
 assert.match(page, /couponType/);
 assert.match(page, /setCouponType/);

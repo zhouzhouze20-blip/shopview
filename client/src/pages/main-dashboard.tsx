@@ -21,10 +21,14 @@ import PointsActivityAnalysisPage from "./activity-analysis/points";
 import StarDiamondAnalysisPage from "./activity-analysis/star-diamond";
 import BrandMemberAnalysisPage from "./member-analysis/brand-member-analysis";
 import CommoditySalesDetailReportPage from "./sales-reports/commodity-sales-detail";
+import InventoryDetailReportPage, { HistoricalInventoryDetailReportPage } from "./sales-reports/inventory-detail";
+import InventoryMovementDetailReportPage from "./sales-reports/inventory-movement-detail";
+import SettledGrossProfitRankingPage from "./sales-reports/settled-gross-profit-ranking";
 import Od0002SalesGrossProfitPage from "./sales-reports/od0002-sales-gross-profit";
 import Hdyy01GroupOperationAnalysisPage from "./sales-reports/hdyy01-group-operation-analysis";
 import MerchantPlanningPage from "./merchant-planning";
 import RevenueMapPage from "./revenue-map";
+import JointRenewalRevenueReportPage from "./joint-renewal-revenue-report";
 import JointSettlementStatementsPage from "./joint-settlement-statements";
 import ManaframePage from "./manaframe";
 import SuppliersPage from "./suppliers";
@@ -153,16 +157,21 @@ const MODULE_LABELS: Record<string, string> = {
   "star-diamond-analysis": "中心星钻会员分析",
   "brand-member-analysis": "品牌会员经营分析",
   "commodity-sales-detail": "商品销售明细",
+  "inventory-detail": "实时库存查询",
+  "historical-inventory-detail": "历史库存明细报表",
+  "inventory-movement-detail": "进销存明细报表",
+  "settled-gross-profit-ranking": "结算后销售毛利排行表",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
   "hdyy01-group-operation-analysis": "HDYY01柜组经营分析表",
   "merchant-planning": "招商规划",
   "revenue-map": "收益地图",
+  "joint-renewal-revenue": "联营续签合同收益影响分析",
   "joint-settlement": "联营结算单管理",
   floors: "楼层定义",
   "base-maps": "底图管理",
   "unit-map-versions": "柜位图版本",
   "business-units": "经营单元设置",
-  "floor-area-report": "楼层面积报表",
+  "floor-area-report": "楼层在营及空置面积报表",
   "user-role-scope": "用户角色及范围定义",
   users: "用户",
   roles: "角色",
@@ -700,6 +709,14 @@ export default function MainDashboard() {
         return <BrandMemberAnalysisPage />;
       case "commodity-sales-detail":
         return <CommoditySalesDetailReportPage />;
+      case "inventory-detail":
+        return <InventoryDetailReportPage />;
+      case "historical-inventory-detail":
+        return <HistoricalInventoryDetailReportPage />;
+      case "inventory-movement-detail":
+        return <InventoryMovementDetailReportPage />;
+      case "settled-gross-profit-ranking":
+        return <SettledGrossProfitRankingPage />;
       case "od0002-sales-gross-profit":
         return <Od0002SalesGrossProfitPage />;
       case "hdyy01-group-operation-analysis":
@@ -708,6 +725,8 @@ export default function MainDashboard() {
         return <MerchantPlanningPage />;
       case "revenue-map":
         return <RevenueMapPage />;
+      case "joint-renewal-revenue":
+        return <JointRenewalRevenueReportPage />;
       case "decorations":
         return <DecorationsPage initialTab="projects" />;
       case "decorations-todos":

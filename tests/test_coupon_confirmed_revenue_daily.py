@@ -8,13 +8,13 @@ from routers.activity_analysis import (
 
 
 class CouponConfirmedRevenueDailyTest(unittest.TestCase):
-    def test_query_filters_by_finance_confirmed_at(self):
+    def test_query_filters_by_business_date(self):
         sql = coupon_confirmed_revenue_daily_sql(include_coupon_type=False)
 
         self.assertIn("JOIN activity_coupon_voucher_match m", sql)
-        self.assertIn("m.confirmed_at >= CAST(:start_date AS DATE)", sql)
-        self.assertIn("m.confirmed_at < CAST(:end_date AS DATE) + INTERVAL '1 day'", sql)
-        self.assertIn("rm.business_date", sql)
+        self.assertIn("rm.business_date >= CAST(:start_date AS DATE)", sql)
+        self.assertIn("rm.business_date < CAST(:end_date AS DATE) + INTERVAL '1 day'", sql)
+        self.assertIn("m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')", sql)
 
     def test_query_can_filter_coupon_type_without_recomputing_amount(self):
         sql = coupon_confirmed_revenue_daily_sql(include_coupon_type=True)

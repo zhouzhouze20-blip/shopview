@@ -29,6 +29,8 @@ PURCHASE_FREQUENCY_DEFINITIONS = (
     ("repeat_purchase", "多次客", 2),
 )
 
+BRAND_MEMBER_QUERY_TIMEOUT_SECONDS = 120
+
 AI_FORBIDDEN_TERMS = (
     "同比",
     "环比",
@@ -413,14 +415,22 @@ def _period_classification_ctes() -> str:
         AND s.sglmfid = :target_group_code
         AND s.sglhsrq BETWEEN :start_date AND :end_date
     ),
+    period_member_receipts AS MATERIALIZED (
+      SELECT
+        member_no,
+        billno,
+        SUM(sales_revenue) AS sales_revenue
+      FROM target_lines
+      WHERE member_no IS NOT NULL
+      GROUP BY member_no, billno
+    ),
     period_member_rows AS MATERIALIZED (
       SELECT
         member_no,
         SUM(sales_revenue) AS sales_revenue,
-        COUNT(DISTINCT billno) AS ticket_count,
+        COUNT(*) FILTER (WHERE sales_revenue > 0) AS ticket_count,
         BOOL_OR(sales_revenue > 0) AS has_positive_purchase
-      FROM target_lines
-      WHERE member_no IS NOT NULL
+      FROM period_member_receipts
       GROUP BY member_no
     ),
     purchase_members AS MATERIALIZED (
@@ -431,12 +441,17 @@ def _period_classification_ctes() -> str:
     member_history_heads AS MATERIALIZED (
       SELECT
         h.billno,
-        h.mkt AS store_code,
+        h.store_code,
         pm.member_no
       FROM purchase_members pm
-      JOIN salehead h
-        ON h.mkt = :store_code
-       AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
+      CROSS JOIN LATERAL (
+        SELECT h.billno, h.mkt AS store_code
+        FROM salehead h
+        WHERE h.mkt = :store_code
+          AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
+          AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        OFFSET 0
+      ) h
     ),
     history AS MATERIALIZED (
       SELECT
@@ -507,14 +522,23 @@ def _load_member_level_consumption(db: Session, params: dict[str, Any]) -> list[
             AND s.sglhsrq BETWEEN :start_date AND :end_date
             AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
         ),
+        member_level_receipts AS MATERIALIZED (
+          SELECT
+            level_code,
+            member_no,
+            billno,
+            SUM(sales_revenue) AS sales_revenue
+          FROM member_level_rows
+          GROUP BY level_code, member_no, billno
+        ),
         member_level_members AS MATERIALIZED (
           SELECT
             level_code,
             member_no,
             SUM(sales_revenue) AS sales_revenue,
-            COUNT(DISTINCT billno) AS ticket_count,
+            COUNT(*) FILTER (WHERE sales_revenue > 0) AS ticket_count,
             BOOL_OR(sales_revenue > 0) AS has_positive_purchase
-          FROM member_level_rows
+          FROM member_level_receipts
           GROUP BY level_code, member_no
         ),
         level_totals AS (
@@ -596,14 +620,23 @@ def _load_purchase_frequency_analysis(db: Session, params: dict[str, Any]) -> li
             AND s.sglhsrq BETWEEN :start_date AND :end_date
             AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
         ),
+        member_receipts AS MATERIALIZED (
+          SELECT
+            member_no,
+            billno,
+            SUM(sales_revenue) AS sales_revenue,
+            SUM(sales_quantity) AS sales_quantity
+          FROM member_lines
+          GROUP BY member_no, billno
+        ),
         period_members AS MATERIALIZED (
           SELECT
             member_no,
             SUM(sales_revenue) AS sales_revenue,
             SUM(sales_quantity) AS sales_quantity,
-            COUNT(DISTINCT billno) AS ticket_count,
+            COUNT(*) FILTER (WHERE sales_revenue > 0) AS ticket_count,
             BOOL_OR(sales_revenue > 0) AS has_positive_purchase
-          FROM member_lines
+          FROM member_receipts
           GROUP BY member_no
         ),
         purchase_members AS MATERIALIZED (
@@ -876,6 +909,10 @@ def _load_department_rank(db: Session, params: dict[str, Any]) -> dict[str, Any]
 
 
 def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    funnel_params = {
+        **params,
+        "store_prefix": f"{str(params['store_code']).strip()}%",
+    }
     row = _row(
         db,
         """
@@ -891,28 +928,42 @@ def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, 
             AND COALESCE(s.sglxssr, 0) > 0
             AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
         ),
+        store_groups AS MATERIALIZED (
+          SELECT UPPER(TRIM(BOTH FROM mf.mfcode)) AS group_code
+          FROM manaframe mf
+          WHERE TRIM(BOTH FROM mf.mfcode) LIKE :store_prefix
+            AND LENGTH(TRIM(BOTH FROM mf.mfcode)) = 10
+        ),
+        period_lines AS MATERIALIZED (
+          SELECT
+            NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no,
+            UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) AS department_code,
+            UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))) AS group_code
+          FROM store_groups groups
+          JOIN salegoodslist s
+            ON s.sglmarket = :store_code
+           AND s.sglmfid = groups.group_code
+           AND s.sglhsrq BETWEEN :start_date AND :end_date
+           AND COALESCE(s.sglxssr, 0) > 0
+          CROSS JOIN LATERAL (
+            SELECT h.hykh
+            FROM salehead h
+            WHERE h.billno = s.sglbillno
+              AND h.mkt = s.sglmarket
+            OFFSET 0
+          ) h
+          LEFT JOIN manaframe mf
+            ON mf.mfcode = s.sglmfid
+        ),
         period_activity AS MATERIALIZED (
           SELECT
             old.member_no,
-            BOOL_OR(COALESCE(s.sglxssr, 0) > 0) AS visited_store,
-            BOOL_OR(
-              UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) = :target_department_code
-              AND COALESCE(s.sglxssr, 0) > 0
-            ) AS visited_department,
-            BOOL_OR(
-              UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))) = :target_group_code
-              AND COALESCE(s.sglxssr, 0) > 0
-            ) AS repurchased_target
+            TRUE AS visited_store,
+            BOOL_OR(lines.department_code = :target_department_code) AS visited_department,
+            BOOL_OR(lines.group_code = :target_group_code) AS repurchased_target
           FROM old_members old
-          JOIN salehead h
-            ON h.mkt = :store_code
-           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = old.member_no
-          JOIN salegoodslist s
-            ON s.sglbillno = h.billno
-           AND s.sglmarket = h.mkt
-          LEFT JOIN manaframe mf
-            ON mf.mfcode = s.sglmfid
-          WHERE s.sglhsrq BETWEEN :start_date AND :end_date
+          JOIN period_lines lines
+            ON lines.member_no = old.member_no
           GROUP BY old.member_no
         )
         SELECT
@@ -923,7 +974,7 @@ def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, 
         FROM old_members old
         LEFT JOIN period_activity activity ON activity.member_no = old.member_no
         """,
-        params,
+        funnel_params,
     )
     return row or {
         "historical_target_member_count": 0,
@@ -947,13 +998,18 @@ def _load_inflow_sources(db: Session, params: dict[str, Any]) -> list[dict[str, 
         internal_member_heads AS MATERIALIZED (
           SELECT
             h.billno,
-            h.mkt AS store_code,
+            h.store_code,
             members.member_no,
             members.segment_code
           FROM internal_members members
-          JOIN salehead h
-            ON h.mkt = :store_code
-           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = members.member_no
+          CROSS JOIN LATERAL (
+            SELECT h.billno, h.mkt AS store_code
+            FROM salehead h
+            WHERE h.mkt = :store_code
+              AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = members.member_no
+              AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+            OFFSET 0
+          ) h
         ),
         source_sales AS MATERIALIZED (
           SELECT
@@ -974,8 +1030,7 @@ def _load_inflow_sources(db: Session, params: dict[str, Any]) -> list[dict[str, 
             OFFSET 0
           ) s
           LEFT JOIN manaframe mf
-            ON UPPER(TRIM(BOTH FROM COALESCE(mf.mfcode, '')))
-               = UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, '')))
+            ON mf.mfcode = s.sglmfid
           LEFT JOIN manaframe dept
             ON UPPER(TRIM(BOTH FROM COALESCE(dept.mfcode, '')))
                = UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, '')))
@@ -1169,6 +1224,11 @@ def load_brand_member_analysis(
     if not department_code:
         raise ValueError("目标柜组缺少部门归属，暂时无法计算内部流入和部门排名")
 
+    db.execute(
+        text(f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'"),
+        {},
+    )
+
     current = _load_period(
         db,
         store_code=store_code,
@@ -1212,9 +1272,9 @@ def load_brand_member_analysis(
             "history_cutoff": "分别追溯至本期或同期开始日期之前的全部历史",
             "internal_inflow": "内部流入包含同部门流入和跨部门流入",
             "member_level": "会员等级取交易小票 salehead.custtype：01银星、02金星、03黑金、04黑钻，其他非空会员归为未标识会员；按等级内会员去重，期间等级变化的会员可能出现在多个等级",
-            "member_level_average_ticket_value": "会员等级客单按该等级会员销售收入净额除以会员交易小票数计算",
-            "purchase_frequency_segments": "一次客为期间内1张会员交易小票，多次客为期间内2张及以上会员交易小票",
-            "items_per_ticket": "客件数按会员净销售件数 salegoodslist.sglsl 除以会员交易小票数计算，退货数量按负数冲减",
+            "member_level_average_ticket_value": "会员等级客单按该等级会员销售收入净额除以正向购买小票数计算，退货小票不计客次",
+            "purchase_frequency_segments": "一次客为期间内1张正向购买小票，多次客为期间内2张及以上正向购买小票；退货小票不计客次",
+            "items_per_ticket": "客件数按会员净销售件数 salegoodslist.sglsl 除以正向购买小票数计算，退货数量按负数冲减",
             "average_item_price": "件单价按会员销售收入净额除以会员净销售件数计算",
         },
     }

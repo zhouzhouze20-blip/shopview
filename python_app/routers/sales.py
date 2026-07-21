@@ -7,7 +7,7 @@
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,6 +34,22 @@ from services.od0002_report import (
 from services.hdyy01_report import load_hdyy01_report
 from services.hdyy01_excel import build_hdyy01_workbook_file
 from services.od0002_excel import build_od0002_workbook_file
+from services.settled_gross_profit_report import load_settled_gross_profit_report
+from services.settled_gross_profit_excel import (
+    build_settled_gross_profit_workbook_file,
+)
+from services.inventory_detail_report import (
+    CATEGORY_NAME_SQL,
+    MAX_EXPORT_ROWS,
+    build_historical_inventory_workbook_file,
+    build_inventory_movement_workbook_file,
+    build_inventory_workbook_file,
+    load_historical_inventory_detail_report,
+    load_historical_inventory_filter_options,
+    load_inventory_detail_report,
+    load_inventory_filter_options,
+    load_inventory_movement_detail_report,
+)
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
@@ -174,7 +190,7 @@ def _manaframe_group_source_sql(alias: str = "cg") -> str:
         mf.mfjyfs AS operation_method
       FROM manaframe mf
       LEFT JOIN manaframe dept
-        ON upper(trim(COALESCE(mf.mfpcode, ''))) = upper(trim(COALESCE(dept.mfcode, '')))
+        ON mf.mfpcode = dept.mfcode
     ) {alias}
     """
 
@@ -184,7 +200,7 @@ def _counter_group_join_sql(enabled: bool, *, sales_alias: str = "s") -> str:
         return ""
     return (
         f"LEFT JOIN {_manaframe_group_source_sql('cg')} "
-        f"ON upper(trim(COALESCE({sales_alias}.sglmfid, ''))) = upper(trim(COALESCE(cg.group_code, '')))"
+        f"ON {sales_alias}.sglmfid = cg.group_code"
     )
 
 
@@ -651,6 +667,83 @@ def _load_od0002_for_request(
     return report, scope
 
 
+@router.get("/reports/settled-gross-profit")
+async def settled_gross_profit_report(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    """Settlement-adjusted sales gross-profit detail report."""
+    report, _ = _load_settled_gross_profit_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    return report
+
+
+def _load_settled_gross_profit_for_request(
+    start_date: date,
+    end_date: date,
+    store_id: str | None,
+    db: Session,
+    current_user: User,
+    department_id: str | None = None,
+) -> tuple[dict[str, Any], Any]:
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+    require_permission(db, current_user, "sales.od0002.view")
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="settled_gross_profit",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    report = load_settled_gross_profit_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        start_date=start_date,
+        end_date=end_date,
+        selected_store=selected_store,
+        selected_department=selected_department,
+    )
+    return report, scope
+
+
 def _od0002_scope_description(scope: Any) -> str:
     if scope.all_access:
         base = "全部业务数据"
@@ -738,6 +831,170 @@ async def od0002_export(
     export_report["scope_description"] = _od0002_scope_description(scope)
     export_file = await run_in_threadpool(build_od0002_workbook_file, export_report)
     filename = f"OD0002_门店销售毛利汇总表_{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return StreamingResponse(
+        stream_chunks(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        background=BackgroundTask(export_file.close),
+    )
+
+
+@router.get("/reports/settled-gross-profit/export")
+async def settled_gross_profit_export(
+    start_date: date,
+    end_date: date,
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    department_id: str | None = None,
+):
+    report, scope = _load_settled_gross_profit_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    export_report = dict(report)
+    export_report["scope_description"] = _od0002_scope_description(scope)
+    export_file = await run_in_threadpool(
+        build_settled_gross_profit_workbook_file,
+        export_report,
+    )
+    filename = (
+        "结算后销售毛利排行表_"
+        f"{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    )
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return _ClosingStreamingResponse(
+        stream_chunks(),
+        close_file=export_file.close,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        },
+        background=BackgroundTask(export_file.close),
+    )
+
+
+@router.get("/reports/inventory-movement-detail")
+def inventory_movement_detail_report(
+    start_date: date = Query(..., description="发生开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="发生结束日期 YYYY-MM-DD"),
+    accounting_start_date: date | None = Query(None, description="记账开始日期 YYYY-MM-DD"),
+    accounting_end_date: date | None = Query(None, description="记账结束日期 YYYY-MM-DD"),
+    store: str | None = Query(None, description="门店编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    specification: str | None = Query(None, description="商品规格（模糊查询）"),
+    subinventory: str | None = Query(None, description="子库存编码（精确查询）"),
+    limit: int = Query(5000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _inventory_movement_filters(
+        start_date=start_date,
+        end_date=end_date,
+        accounting_start_date=accounting_start_date,
+        accounting_end_date=accounting_end_date,
+        store=store,
+        group=group,
+        supplier=supplier,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+        specification=specification,
+        subinventory=subinventory,
+    )
+    report, _scope = _load_inventory_movement_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=limit,
+        offset=offset,
+    )
+    return report
+
+
+@router.get("/reports/inventory-movement-detail/export")
+def inventory_movement_detail_export(
+    start_date: date = Query(..., description="发生开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="发生结束日期 YYYY-MM-DD"),
+    accounting_start_date: date | None = Query(None, description="记账开始日期 YYYY-MM-DD"),
+    accounting_end_date: date | None = Query(None, description="记账结束日期 YYYY-MM-DD"),
+    store: str | None = Query(None, description="门店编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    specification: str | None = Query(None, description="商品规格（模糊查询）"),
+    subinventory: str | None = Query(None, description="子库存编码（精确查询）"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _inventory_movement_filters(
+        start_date=start_date,
+        end_date=end_date,
+        accounting_start_date=accounting_start_date,
+        accounting_end_date=accounting_end_date,
+        store=store,
+        group=group,
+        supplier=supplier,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+        specification=specification,
+        subinventory=subinventory,
+    )
+    report, scope = _load_inventory_movement_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=MAX_EXPORT_ROWS,
+        offset=0,
+    )
+    total_count = int(report.get("summary", {}).get("total_count") or 0)
+    if total_count > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"结果共 {total_count} 行，超过单次导出上限 {MAX_EXPORT_ROWS} 行，请缩小查询范围",
+        )
+
+    filter_labels = {
+        "start_date": "发生开始日期",
+        "end_date": "发生结束日期",
+        "accounting_start_date": "记账开始日期",
+        "accounting_end_date": "记账结束日期",
+        "store": "门店",
+        "group": "柜组",
+        "supplier": "供应商",
+        "goods_code": "商品代码",
+        "goods_name": "商品名称",
+        "barcode": "商品条码",
+        "specification": "商品规格",
+        "subinventory": "子库存",
+    }
+    filter_description = "；".join(
+        f"{filter_labels[key]}={value.isoformat() if isinstance(value, date) else str(value).strip()}"
+        for key, value in filters.items()
+        if value is not None and str(value).strip()
+    )
+    export_file = build_inventory_movement_workbook_file(
+        report,
+        filter_description=filter_description,
+        scope_description=_od0002_scope_description(scope),
+    )
+    filename = f"商品进销存明细报表_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
 
     def stream_chunks():
         while chunk := export_file.read(64 * 1024):
@@ -1056,6 +1313,575 @@ def _code_name_display_sql(code_expr: str, name_expr: str) -> str:
     )
 
 
+def _inventory_filters(
+    *,
+    supplier: str | None,
+    group: str | None,
+    goods_code: str | None,
+    goods_name: str | None,
+    barcode: str | None,
+    exact_group: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "supplier": supplier,
+        "group": group,
+        "goods_code": goods_code,
+        "goods_name": goods_name,
+        "barcode": barcode,
+        "exact_group": exact_group,
+    }
+
+
+def _historical_inventory_filters(
+    *,
+    start_date: date,
+    end_date: date,
+    supplier: str | None,
+    group: str | None,
+    goods_code: str | None,
+    goods_name: str | None,
+    barcode: str | None,
+) -> dict[str, Any]:
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="库存开始日期不能晚于结束日期",
+        )
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "supplier": supplier,
+        "group": group,
+        "goods_code": goods_code,
+        "goods_name": goods_name,
+        "barcode": barcode,
+    }
+
+
+def _inventory_movement_filters(
+    *,
+    start_date: date,
+    end_date: date,
+    accounting_start_date: date | None,
+    accounting_end_date: date | None,
+    store: str | None,
+    group: str | None,
+    supplier: str | None,
+    goods_code: str | None,
+    goods_name: str | None,
+    barcode: str | None,
+    specification: str | None,
+    subinventory: str | None,
+) -> dict[str, Any]:
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="发生开始日期不能晚于结束日期",
+        )
+    if (
+        accounting_start_date
+        and accounting_end_date
+        and accounting_start_date > accounting_end_date
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="记账开始日期不能晚于结束日期",
+        )
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "accounting_start_date": accounting_start_date,
+        "accounting_end_date": accounting_end_date,
+        "store": store,
+        "group": group,
+        "supplier": supplier,
+        "goods_code": goods_code,
+        "goods_name": goods_name,
+        "barcode": barcode,
+        "specification": specification,
+        "subinventory": subinventory,
+    }
+
+
+def _inventory_request_scope(
+    *,
+    db: Session,
+    current_user: User,
+) -> tuple[Any, str, dict[str, Any]]:
+    require_permission(db, current_user, "sales.inventory.view")
+    required_tables = (
+        "goodsstock",
+        "goodsbase",
+        "goodsmfprice",
+        "manaframe",
+        "stores",
+        "supplierbase",
+        "codebrand",
+        "goodscat",
+    )
+    missing_tables = [table_name for table_name in required_tables if not _table_exists(db, table_name)]
+    if missing_tables:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="库存报表依赖表未创建: " + ", ".join(missing_tables),
+        )
+
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="inventory_detail",
+        store_expr="st.store_id::text",
+        department_code_expr="area_node.mfcode",
+        department_name_expr="area_node.mfcname",
+        group_expr="gs.gstmfid",
+        supplier_expr="gs.gstsupid",
+        brand_code_expr="gb.gbppcode",
+        brand_name_expr="cb.cbcname",
+        category_code_expr="gb.gbcatcode",
+        category_name_expr=CATEGORY_NAME_SQL,
+        floor_expr="mf.mflc",
+    )
+    return scope, scope_sql, scope_params
+
+
+def _load_inventory_report_for_request(
+    *,
+    db: Session,
+    current_user: User,
+    filters: dict[str, Any],
+    limit: int,
+    offset: int,
+) -> tuple[dict[str, Any], Any]:
+    scope, scope_sql, scope_params = _inventory_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    report = load_inventory_detail_report(
+        db,
+        filters=filters,
+        scope_sql=scope_sql,
+        scope_params=scope_params,
+        limit=limit,
+        offset=offset,
+    )
+    return report, scope
+
+
+@router.get("/reports/inventory-lookup")
+def inventory_lookup(
+    exact_code: str = Query(..., min_length=1, max_length=100, description="商品条码或商品编码（精确查询）"),
+    limit: int = Query(500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    lookup_code = exact_code.strip()
+    if not lookup_code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="商品条码或商品编码不能为空",
+        )
+    filters: dict[str, Any] = {
+        "exact_code": lookup_code,
+        "include_zero": True,
+        "has_goodsbarcode": _table_exists(db, "goodsbarcode"),
+    }
+    report, _scope = _load_inventory_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=limit,
+        offset=0,
+    )
+    return {**report, "query_code": lookup_code}
+
+
+def _historical_inventory_request_scope(
+    *,
+    db: Session,
+    current_user: User,
+) -> tuple[Any, str, dict[str, Any]]:
+    require_permission(db, current_user, "sales.inventory_history.view")
+    required_tables = (
+        "goodsstock_bak",
+        "goodsbase",
+        "goodsmfprice",
+        "manaframe",
+        "stores",
+        "supplierbase",
+        "codebrand",
+        "goodscat",
+    )
+    missing_tables = [table_name for table_name in required_tables if not _table_exists(db, table_name)]
+    if missing_tables:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="历史库存报表依赖表未创建: " + ", ".join(missing_tables),
+        )
+
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="historical_inventory_detail",
+        store_expr="st.store_id::text",
+        department_code_expr="area_node.mfcode",
+        department_name_expr="area_node.mfcname",
+        group_expr="gs.gstmfid",
+        supplier_expr="gs.gstsupid",
+        brand_code_expr="gb.gbppcode",
+        brand_name_expr="cb.cbcname",
+        category_code_expr="gb.gbcatcode",
+        category_name_expr=CATEGORY_NAME_SQL,
+        floor_expr="mf.mflc",
+    )
+    return scope, scope_sql, scope_params
+
+
+def _load_historical_inventory_report_for_request(
+    *,
+    db: Session,
+    current_user: User,
+    filters: dict[str, Any],
+    limit: int,
+    offset: int,
+) -> tuple[dict[str, Any], Any]:
+    scope, scope_sql, scope_params = _historical_inventory_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    report = load_historical_inventory_detail_report(
+        db,
+        filters=filters,
+        scope_sql=scope_sql,
+        scope_params=scope_params,
+        limit=limit,
+        offset=offset,
+    )
+    return report, scope
+
+
+def _inventory_movement_request_scope(
+    *,
+    db: Session,
+    current_user: User,
+) -> tuple[Any, str, dict[str, Any]]:
+    require_permission(db, current_user, "sales.inventory_movement.view")
+    required_tables = (
+        "jxcgoodslist",
+        "goodsbase",
+        "manaframe",
+        "stores",
+        "supplierbase",
+        "codebrand",
+        "goodscat",
+    )
+    missing_tables = [table_name for table_name in required_tables if not _table_exists(db, table_name)]
+    if missing_tables:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="进销存明细报表依赖表未创建: " + ", ".join(missing_tables),
+        )
+
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    scope_params: dict[str, Any] = {}
+    scope_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="inventory_movement_detail",
+        store_expr="st.store_id::text",
+        department_code_expr="area_node.mfcode",
+        department_name_expr="area_node.mfcname",
+        group_expr="j.jglmfid",
+        supplier_expr="j.jglsupid",
+        brand_code_expr="j.jglppcode",
+        brand_name_expr="cb.cbcname",
+        category_code_expr="j.jglcatid",
+        category_name_expr=CATEGORY_NAME_SQL,
+        floor_expr="mf.mflc",
+    )
+    return scope, scope_sql, scope_params
+
+
+def _load_inventory_movement_report_for_request(
+    *,
+    db: Session,
+    current_user: User,
+    filters: dict[str, Any],
+    limit: int,
+    offset: int,
+) -> tuple[dict[str, Any], Any]:
+    scope, scope_sql, scope_params = _inventory_movement_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    report = load_inventory_movement_detail_report(
+        db,
+        filters=filters,
+        scope_sql=scope_sql,
+        scope_params=scope_params,
+        limit=limit,
+        offset=offset,
+    )
+    return report, scope
+
+
+@router.get("/reports/inventory-detail/options")
+def inventory_detail_filter_options(
+    field: Literal["supplier", "group", "goods_code", "goods_name", "barcode"] = Query(...),
+    q: str = Query(..., min_length=1, max_length=100, description="编码或名称关键词"),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _scope, scope_sql, scope_params = _inventory_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    return {
+        "options": load_inventory_filter_options(
+            db,
+            field=field,
+            query=q.strip(),
+            scope_sql=scope_sql,
+            scope_params=scope_params,
+            limit=limit,
+        )
+    }
+
+
+@router.get("/reports/inventory-detail")
+def inventory_detail_report(
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    exact_group: str | None = Query(None, description="柜组编码（精确查询）"),
+    limit: int = Query(5000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _inventory_filters(
+        supplier=supplier,
+        group=group,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+        exact_group=exact_group,
+    )
+    report, _scope = _load_inventory_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=limit,
+        offset=offset,
+    )
+    return report
+
+
+@router.get("/reports/inventory-detail/export")
+def inventory_detail_export(
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _inventory_filters(
+        supplier=supplier,
+        group=group,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+    )
+    report, scope = _load_inventory_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=MAX_EXPORT_ROWS,
+        offset=0,
+    )
+    total_count = int(report.get("summary", {}).get("total_count") or 0)
+    if total_count > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"结果共 {total_count} 行，超过单次导出上限 {MAX_EXPORT_ROWS} 行，请缩小查询范围",
+        )
+
+    filter_labels = {
+        "supplier": "供应商",
+        "group": "柜组",
+        "goods_code": "商品代码",
+        "goods_name": "商品名称",
+        "barcode": "商品条码",
+    }
+    filter_description = "；".join(
+        f"{filter_labels[key]}={str(value).strip()}"
+        for key, value in filters.items()
+        if value is not None and str(value).strip()
+    )
+    export_file = build_inventory_workbook_file(
+        report,
+        filter_description=filter_description,
+        scope_description=_od0002_scope_description(scope),
+    )
+    filename = f"实时库存查询_{date.today().strftime('%Y%m%d')}.xlsx"
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return StreamingResponse(
+        stream_chunks(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        background=BackgroundTask(export_file.close),
+    )
+
+
+@router.get("/reports/historical-inventory-detail/options")
+def historical_inventory_detail_filter_options(
+    start_date: date = Query(..., description="库存开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="库存结束日期 YYYY-MM-DD"),
+    field: Literal["supplier", "group", "goods_code", "goods_name", "barcode"] = Query(...),
+    q: str = Query(..., min_length=1, max_length=100, description="编码或名称关键词"),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _historical_inventory_filters(
+        start_date=start_date,
+        end_date=end_date,
+        supplier=None,
+        group=None,
+        goods_code=None,
+        goods_name=None,
+        barcode=None,
+    )
+    _scope, scope_sql, scope_params = _historical_inventory_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    return {
+        "options": load_historical_inventory_filter_options(
+            db,
+            field=field,
+            query=q.strip(),
+            filters=filters,
+            scope_sql=scope_sql,
+            scope_params=scope_params,
+            limit=limit,
+        )
+    }
+
+
+@router.get("/reports/historical-inventory-detail")
+def historical_inventory_detail_report(
+    start_date: date = Query(..., description="库存开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="库存结束日期 YYYY-MM-DD"),
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    limit: int = Query(5000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _historical_inventory_filters(
+        start_date=start_date,
+        end_date=end_date,
+        supplier=supplier,
+        group=group,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+    )
+    report, _scope = _load_historical_inventory_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=limit,
+        offset=offset,
+    )
+    return report
+
+
+@router.get("/reports/historical-inventory-detail/export")
+def historical_inventory_detail_export(
+    start_date: date = Query(..., description="库存开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="库存结束日期 YYYY-MM-DD"),
+    supplier: str | None = Query(None, description="供应商编码或名称（模糊查询）"),
+    group: str | None = Query(None, description="柜组编码或名称（模糊查询）"),
+    goods_code: str | None = Query(None, description="商品代码（模糊查询）"),
+    goods_name: str | None = Query(None, description="商品名称（模糊查询）"),
+    barcode: str | None = Query(None, description="商品条码（模糊查询）"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _historical_inventory_filters(
+        start_date=start_date,
+        end_date=end_date,
+        supplier=supplier,
+        group=group,
+        goods_code=goods_code,
+        goods_name=goods_name,
+        barcode=barcode,
+    )
+    report, scope = _load_historical_inventory_report_for_request(
+        db=db,
+        current_user=current_user,
+        filters=filters,
+        limit=MAX_EXPORT_ROWS,
+        offset=0,
+    )
+    total_count = int(report.get("summary", {}).get("total_count") or 0)
+    if total_count > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"结果共 {total_count} 行，超过单次导出上限 {MAX_EXPORT_ROWS} 行，请缩小查询范围",
+        )
+
+    filter_labels = {
+        "start_date": "库存开始日期",
+        "end_date": "库存结束日期",
+        "supplier": "供应商",
+        "group": "柜组",
+        "goods_code": "商品代码",
+        "goods_name": "商品名称",
+        "barcode": "商品条码",
+    }
+    filter_description = "；".join(
+        f"{filter_labels[key]}={value.isoformat() if isinstance(value, date) else str(value).strip()}"
+        for key, value in filters.items()
+        if value is not None and str(value).strip()
+    )
+    export_file = build_historical_inventory_workbook_file(
+        report,
+        filter_description=filter_description,
+        scope_description=_od0002_scope_description(scope),
+    )
+    filename = f"历史库存明细报表_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx"
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return StreamingResponse(
+        stream_chunks(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        background=BackgroundTask(export_file.close),
+    )
+
+
 @router.get("/reports/commodity-sales-detail/departments", response_model=list[ReportDepartmentOption])
 async def commodity_sales_detail_departments(
     db: Session = Depends(get_db),
@@ -1340,7 +2166,8 @@ def _group_level_sales_rows(
     has_stores = _table_exists(db, "stores")
     mkt_join = _stores_market_join_sql(has_stores)
     params: dict[str, Any] = {}
-    filters = _date_filter_sql(params, start_date, end_date)
+    date_filters = _date_filter_sql(params, start_date, end_date)
+    filters = ""
     if store_id:
         filters += _store_scope_filter_sql(has_counter_groups, has_stores)
         params["store_id"] = store_id
@@ -1377,28 +2204,42 @@ def _group_level_sales_rows(
     return _fetch_mappings(
         db,
         f"""
+        WITH sales_agg AS (
+          SELECT
+            s.sglmarket,
+            s.sglmfid,
+            COUNT(DISTINCT s.sglbillno) AS ticket_count,
+            COUNT(*) AS line_count,
+            COALESCE(SUM(s.sglsl), 0) AS quantity,
+            COALESCE(SUM(s.sglsjje), 0) AS priced_sales_amount,
+            COALESCE(SUM(s.sglxssr), 0) AS gross_sales,
+            COALESCE(SUM(s.sglxssr), 0) AS effective_sales,
+            COALESCE(SUM(s.sgln2), 0) AS net_profit
+          FROM {table_name} s
+          WHERE 1=1 {date_filters}
+          GROUP BY s.sglmarket, s.sglmfid
+        )
         SELECT
           {scope_select},
-          COUNT(DISTINCT s.sglbillno) AS ticket_count,
-          COUNT(*) AS line_count,
-          COALESCE(SUM(s.sglsl), 0) AS quantity,
-          COALESCE(SUM(s.sglsjje), 0) AS priced_sales_amount,
-          COALESCE(SUM(s.sglxssr), 0) AS gross_sales,
-          COALESCE(SUM(s.sglxssr), 0) AS effective_sales,
-          COALESCE(SUM(s.sgln2), 0) AS net_profit,
+          s.ticket_count,
+          s.line_count,
+          s.quantity,
+          s.priced_sales_amount,
+          s.gross_sales,
+          s.effective_sales,
+          s.net_profit,
           CASE
-            WHEN COALESCE(SUM(s.sglxssr), 0) = 0 THEN 0
-            ELSE COALESCE(SUM(s.sgln2), 0) / NULLIF(COALESCE(SUM(s.sglxssr), 0), 0)
+            WHEN s.effective_sales = 0 THEN 0
+            ELSE s.net_profit / NULLIF(s.effective_sales, 0)
           END AS net_margin,
           CASE
-            WHEN COALESCE(SUM(s.sglxssr), 0) = 0 THEN 0
-            ELSE COALESCE(SUM(s.sgln2), 0) / NULLIF(COALESCE(SUM(s.sglxssr), 0), 0)
+            WHEN s.effective_sales = 0 THEN 0
+            ELSE s.net_profit / NULLIF(s.effective_sales, 0)
           END AS ticket_margin
-        FROM {table_name} s
+        FROM sales_agg s
         {group_join}
         {mkt_join}
         WHERE 1=1 {filters}
-        GROUP BY 1, 2, 3, 4, 5
         {tail_sql}
         """,
         params,
@@ -1476,7 +2317,7 @@ def _aggregate_stores_from_group_rows(rows: list[dict[str, Any]]) -> list[dict[s
 
 
 @router.get("/summary/latest-date")
-async def latest_sales_date(
+def latest_sales_date(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1485,7 +2326,7 @@ async def latest_sales_date(
 
 
 @router.get("/summary/stores")
-async def store_summary(
+def store_summary(
     start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     prior_start_date: str | None = Query(None, description="同期开始 YYYY-MM-DD；与 prior_end_date 同时传入时覆盖自动「上年同期」区间"),
@@ -1551,7 +2392,7 @@ async def store_summary(
 
 
 @router.get("/summary/departments")
-async def department_summary(
+def department_summary(
     start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     prior_start_date: str | None = Query(None, description="同期开始 YYYY-MM-DD"),
@@ -1641,7 +2482,7 @@ async def department_summary(
 
 
 @router.get("/summary/groups")
-async def group_summary(
+def group_summary(
     start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     prior_start_date: str | None = Query(None, description="同期开始 YYYY-MM-DD"),
@@ -1697,7 +2538,7 @@ async def group_summary(
 
 
 @router.get("/summary/department-goods")
-async def department_goods_summary(
+def department_goods_summary(
     start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     store_id: str | None = Query(None, description="门店ID/市场号"),
@@ -1865,7 +2706,7 @@ async def department_goods_summary(
 
 
 @router.get("/summary/department-suppliers")
-async def department_supplier_summary(
+def department_supplier_summary(
     start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     store_id: str | None = Query(None, description="门店ID/市场号"),
@@ -2051,7 +2892,7 @@ async def sales_analysis(
 
 
 @router.get("/map/groups")
-async def map_group_summary(
+def map_group_summary(
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
     store_id: str | None = Query(None),
@@ -2059,7 +2900,7 @@ async def map_group_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return await group_summary(
+    return group_summary(
         start_date=start_date,
         end_date=end_date,
         store_id=store_id,
@@ -2073,7 +2914,7 @@ async def map_group_summary(
 
 
 @router.get("/groups/{group_code}/tickets")
-async def group_tickets(
+def group_tickets(
     group_code: str,
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
@@ -2305,7 +3146,7 @@ async def group_tickets(
 
 
 @router.get("/tickets/{billno}")
-async def ticket_detail(
+def ticket_detail(
     billno: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

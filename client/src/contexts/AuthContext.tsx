@@ -125,12 +125,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    setUser(null);
-    setAdminViewUsers([]);
-    setAdminViewUserIdState(null);
-    window.localStorage.removeItem(ADMIN_VIEW_STORAGE_KEY);
-    queryClient.clear();
-    await apiPost("/api/auth/logout", {});
+    setLoading(true);
+    try {
+      await apiPost("/api/auth/logout", {});
+      queryClient.clear();
+      setAdminViewUsers([]);
+      setAdminViewUserIdState(null);
+      window.localStorage.removeItem(ADMIN_VIEW_STORAGE_KEY);
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const setAdminViewUserId = (userId: number | null) => {

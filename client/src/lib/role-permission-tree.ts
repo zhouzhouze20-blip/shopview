@@ -98,11 +98,29 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     ],
   },
   {
+    id: "inventory-management",
+    name: "库存管理",
+    children: [
+      { id: "inventory-detail", name: "实时库存查询", permissionCodes: ["sales.inventory.view"] },
+      {
+        id: "historical-inventory-detail",
+        name: "历史库存明细报表",
+        permissionCodes: ["sales.inventory_history.view"],
+      },
+      {
+        id: "inventory-movement-detail",
+        name: "进销存明细报表",
+        permissionCodes: ["sales.inventory_movement.view"],
+      },
+    ],
+  },
+  {
     id: "financial-management",
     name: "财务管理",
     children: [
       { id: "merchant-planning", name: "招商规划", moduleCodes: ["merchant_planning"] },
       { id: "revenue-map", name: "收益地图", moduleCodes: ["revenue"] },
+      { id: "joint-renewal-revenue", name: "联营续签收益分析", permissionCodes: ["revenue.view"] },
       { id: "joint-settlement", name: "联营结算单管理", moduleCodes: ["settlement"] },
       {
         id: "activity-settlement",

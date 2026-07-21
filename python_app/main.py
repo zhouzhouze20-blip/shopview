@@ -44,6 +44,7 @@ from routers import (
     contract_unit_bindings,
     sales,
     brand_member_analysis,
+    joint_renewal_revenue,
     revenue,
     merchant_planning,
     activity_analysis,
@@ -104,6 +105,7 @@ app.include_router(contracts.router)
 app.include_router(contract_unit_bindings.router)
 app.include_router(sales.router)
 app.include_router(brand_member_analysis.router)
+app.include_router(joint_renewal_revenue.router)
 app.include_router(revenue.router)
 app.include_router(merchant_planning.router)
 app.include_router(activity_analysis.router)
@@ -501,11 +503,12 @@ def load_frontend_index() -> str:
     return ""
 
 
-@app.get("/{verify_file}", response_class=PlainTextResponse)
-async def wecom_domain_verify_file(verify_file: str):
-    """Serve Enterprise WeChat domain verification files from the web root."""
+def load_wecom_domain_verification(verify_file: str) -> str | None:
+    """Load an Enterprise WeChat verification file without shadowing SPA routes."""
     if not (verify_file.startswith("WW_verify_") and verify_file.endswith(".txt")):
-        raise HTTPException(status_code=404, detail="Not Found")
+        return None
+    if Path(verify_file).name != verify_file:
+        return None
 
     possible_paths = [
         Path("/app/static") / verify_file,
@@ -517,7 +520,7 @@ async def wecom_domain_verify_file(verify_file: str):
         if verify_path.exists() and verify_path.is_file():
             return verify_path.read_text(encoding="utf-8").strip()
 
-    raise HTTPException(status_code=404, detail="Verification file not found")
+    return None
 
 # 根路径返回前端页面
 @app.get("/", response_class=HTMLResponse)
@@ -757,6 +760,17 @@ async def api_info():
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def spa_fallback(full_path: str):
     """为前端单页应用提供路由回退。"""
+    is_verification_file = (
+        Path(full_path).name == full_path
+        and full_path.startswith("WW_verify_")
+        and full_path.endswith(".txt")
+    )
+    if is_verification_file:
+        verification_content = load_wecom_domain_verification(full_path)
+        if verification_content is None:
+            raise HTTPException(status_code=404, detail="Verification file not found")
+        return PlainTextResponse(verification_content)
+
     excluded_prefixes = ("api/", "static/", "uploads/", "assets/")
     if full_path in {"favicon.ico", ""} or full_path.startswith(excluded_prefixes):
         raise HTTPException(status_code=404, detail="Not Found")

@@ -4,6 +4,7 @@ Enterprise WeChat API client helpers.
 from __future__ import annotations
 
 import os
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,7 @@ import requests
 
 WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
 WECOM_QR_CONNECT_URL = "https://open.work.weixin.qq.com/wwopen/sso/qrConnect"
+WECOM_MOBILE_OAUTH_URL = "https://open.weixin.qq.com/connect/oauth2/authorize"
 DEFAULT_TIMEOUT_SECONDS = 8
 
 _token_cache: dict[str, tuple[str, float]] = {}
@@ -86,6 +88,21 @@ def build_qr_login_url(config: WeComConfig, *, state: str) -> str:
     return f"{WECOM_QR_CONNECT_URL}?{query}"
 
 
+def build_mobile_login_url(config: WeComConfig, *, state: str) -> str:
+    """Build the silent OAuth entry used inside the Enterprise WeChat mobile app."""
+    query = urlencode(
+        {
+            "appid": config.corp_id,
+            "redirect_uri": build_callback_url(config),
+            "response_type": "code",
+            "scope": "snsapi_base",
+            "agentid": config.agent_id,
+            "state": state,
+        }
+    )
+    return f"{WECOM_MOBILE_OAUTH_URL}?{query}#wechat_redirect"
+
+
 def _request_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
         response = requests.get(url, params=params, timeout=DEFAULT_TIMEOUT_SECONDS)
@@ -119,6 +136,42 @@ def get_app_access_token(config: WeComConfig) -> str:
     expires_in = int(payload.get("expires_in", 7200) or 7200)
     _token_cache[cache_key] = (access_token, now + max(expires_in - 300, 60))
     return access_token
+
+
+def get_jsapi_ticket(config: WeComConfig) -> str:
+    cache_key = f"jsapi:{config.corp_id}:{config.agent_id}"
+    cached = _token_cache.get(cache_key)
+    now = time.time()
+    if cached and cached[1] > now:
+        return cached[0]
+
+    access_token = get_app_access_token(config)
+    payload = _request_json(
+        f"{WECOM_API_BASE}/get_jsapi_ticket",
+        {"access_token": access_token},
+    )
+    ticket = str(payload.get("ticket") or "")
+    if not ticket:
+        raise WeComApiError("企业微信接口未返回 jsapi_ticket")
+
+    expires_in = int(payload.get("expires_in", 7200) or 7200)
+    _token_cache[cache_key] = (ticket, now + max(expires_in - 300, 60))
+    return ticket
+
+
+def build_js_sdk_signature(
+    ticket: str,
+    *,
+    nonce_str: str,
+    timestamp: int,
+    url: str,
+) -> str:
+    signed_url = url.split("#", 1)[0]
+    canonical = (
+        f"jsapi_ticket={ticket}&noncestr={nonce_str}"
+        f"&timestamp={timestamp}&url={signed_url}"
+    )
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
 
 def get_userinfo_by_code(config: WeComConfig, code: str) -> dict[str, Any]:

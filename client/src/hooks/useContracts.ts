@@ -72,6 +72,8 @@ export interface ErpContractItem {
   group_names?: string | null;
   department_codes?: string | null;
   department_names?: string | null;
+  store_codes?: string | null;
+  store_names?: string | null;
   contract_modes?: string | null;
   is_clear?: boolean | null;
   clear_flags?: string | null;
@@ -125,6 +127,8 @@ export interface ContractListItem {
   group_names?: string | null;
   department_codes?: string | null;
   department_names?: string | null;
+  store_codes?: string | null;
+  store_names?: string | null;
   range_brands?: string | null;
   range_start_date?: string | null;
   range_end_date?: string | null;
@@ -149,6 +153,16 @@ export interface ContractDepartmentOption {
 
 export interface ContractDepartmentOptionsResponse {
   items: ContractDepartmentOption[];
+}
+
+export interface ContractStoreOption {
+  store_code: string;
+  store_name?: string | null;
+}
+
+export interface ContractFilterOptionsResponse {
+  stores: ContractStoreOption[];
+  departments: ContractDepartmentOption[];
 }
 
 export interface ContractMainDetail {
@@ -329,23 +343,28 @@ export function useUnitContracts(unitId?: number) {
 export function useContractsList(params?: {
   keyword?: string;
   status?: string;
+  storeCode?: string;
   groupCode?: string;
   departmentCode?: string;
   supplierCode?: string;
   skip?: number;
   limit?: number;
+  enabled?: boolean;
 }) {
   return useQuery({
     queryKey: ["contracts-list", params ?? {}],
+    enabled: params?.enabled ?? true,
     queryFn: () => {
       const searchParams = new URLSearchParams();
       const keyword = params?.keyword?.trim();
       const status = params?.status?.trim();
+      const storeCode = params?.storeCode?.trim();
       const groupCode = params?.groupCode?.trim();
       const departmentCode = params?.departmentCode?.trim();
       const supplierCode = params?.supplierCode?.trim();
       if (keyword) searchParams.set("keyword", keyword);
       if (status && status !== "ALL") searchParams.set("status", status);
+      if (storeCode && storeCode !== "ALL") searchParams.set("store_code", storeCode);
       if (groupCode) searchParams.set("group_code", groupCode);
       if (departmentCode && departmentCode !== "ALL") searchParams.set("department_code", departmentCode);
       if (supplierCode) searchParams.set("supplier_code", supplierCode);
@@ -356,17 +375,26 @@ export function useContractsList(params?: {
   });
 }
 
-export function useContractDepartments() {
+export function useContractDepartments(enabled = true) {
   return useQuery({
     queryKey: ["contract-departments"],
+    enabled,
     queryFn: () => apiGet<ContractDepartmentOptionsResponse>("/api/contracts/departments"),
   });
 }
 
-export function useContractDetail(contractNo?: string) {
+export function useContractFilterOptions(enabled = true) {
+  return useQuery({
+    queryKey: ["contract-filter-options"],
+    enabled,
+    queryFn: () => apiGet<ContractFilterOptionsResponse>("/api/contracts/filter-options"),
+  });
+}
+
+export function useContractDetail(contractNo?: string, enabled = true) {
   return useQuery({
     queryKey: ["contract-detail", contractNo ?? "none"],
-    enabled: Boolean(contractNo?.trim()),
+    enabled: enabled && Boolean(contractNo?.trim()),
     queryFn: () => apiGet<ContractDetailResponse>(`/api/contracts/detail/${encodeURIComponent(contractNo!.trim())}`),
   });
 }

@@ -615,7 +615,7 @@ export default function BrandMemberAnalysisPage() {
                   <ShoppingBasket className="h-4 w-4 text-amber-700" />购买频次与客件分析
                 </CardTitle>
                 <div className="text-xs leading-5 text-slate-500">
-                  一次客＝期间内1张会员交易小票，多次客＝期间内2张及以上；客件数＝会员净销售件数÷会员交易小票数，退货数量按负数冲减。
+                  一次客＝期间内1张正向购买小票，多次客＝期间内2张及以上；退货小票不计客次。客件数＝会员净销售件数÷正向购买小票数，退货数量按负数冲减。
                 </div>
               </CardHeader>
               <CardContent>
@@ -675,7 +675,7 @@ export default function BrandMemberAnalysisPage() {
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Users className="h-4 w-4 text-violet-700" />会员等级消费分析
                 </CardTitle>
-                <div className="text-xs text-slate-500">按交易小票记录的会员等级汇总，仅统计期间内至少有一笔正向购买的会员；按等级内去重。客单＝销售收入净额÷会员交易小票数。</div>
+                <div className="text-xs text-slate-500">按交易小票记录的会员等级汇总，仅统计期间内至少有一笔正向购买的会员；按等级内去重。客单＝销售收入净额÷正向购买小票数，退货小票不计客次。</div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">

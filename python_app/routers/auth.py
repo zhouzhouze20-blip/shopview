@@ -6,10 +6,12 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -26,8 +28,11 @@ from schemas.schemas import AuthUserSchema, LoginRequest, LoginResponse
 from services.wecom_client import (
     WeComApiError,
     WeComConfigError,
+    build_mobile_login_url,
     build_qr_login_url,
+    build_js_sdk_signature,
     get_department_paths,
+    get_jsapi_ticket,
     get_user_detail,
     get_userinfo_by_code,
     require_wecom_config,
@@ -512,6 +517,66 @@ async def get_wecom_login_url(next: str = Query("/", alias="next")):
     return {
         "login_url": build_qr_login_url(config, state=state_token),
         "state": state_token,
+    }
+
+
+@router.get("/wecom/mobile-login-url")
+async def get_wecom_mobile_login_url(next: str = Query("/mobile", alias="next")):
+    """Return the silent OAuth URL for links opened inside Enterprise WeChat."""
+    try:
+        config = require_wecom_config()
+    except WeComConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    state_token = _create_wecom_state(next)
+    return {
+        "login_url": build_mobile_login_url(config, state=state_token),
+        "state": state_token,
+    }
+
+
+@router.get("/wecom/js-sdk-config")
+async def get_wecom_js_sdk_config(
+    url: str = Query(..., min_length=1, max_length=2048),
+    _current_user: User = Depends(get_current_user),
+):
+    """Return a short-lived JS-SDK signature for the current ShopView page."""
+    try:
+        config = require_wecom_config()
+    except WeComConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    signed_url = url.split("#", 1)[0]
+    parsed = urlparse(signed_url)
+    allowed_origins = {
+        f"{item.scheme}://{item.netloc}"
+        for configured_url in (config.frontend_base_url, config.redirect_base_url)
+        if configured_url
+        for item in (urlparse(configured_url),)
+        if item.scheme in {"http", "https"} and item.netloc
+    }
+    request_origin = f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or request_origin not in allowed_origins:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前页面地址不在企业微信应用域名范围内")
+
+    try:
+        ticket = get_jsapi_ticket(config)
+    except WeComApiError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    timestamp = int(time.time())
+    nonce_str = secrets.token_hex(12)
+    return {
+        "appId": config.corp_id,
+        "timestamp": timestamp,
+        "nonceStr": nonce_str,
+        "signature": build_js_sdk_signature(
+            ticket,
+            nonce_str=nonce_str,
+            timestamp=timestamp,
+            url=signed_url,
+        ),
+        "jsApiList": ["scanQRCode"],
     }
 
 

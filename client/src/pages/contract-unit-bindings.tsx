@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -39,6 +39,7 @@ function normalizeContractNo(value: string) {
 
 export default function ContractUnitBindingsPage() {
   const { toast } = useToast();
+  const bindingFormRef = useRef<HTMLDivElement>(null);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("ACTIVE");
   const [unitKeyword, setUnitKeyword] = useState("");
@@ -100,6 +101,7 @@ export default function ContractUnitBindingsPage() {
     setContractKeyword(item.contract_id || "");
     setUnitPickerOpen(false);
     setContractPickerOpen(false);
+    bindingFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const submit = async () => {
@@ -170,12 +172,17 @@ export default function ContractUnitBindingsPage() {
         </Button>
       </div>
 
-      <Card>
+      <Card ref={bindingFormRef} className="scroll-mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Link2 className="h-5 w-5" />
             {editingId ? "编辑绑定" : "新增绑定"}
           </CardTitle>
+          <CardDescription>
+            {editingId
+              ? `正在变更绑定记录 #${editingId}，选择新的柜位或合同后保存修改。`
+              : "如需变更已有绑定，请在下方绑定列表中点击对应记录的“编辑”。"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -347,7 +354,9 @@ export default function ContractUnitBindingsPage() {
                   <TableHead>绑定日期</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>备注</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead className="sticky right-0 z-20 min-w-[176px] bg-card text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.55)]">
+                    操作
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -379,7 +388,7 @@ export default function ContractUnitBindingsPage() {
                         <Badge variant={item.status === "ACTIVE" ? "default" : "secondary"}>{statusLabel(item.status)}</Badge>
                       </TableCell>
                       <TableCell className="max-w-[220px] truncate">{item.remark || "-"}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="sticky right-0 z-10 bg-card text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.55)]">
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => loadForEdit(item)}>
                             <Pencil className="mr-1 h-4 w-4" />

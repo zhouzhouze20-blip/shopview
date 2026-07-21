@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, LockKeyhole, QrCode, ShieldCheck, UserRound } from "lucide-react";
+import { CheckCircle2, Loader2, LockKeyhole, QrCode, ShieldCheck, Smartphone, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import AuthLoadingScreen from "@/components/auth-loading-screen";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiGet } from "@/lib/api";
+import { isWeComClient, shouldUseMobileLogin } from "@/lib/mobile-entry";
 
 const wecomErrorMessages: Record<string, string> = {
   wecom_api_failed: "企业微信登录接口调用失败，请稍后重试或联系管理员。",
@@ -20,12 +22,14 @@ const businessUnits = ["常州购物中心", "常州百货大楼", "常州新世
 
 export default function LoginPage() {
   const { login, refresh } = useAuth();
-  const [activeTab, setActiveTab] = useState("password");
+  const mobileClient = shouldUseMobileLogin(window.location.pathname);
+  const [activeTab, setActiveTab] = useState(() => (mobileClient ? "wecom" : "password"));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [wecomSubmitting, setWecomSubmitting] = useState(false);
+  const [mobileAutoLoginFailed, setMobileAutoLoginFailed] = useState(false);
   const [wecomLoginUrl, setWecomLoginUrl] = useState("");
   const [wecomState, setWecomState] = useState("");
 
@@ -74,10 +78,32 @@ export default function LoginPage() {
     }
   }, []);
 
+  const startMobileWecomLogin = useCallback(async () => {
+    setWecomSubmitting(true);
+    setMobileAutoLoginFailed(false);
+    setError("");
+    try {
+      const response = await apiGet<{ login_url: string; state: string }>(
+        "/api/auth/wecom/mobile-login-url?next=%2Fmobile",
+      );
+      window.location.replace(response.login_url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "企业微信授权登录暂不可用");
+      setMobileAutoLoginFailed(true);
+      setWecomSubmitting(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeTab !== "wecom" || wecomLoginUrl || wecomSubmitting) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!mobileClient || !isWeComClient() || params.has("auth_error")) return;
+    void startMobileWecomLogin();
+  }, [mobileClient, startMobileWecomLogin]);
+
+  useEffect(() => {
+    if (mobileClient || activeTab !== "wecom" || wecomLoginUrl || wecomSubmitting) return;
     void loadWecomLoginUrl();
-  }, [activeTab, loadWecomLoginUrl, wecomLoginUrl, wecomSubmitting]);
+  }, [activeTab, loadWecomLoginUrl, mobileClient, wecomLoginUrl, wecomSubmitting]);
 
   useEffect(() => {
     if (activeTab !== "wecom" || !wecomState) return;
@@ -110,6 +136,14 @@ export default function LoginPage() {
     setWecomState("");
     void loadWecomLoginUrl();
   };
+
+  const authParams = new URLSearchParams(window.location.search);
+  const silentMobileLogin =
+    mobileClient && isWeComClient() && !authParams.has("auth_error") && !mobileAutoLoginFailed;
+
+  if (silentMobileLogin) {
+    return <AuthLoadingScreen />;
+  }
 
   return (
     <main
@@ -175,7 +209,7 @@ export default function LoginPage() {
                   value="wecom"
                   className="h-10 rounded-md text-sm font-semibold data-[state=active]:bg-white data-[state=active]:text-teal-700 data-[state=active]:shadow-sm"
                 >
-                  企业微信扫码登录
+                  {mobileClient ? "企业微信登录" : "企业微信扫码登录"}
                 </TabsTrigger>
               </TabsList>
 
@@ -239,8 +273,20 @@ export default function LoginPage() {
               </TabsContent>
 
               <TabsContent value="wecom" className="mt-6">
-                <div className="h-[450px] overflow-hidden rounded-lg border border-dashed border-teal-200 bg-teal-50/70 sm:h-[480px]">
-                  {wecomLoginUrl ? (
+                <div className={mobileClient ? "min-h-64 overflow-hidden rounded-lg border border-dashed border-teal-200 bg-teal-50/70" : "h-[450px] overflow-hidden rounded-lg border border-dashed border-teal-200 bg-teal-50/70 sm:h-[480px]"}>
+                  {mobileClient ? (
+                    <div className="grid min-h-64 place-items-center px-6 text-center">
+                      <div>
+                        <Smartphone className="mx-auto h-11 w-11 text-teal-700" />
+                        <p className="mt-4 font-semibold text-slate-800">企业微信手机授权登录</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-500">在企业微信中打开后，可直接识别身份并进入移动工作台。</p>
+                        <Button className="mt-5 bg-teal-700 hover:bg-teal-800" disabled={wecomSubmitting} onClick={startMobileWecomLogin}>
+                          {wecomSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Smartphone className="mr-2 h-4 w-4" />}
+                          {wecomSubmitting ? "正在跳转…" : "使用企业微信登录"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : wecomLoginUrl ? (
                     <div className="relative h-full w-full overflow-hidden bg-white">
                       <iframe
                         title="企业微信扫码登录"
@@ -272,15 +318,17 @@ export default function LoginPage() {
                   variant="outline"
                   className="mt-5 h-11 w-full rounded-lg border-teal-200 bg-white text-base font-semibold text-teal-700 hover:bg-teal-50 hover:text-teal-800"
                   disabled={wecomSubmitting}
-                  onClick={handleWecomLogin}
+                  onClick={mobileClient ? startMobileWecomLogin : handleWecomLogin}
                 >
-                  <QrCode className="mr-2 h-4 w-4" />
-                  {wecomSubmitting ? "正在刷新二维码..." : "刷新企业微信二维码"}
+                  {mobileClient ? <Smartphone className="mr-2 h-4 w-4" /> : <QrCode className="mr-2 h-4 w-4" />}
+                  {mobileClient
+                    ? wecomSubmitting ? "正在跳转…" : "重新进入企业微信授权"
+                    : wecomSubmitting ? "正在刷新二维码..." : "刷新企业微信二维码"}
                 </Button>
 
                 <div className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-600" />
-                  若二维码已过期，请重新点击按钮获取最新授权入口。
+                  {mobileClient ? "企业微信只用于确认身份，菜单权限和数据范围仍沿用 ShopView 账号配置。" : "若二维码已过期，请重新点击按钮获取最新授权入口。"}
                 </div>
               </TabsContent>
             </Tabs>

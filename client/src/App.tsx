@@ -3,12 +3,18 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import AuthLoadingScreen from "@/components/auth-loading-screen";
 import { StoreProvider } from "@/contexts/StoreContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import MainDashboard from "@/pages/main-dashboard";
 import StoresPage from "@/pages/stores";
 import CountersPage from "@/pages/counters";
 import LoginPage from "@/pages/login";
+import MobileHomePage from "@/pages/mobile-home";
+import MobileSalesDashboardPage from "@/pages/mobile-sales-dashboard";
+import MobileContractsPage from "@/pages/mobile-contracts";
+import MobileInventoryPage from "@/pages/mobile-inventory";
+import { shouldUseMobileHome } from "@/lib/mobile-entry";
 // Floor definition/management pages removed
 import NotFound from "@/pages/not-found";
 
@@ -18,12 +24,19 @@ const BASE = import.meta.env.DEV
   : (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
 
 function Routes() {
+  const ResponsiveDashboard = () =>
+    shouldUseMobileHome(window.location.pathname) ? <MobileHomePage /> : <MainDashboard />;
+
   return (
     <Switch>
-      <Route path="/" component={MainDashboard} />
+      <Route path="/mobile/sales" component={MobileSalesDashboardPage} />
+      <Route path="/mobile/contracts" component={MobileContractsPage} />
+      <Route path="/mobile/inventory" component={MobileInventoryPage} />
+      <Route path="/mobile" component={MobileHomePage} />
+      <Route path="/" component={ResponsiveDashboard} />
       <Route path="/stores" component={StoresPage} />
       <Route path="/counters" component={CountersPage} />
-      <Route path="/dashboard" component={MainDashboard} />
+      <Route path="/dashboard" component={ResponsiveDashboard} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -50,11 +63,7 @@ function AppShell() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-600">
-        正在加载登录状态...
-      </div>
-    );
+    return <AuthLoadingScreen />;
   }
 
   if (!user) {

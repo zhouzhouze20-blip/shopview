@@ -1,5 +1,5 @@
 import type React from "react";
-import { Activity, BarChart3, Building2, Calculator, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, HardHat, Settings, Shield, Target, TicketPercent, Truck, Users } from "lucide-react";
+import { Activity, BarChart3, Building2, Calculator, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, HardHat, Settings, Shield, Target, TicketPercent, Truck, Users, Warehouse } from "lucide-react";
 
 export interface NavigationItem {
   id: string;
@@ -73,10 +73,21 @@ export const navigationItems: NavigationItem[] = [
         icon: BarChart3,
         subItems: [
           { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
+          { id: "settled-gross-profit-ranking", name: "结算后销售毛利排行表", icon: FileSpreadsheet },
           { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
           { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
         ],
       },
+    ],
+  },
+  {
+    id: "inventory-management",
+    name: "库存管理",
+    icon: Warehouse,
+    subItems: [
+      { id: "inventory-detail", name: "实时库存查询", icon: FileSpreadsheet },
+      { id: "historical-inventory-detail", name: "历史库存明细报表", icon: FileSpreadsheet },
+      { id: "inventory-movement-detail", name: "进销存明细报表", icon: FileSpreadsheet },
     ],
   },
   {
@@ -86,6 +97,7 @@ export const navigationItems: NavigationItem[] = [
     subItems: [
       { id: "merchant-planning", name: "招商规划", icon: Target },
       { id: "revenue-map", name: "收益地图", icon: CircleDollarSign },
+      { id: "joint-renewal-revenue", name: "联营续签收益分析", icon: FileSpreadsheet },
       { id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet },
       {
         id: "activity-settlement",
@@ -113,7 +125,7 @@ export const navigationItems: NavigationItem[] = [
           { id: "base-maps", name: "底图管理", icon: Building2 },
           { id: "unit-map-versions", name: "柜位图版本", icon: Building2 },
           { id: "business-units", name: "经营单元设置", icon: Building2 },
-          { id: "floor-area-report", name: "楼层面积报表", icon: BarChart3 },
+          { id: "floor-area-report", name: "楼层在营及空置面积报表", icon: BarChart3 },
         ],
       },
       { id: "user-role-scope", name: "用户角色及范围定义", icon: Users },

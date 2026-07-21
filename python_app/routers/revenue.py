@@ -19,6 +19,141 @@ from routers.authz import require_permission
 
 router = APIRouter(prefix="/api/revenue-map", tags=["revenue"])
 
+REVENUE_BINDING_ORDER_SQL = (
+    "(b.shop_unit_id IS NOT NULL) DESC, "
+    "COALESCE(b.is_primary, false) DESC, "
+    "b.id ASC"
+)
+
+
+def _live_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") -> str:
+    """Build the read-only sales source used by map totals and unit details."""
+    return f"""
+        sales_by_group AS (
+            SELECT
+              s.sgldate::date AS revenue_date,
+              NULLIF(TRIM(s.sglmarket), '') AS store_code,
+              NULLIF(TRIM(s.sglmfid), '') AS source_group_code,
+              COALESCE(SUM(s.sglsl), 0)::numeric(18,4) AS sales_qty,
+              COALESCE(SUM(s.sglxssr), 0)::numeric(18,2) AS sales_amount,
+              COALESCE(SUM(s.sgln2), 0)::numeric(18,2) AS gross_profit_amount,
+              COUNT(*)::integer AS source_count,
+              MIN(s.sglbillno::varchar) AS first_bill_no
+            FROM salegoodslist s
+            WHERE {sales_date_filter}
+              AND NULLIF(TRIM(s.sglmfid), '') IS NOT NULL
+              {sales_store_filter}
+            GROUP BY
+              s.sgldate,
+              NULLIF(TRIM(s.sglmarket), ''),
+              NULLIF(TRIM(s.sglmfid), '')
+        ),
+        live_sales AS (
+            SELECT
+              st.store_id,
+              sales_by_group.store_code,
+              bu.floor_id,
+              bu.id AS unit_id,
+              bu.unit_code,
+              sales_by_group.revenue_date,
+              sales_by_group.source_group_code,
+              cg.group_name AS source_group_name,
+              COALESCE(NULLIF(cg.operation_method, ''), binding.business_type) AS operation_mode,
+              binding.supplier_id AS supplier_code,
+              binding.brand_id AS supplier_name,
+              binding.contract_id AS contract_code,
+              sales_by_group.sales_qty,
+              sales_by_group.sales_amount,
+              sales_by_group.gross_profit_amount,
+              sales_by_group.source_count,
+              sales_by_group.first_bill_no
+            FROM sales_by_group
+            JOIN stores st
+              ON TRIM(st.store_code) = sales_by_group.store_code
+            JOIN counter_groups cg
+              ON cg.store_id = st.store_id
+             AND UPPER(TRIM(cg.group_code)) = UPPER(TRIM(sales_by_group.source_group_code))
+            JOIN LATERAL (
+                SELECT b.*
+                FROM business_unit_binding b
+                WHERE b.counter_group_id = cg.group_id
+                  AND COALESCE(b.status, 'ACTIVE') = 'ACTIVE'
+                  AND (b.start_date IS NULL OR b.start_date <= sales_by_group.revenue_date)
+                  AND (b.end_date IS NULL OR b.end_date >= sales_by_group.revenue_date)
+                ORDER BY {REVENUE_BINDING_ORDER_SQL}
+                LIMIT 1
+            ) binding ON true
+            JOIN business_units bu ON bu.id = binding.shop_unit_id
+            JOIN floors unit_floor
+              ON unit_floor.id = bu.floor_id
+             AND TRIM(unit_floor.store_code) = sales_by_group.store_code
+        )
+    """
+
+
+def _live_revenue_source_ctes(
+    sales_date_filter: str,
+    fee_date_filter: str,
+    extra_date_filter: str,
+    sales_store_filter: str = "",
+) -> str:
+    live_sales_ctes = _live_sales_ctes(sales_date_filter, sales_store_filter)
+    return f"""
+        {live_sales_ctes},
+        source_rows AS (
+            SELECT
+              store_id,
+              floor_id,
+              unit_id,
+              unit_code,
+              revenue_date,
+              gross_profit_amount AS sales_amount,
+              0::numeric AS fee_amount,
+              0::numeric AS extra_amount,
+              1::integer AS sales_count,
+              0::integer AS fee_count,
+              0::integer AS extra_count
+            FROM live_sales
+            UNION ALL
+            SELECT
+              st.store_id,
+              bu.floor_id,
+              bu.id,
+              bu.unit_code,
+              fee.revenue_date,
+              0::numeric,
+              fee.tax_excluded_amount,
+              0::numeric,
+              0::integer,
+              1::integer,
+              0::integer
+            FROM unit_revenue_fee_detail fee
+            JOIN business_units bu ON bu.id = fee.unit_id
+            JOIN floors unit_floor ON unit_floor.id = bu.floor_id
+            JOIN stores st ON TRIM(st.store_code) = TRIM(unit_floor.store_code)
+            WHERE {fee_date_filter}
+            UNION ALL
+            SELECT
+              st.store_id,
+              bu.floor_id,
+              bu.id,
+              bu.unit_code,
+              extra.revenue_date,
+              0::numeric,
+              0::numeric,
+              extra.amount,
+              0::integer,
+              0::integer,
+              1::integer
+            FROM revenue_extra_receipts extra
+            JOIN business_units bu ON bu.id = extra.unit_id
+            JOIN floors unit_floor ON unit_floor.id = bu.floor_id
+            JOIN stores st ON TRIM(st.store_code) = TRIM(unit_floor.store_code)
+            WHERE {extra_date_filter}
+              AND extra.status = 'CONFIRMED'
+        )
+    """
+
 
 def _money(value: object) -> float:
     if value is None:
@@ -163,24 +298,30 @@ async def monthly_revenue(
         raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
     try:
         params: dict = {}
-        filters: list[str] = []
-        unmatched_filters = ["status = 'PENDING'"]
+        result_filters: list[str] = []
         if start_date and end_date:
             params["start_date"] = start_date
             params["end_date"] = end_date
-            filters.append("s.revenue_date BETWEEN :start_date AND :end_date")
-            unmatched_filters.append("revenue_date BETWEEN :start_date AND :end_date")
+            sales_date_filter = "s.sgldate BETWEEN :start_date AND :end_date"
+            fee_date_filter = "fee.revenue_date BETWEEN :start_date AND :end_date"
+            extra_date_filter = "extra.revenue_date BETWEEN :start_date AND :end_date"
             effective_month = _month_from_date(start_date)
         elif revenue_date:
             params["revenue_date"] = revenue_date
-            filters.append("s.revenue_date = :revenue_date")
-            unmatched_filters.append("revenue_date = :revenue_date")
+            sales_date_filter = "s.sgldate = :revenue_date"
+            fee_date_filter = "fee.revenue_date = :revenue_date"
+            extra_date_filter = "extra.revenue_date = :revenue_date"
             effective_month = _month_from_date(revenue_date)
         else:
             params["revenue_month"] = revenue_month
-            filters.append("s.revenue_month = :revenue_month")
-            unmatched_filters.append("revenue_month = :revenue_month")
+            sales_date_filter = (
+                "s.sgldate >= to_date(:revenue_month || '-01', 'YYYY-MM-DD') "
+                "AND s.sgldate < to_date(:revenue_month || '-01', 'YYYY-MM-DD') + INTERVAL '1 month'"
+            )
+            fee_date_filter = "fee.revenue_month = :revenue_month"
+            extra_date_filter = "extra.revenue_month = :revenue_month"
             effective_month = revenue_month
+        sales_store_filter = ""
         if store_id is not None:
             params["store_id"] = store_id
             store_row = db.execute(
@@ -188,36 +329,39 @@ async def monthly_revenue(
                 {"store_id": store_id},
             ).fetchone()
             store_code = str(store_row.store_code).strip() if store_row and store_row.store_code is not None else ""
-            if store_code.isdigit():
-                params["store_code_id"] = int(store_code)
-                filters.append("(s.store_id = :store_id OR s.store_id = :store_code_id)")
-                unmatched_filters.append("(store_id = :store_id OR store_id = :store_code_id)")
-            else:
-                filters.append("s.store_id = :store_id")
-                unmatched_filters.append("store_id = :store_id")
+            params["store_code"] = store_code
+            sales_store_filter = "AND TRIM(s.sglmarket) = :store_code"
+            result_filters.append("src.store_id = :store_id")
         if floor_id is not None:
-            filters.append("s.floor_id = :floor_id")
+            result_filters.append("src.floor_id = :floor_id")
             params["floor_id"] = floor_id
 
+        source_ctes = _live_revenue_source_ctes(
+            sales_date_filter,
+            fee_date_filter,
+            extra_date_filter,
+            sales_store_filter,
+        )
         sql = f"""
+            WITH {source_ctes}
             SELECT
-              s.unit_id,
-              s.unit_code,
-              s.store_id,
-              s.floor_id,
+              src.unit_id,
+              src.unit_code,
+              src.store_id,
+              src.floor_id,
               bu.status AS unit_status,
-              SUM(s.sales_gross_profit_amount)::numeric AS sales_gross_profit_amount,
-              SUM(s.fee_amount)::numeric AS fee_amount,
-              SUM(s.extra_amount)::numeric AS extra_amount,
-              SUM(s.total_amount)::numeric AS total_amount,
-              SUM(s.sales_detail_count)::bigint AS sales_detail_count,
-              SUM(s.fee_detail_count)::bigint AS fee_detail_count,
-              SUM(s.extra_detail_count)::bigint AS extra_detail_count
-            FROM unit_daily_revenue_summary s
-            LEFT JOIN business_units bu ON bu.id = s.unit_id
-            WHERE {" AND ".join(filters)}
-            GROUP BY s.unit_id, s.unit_code, s.store_id, s.floor_id, bu.status
-            ORDER BY total_amount DESC, s.unit_code ASC
+              COALESCE(SUM(src.sales_amount), 0)::numeric AS sales_gross_profit_amount,
+              COALESCE(SUM(src.fee_amount), 0)::numeric AS fee_amount,
+              COALESCE(SUM(src.extra_amount), 0)::numeric AS extra_amount,
+              COALESCE(SUM(src.sales_amount + src.fee_amount + src.extra_amount), 0)::numeric AS total_amount,
+              COALESCE(SUM(src.sales_count), 0)::bigint AS sales_detail_count,
+              COALESCE(SUM(src.fee_count), 0)::bigint AS fee_detail_count,
+              COALESCE(SUM(src.extra_count), 0)::bigint AS extra_detail_count
+            FROM source_rows src
+            JOIN business_units bu ON bu.id = src.unit_id
+            WHERE {" AND ".join(result_filters) if result_filters else "TRUE"}
+            GROUP BY src.unit_id, src.unit_code, src.store_id, src.floor_id, bu.status
+            ORDER BY total_amount DESC, src.unit_code ASC
         """
         rows = db.execute(text(sql), params).fetchall()
         metric_key = {
@@ -245,14 +389,22 @@ async def monthly_revenue(
             item["metric_amount"] = item[metric_key]
             items.append(item)
 
+        live_sales_ctes = _live_sales_ctes(sales_date_filter, sales_store_filter)
         unmatched = db.execute(
             text(
                 f"""
+                WITH {live_sales_ctes}
                 SELECT
                   COUNT(*)::bigint AS item_count,
-                  COALESCE(SUM(amount), 0)::numeric AS amount
-                FROM unmatched_revenue_items
-                WHERE {" AND ".join(unmatched_filters)}
+                  COALESCE(SUM(source.gross_profit_amount), 0)::numeric AS amount
+                FROM sales_by_group source
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM live_sales mapped
+                    WHERE mapped.revenue_date = source.revenue_date
+                      AND mapped.store_code = source.store_code
+                      AND mapped.source_group_code = source.source_group_code
+                )
                 """
             ),
             params,
@@ -286,45 +438,95 @@ async def unit_revenue_detail(
 ):
     require_permission(db, current_user, "revenue.view")
     if revenue_month:
-        date_filter = "revenue_month = :revenue_month"
         params: dict = {"unit_id": unit_id, "revenue_month": revenue_month}
+        sales_date_filter = (
+            "s.sgldate >= to_date(:revenue_month || '-01', 'YYYY-MM-DD') "
+            "AND s.sgldate < to_date(:revenue_month || '-01', 'YYYY-MM-DD') + INTERVAL '1 month'"
+        )
+        fee_date_filter = "fee.revenue_month = :revenue_month"
+        extra_date_filter = "extra.revenue_month = :revenue_month"
     elif start_date and end_date:
-        date_filter = "revenue_date BETWEEN :start_date AND :end_date"
         params = {"unit_id": unit_id, "start_date": start_date, "end_date": end_date}
+        sales_date_filter = "s.sgldate BETWEEN :start_date AND :end_date"
+        fee_date_filter = "fee.revenue_date BETWEEN :start_date AND :end_date"
+        extra_date_filter = "extra.revenue_date BETWEEN :start_date AND :end_date"
     else:
         raise HTTPException(status_code=400, detail="请传 revenue_month 或 start_date/end_date")
 
     try:
         unit = db.execute(
-            text("SELECT id, floor_id, unit_code, status FROM business_units WHERE id = :unit_id"),
+            text(
+                """
+                SELECT bu.id, bu.floor_id, bu.unit_code, bu.status, st.store_id, st.store_code
+                FROM business_units bu
+                JOIN floors floor ON floor.id = bu.floor_id
+                LEFT JOIN stores st ON TRIM(st.store_code) = TRIM(floor.store_code)
+                WHERE bu.id = :unit_id
+                """
+            ),
             {"unit_id": unit_id},
         ).fetchone()
         if not unit:
             raise HTTPException(status_code=404, detail="经营单元不存在")
 
+        params["store_code"] = str(unit.store_code or "").strip()
+        sales_store_filter = "AND TRIM(s.sglmarket) = :store_code"
+        source_ctes = _live_revenue_source_ctes(
+            sales_date_filter,
+            fee_date_filter,
+            extra_date_filter,
+            sales_store_filter,
+        )
+
         daily = db.execute(
             text(
                 f"""
-                SELECT revenue_date, revenue_month, sales_gross_profit_amount, fee_amount,
-                       extra_amount, total_amount, sales_detail_count, fee_detail_count,
-                       extra_detail_count
-                FROM unit_daily_revenue_summary
-                WHERE unit_id = :unit_id AND {date_filter}
-                ORDER BY revenue_date ASC
+                WITH {source_ctes}
+                SELECT
+                  src.revenue_date,
+                  to_char(src.revenue_date, 'YYYY-MM') AS revenue_month,
+                  COALESCE(SUM(src.sales_amount), 0)::numeric AS sales_gross_profit_amount,
+                  COALESCE(SUM(src.fee_amount), 0)::numeric AS fee_amount,
+                  COALESCE(SUM(src.extra_amount), 0)::numeric AS extra_amount,
+                  COALESCE(SUM(src.sales_amount + src.fee_amount + src.extra_amount), 0)::numeric AS total_amount,
+                  COALESCE(SUM(src.sales_count), 0)::bigint AS sales_detail_count,
+                  COALESCE(SUM(src.fee_count), 0)::bigint AS fee_detail_count,
+                  COALESCE(SUM(src.extra_count), 0)::bigint AS extra_detail_count
+                FROM source_rows src
+                WHERE src.unit_id = :unit_id
+                GROUP BY src.revenue_date
+                ORDER BY src.revenue_date ASC
                 """
             ),
             params,
         ).fetchall()
+        live_sales_ctes = _live_sales_ctes(sales_date_filter, sales_store_filter)
         sales = db.execute(
             text(
                 f"""
-                SELECT id, revenue_date, revenue_month, source_group_code, source_group_name,
-                       operation_mode, supplier_code, supplier_name, contract_code,
-                       sales_qty, tax_excluded_sales_amount, tax_excluded_profit_amount,
-                       source_doc_no, etl_batch_id
-                FROM unit_revenue_sales_detail
-                WHERE unit_id = :unit_id AND {date_filter}
-                ORDER BY revenue_date DESC, id DESC
+                WITH {live_sales_ctes}
+                SELECT
+                  md5(
+                    live_sales.revenue_date::text || '|' ||
+                    live_sales.source_group_code || '|' ||
+                    live_sales.unit_id::text
+                  ) AS id,
+                  live_sales.revenue_date,
+                  to_char(live_sales.revenue_date, 'YYYY-MM') AS revenue_month,
+                  live_sales.source_group_code,
+                  live_sales.source_group_name,
+                  live_sales.operation_mode,
+                  live_sales.supplier_code,
+                  live_sales.supplier_name,
+                  live_sales.contract_code,
+                  live_sales.sales_qty,
+                  live_sales.sales_amount AS tax_excluded_sales_amount,
+                  live_sales.gross_profit_amount AS tax_excluded_profit_amount,
+                  live_sales.first_bill_no AS source_doc_no,
+                  'LIVE_SALEGOODSLIST'::varchar AS etl_batch_id
+                FROM live_sales
+                WHERE live_sales.unit_id = :unit_id
+                ORDER BY live_sales.revenue_date DESC, live_sales.source_group_code ASC
                 LIMIT 500
                 """
             ),
@@ -336,8 +538,8 @@ async def unit_revenue_detail(
                 SELECT id, revenue_date, revenue_month, source_group_code, source_group_name,
                        contract_code, contract_name, fee_type_code, fee_type_name,
                        tax_included_amount, tax_excluded_amount, source_type, source_doc_no, etl_batch_id
-                FROM unit_revenue_fee_detail
-                WHERE unit_id = :unit_id AND {date_filter}
+                FROM unit_revenue_fee_detail fee
+                WHERE fee.unit_id = :unit_id AND {fee_date_filter}
                 ORDER BY revenue_date DESC, id DESC
                 LIMIT 500
                 """
@@ -348,8 +550,8 @@ async def unit_revenue_detail(
             text(
                 f"""
                 SELECT *
-                FROM revenue_extra_receipts
-                WHERE unit_id = :unit_id AND {date_filter}
+                FROM revenue_extra_receipts extra
+                WHERE extra.unit_id = :unit_id AND {extra_date_filter}
                 ORDER BY revenue_date DESC, id DESC
                 LIMIT 500
                 """
@@ -653,7 +855,7 @@ async def recalculate_revenue(
         )
         sales_result = db.execute(
             text(
-                """
+                f"""
                 WITH sales_by_group AS (
                     SELECT
                       s.sgldate::date AS revenue_date,
@@ -701,7 +903,7 @@ async def recalculate_revenue(
                           AND COALESCE(b.status, 'ACTIVE') = 'ACTIVE'
                           AND (b.start_date IS NULL OR b.start_date <= sales_by_group.revenue_date)
                           AND (b.end_date IS NULL OR b.end_date >= sales_by_group.revenue_date)
-                        ORDER BY COALESCE(b.is_primary, false) DESC, b.id ASC
+                        ORDER BY {REVENUE_BINDING_ORDER_SQL}
                         LIMIT 1
                     ) binding ON true
                     JOIN business_units bu ON bu.id = binding.shop_unit_id

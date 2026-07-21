@@ -259,6 +259,7 @@ test("brand member page exposes separate Excel and PPT export actions", async ()
   assert.match(source, /导出 PPT 沟通版/);
   assert.match(source, /exportSupplierPresentation/);
   assert.match(source, /购买频次与客件分析/);
-  assert.match(source, /一次客＝期间内1张会员交易小票/);
+  assert.match(source, /一次客＝期间内1张正向购买小票/);
+  assert.match(source, /退货小票不计客次/);
   assert.match(source, /同期客件数/);
 });

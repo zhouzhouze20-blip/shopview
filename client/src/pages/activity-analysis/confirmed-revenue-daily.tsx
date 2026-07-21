@@ -133,7 +133,7 @@ export default function ConfirmedRevenueDailyPage() {
     <div className="space-y-5 p-4 sm:p-6">
       <div className="max-w-3xl">
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">确认收入占比</h1>
-        <p className="mt-1 text-sm text-muted-foreground">按财务确认时间查看已确认凭证匹配折算后的销售收入金额。</p>
+        <p className="mt-1 text-sm text-muted-foreground">按业务发生日查看已确认凭证匹配折算后的销售收入金额。</p>
       </div>
 
       <Card className="rounded-lg">
@@ -229,7 +229,7 @@ function EmptyCard() {
   return (
     <Card className="rounded-lg">
       <CardContent className="p-6 text-center text-sm text-muted-foreground">
-        当前筛选范围没有每日收入变动，请先在卡券月结页面生成对应期间的每日变动。
+        当前业务发生日期范围没有每日收入变动，请先在卡券月结页面生成对应期间的每日变动。
       </CardContent>
     </Card>
   );

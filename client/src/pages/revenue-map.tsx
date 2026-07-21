@@ -19,7 +19,6 @@ import {
   RevenueMonthlyItem,
   useConfirmRevenueExtraReceipt,
   useCreateRevenueExtraReceipt,
-  useRecalculateRevenue,
   useRevenueExtraReceipts,
   useRevenueMonthly,
   useRevenueUnitDetail,
@@ -28,7 +27,7 @@ import {
 import { resolveApiAssetUrl } from "@/lib/api";
 import { deriveSvgViewBox } from "@/lib/svg-metadata";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
-import { CalendarDays, CheckCircle2, CircleDollarSign, Loader2, Minus, Plus, RefreshCw, RotateCcw, Settings2, Target, XCircle } from "lucide-react";
+import { CalendarDays, CheckCircle2, CircleDollarSign, Loader2, Minus, Plus, RotateCcw, Settings2, Target, XCircle } from "lucide-react";
 
 const money = (value: number) =>
   Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -204,7 +203,6 @@ export default function RevenueMapPage() {
   const createExtra = useCreateRevenueExtraReceipt();
   const confirmExtra = useConfirmRevenueExtraReceipt(revenueMonth);
   const voidExtra = useVoidRevenueExtraReceipt(revenueMonth);
-  const recalculate = useRecalculateRevenue();
 
   const rows = monthlyQuery.data?.items ?? [];
   const extras = extraQuery.data ?? [];
@@ -505,26 +503,6 @@ export default function RevenueMapPage() {
       toast({ title: "补收已保存" });
     } catch (error) {
       toast({ title: "补收保存失败", description: String(error), variant: "destructive" });
-    }
-  };
-
-  const handleRecalculate = async () => {
-    try {
-      const start = startDate || todayDate();
-      const end = endDate || start;
-      if (end < start) {
-        toast({ title: "结束日期不能早于开始日期", variant: "destructive" });
-        return;
-      }
-      await recalculate.mutateAsync({ start_date: start, end_date: end });
-      await Promise.all([
-        monthlyQuery.refetch(),
-        extraQuery.refetch(),
-        selectedUnit ? detailQuery.refetch() : Promise.resolve(),
-      ]);
-      toast({ title: "收益汇总已重算" });
-    } catch (error) {
-      toast({ title: "重算失败", description: String(error), variant: "destructive" });
     }
   };
 
@@ -1023,10 +1001,6 @@ export default function RevenueMapPage() {
               className="h-9 w-36"
             />
           </div>
-          <Button variant="outline" className="h-9" onClick={handleRecalculate} disabled={recalculate.isPending}>
-            {recalculate.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            重算
-          </Button>
           <Dialog open={extraOpen} onOpenChange={setExtraOpen}>
             <DialogTrigger asChild>
               <Button className="h-9">

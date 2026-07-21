@@ -147,6 +147,69 @@ class SalesTicketFilterTests(unittest.TestCase):
 
         self.assertIn("coalesce(sum(s.sglsjje), 0) as priced_sales_amount", captured["sql"])
 
+    def test_group_summary_uses_key_equality_for_manaframe_joins(self):
+        """Keep the long-range plan anchored to manaframe's unique mfcode index."""
+        captured = {}
+
+        def fake_fetch(_db, sql, params):
+            captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
+            return []
+
+        with (
+            patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
+            patch.object(sales_router, "_table_exists", lambda _db, table: table in {"manaframe", "stores"}),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch),
+        ):
+            _group_level_sales_rows(
+                object(),
+                start_date="2024-08-19",
+                end_date="2025-07-18",
+                store_id=None,
+                department_code=None,
+                group_code=None,
+                keyword=None,
+                limit=None,
+                unrestricted=True,
+            )
+
+        self.assertIn("on mf.mfpcode = dept.mfcode", captured["sql"])
+        self.assertIn("on s.sglmfid = cg.group_code", captured["sql"])
+        self.assertNotIn(
+            "upper(trim(coalesce(s.sglmfid, ''))) = upper(trim(coalesce(cg.group_code, '')))",
+            captured["sql"],
+        )
+
+    def test_group_summary_aggregates_sales_before_dimension_joins(self):
+        captured = {}
+
+        def fake_fetch(_db, sql, params):
+            captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
+            return []
+
+        with (
+            patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
+            patch.object(sales_router, "_table_exists", lambda _db, table: table in {"manaframe", "stores"}),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch),
+        ):
+            _group_level_sales_rows(
+                object(),
+                start_date="2024-08-19",
+                end_date="2025-07-18",
+                store_id=None,
+                department_code=None,
+                group_code=None,
+                keyword=None,
+                limit=None,
+                unrestricted=True,
+            )
+
+        sales_agg_position = captured["sql"].index("sales_agg as")
+        manaframe_join_position = captured["sql"].index("from manaframe mf")
+        self.assertLess(sales_agg_position, manaframe_join_position)
+        self.assertIn("group by s.sglmarket, s.sglmfid", captured["sql"])
+
     def test_group_tickets_sums_priced_sales_amount_by_billno(self):
         captured = {}
 
@@ -171,18 +234,16 @@ class SalesTicketFilterTests(unittest.TestCase):
             ),
             patch.object(sales_router, "_fetch_mappings", fake_fetch),
         ):
-            asyncio.run(
-                group_tickets(
-                    "6010101035",
-                    start_date=None,
-                    end_date=None,
-                    goods_code=None,
-                    barcode=None,
-                    supplier_code=None,
-                    limit=100,
-                    db=object(),
-                    current_user=object(),
-                )
+            group_tickets(
+                "6010101035",
+                start_date=None,
+                end_date=None,
+                goods_code=None,
+                barcode=None,
+                supplier_code=None,
+                limit=100,
+                db=object(),
+                current_user=object(),
             )
 
         self.assertIn("s.sglsjje", captured["sql"])
@@ -229,7 +290,7 @@ class SalesTicketFilterTests(unittest.TestCase):
             patch.object(sales_router, "_table_exists", fake_table_exists),
             patch.object(sales_router, "_fetch_mappings", fake_fetch_mappings),
         ):
-            result = asyncio.run(ticket_detail("13030635", db=object(), current_user=object()))
+            result = ticket_detail("13030635", db=object(), current_user=object())
 
         self.assertEqual(result["goods"][0]["name"], "牛丼饭 单人定食")
 
@@ -256,7 +317,7 @@ class SalesTicketFilterTests(unittest.TestCase):
             patch.object(sales_router, "_table_exists", fake_table_exists),
             patch.object(sales_router, "_fetch_mappings", fake_fetch_mappings),
         ):
-            asyncio.run(ticket_detail("13033424", db=object(), current_user=object()))
+            ticket_detail("13033424", db=object(), current_user=object())
 
         goods_queries = [sql for sql in captured_sql if "from salegoods" in sql and "order by g.rowno" in sql]
         self.assertTrue(goods_queries)
@@ -283,7 +344,7 @@ class SalesTicketFilterTests(unittest.TestCase):
             patch.object(sales_router, "_table_exists", fake_table_exists),
             patch.object(sales_router, "_fetch_mappings", fake_fetch_mappings),
         ):
-            asyncio.run(ticket_detail("13030635", db=object(), current_user=object()))
+            ticket_detail("13030635", db=object(), current_user=object())
 
         payment_queries = [sql for sql in captured_sql if "from salepay" in sql]
         self.assertTrue(payment_queries)

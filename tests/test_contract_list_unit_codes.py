@@ -56,6 +56,8 @@ class _FakeDb:
                     "group_names": "马记永厅",
                     "department_codes": "6030116",
                     "department_names": "新世纪十部(特业)",
+                    "store_codes": "603",
+                    "store_names": "常州新世纪商城",
                     "scope_entries": "",
                     "range_brands": None,
                     "range_start_date": None,
@@ -100,6 +102,34 @@ class ContractListUnitCodesTest(unittest.TestCase):
         self.assertIn("department_code", sql)
         self.assertIn("department_code", params)
         self.assertEqual(params["department_code"], "6030116")
+
+    def test_contract_list_filters_by_store_code(self):
+        db = _FakeDb()
+        scope = SimpleNamespace(all_access=True, allow={}, deny={})
+
+        with patch.object(contracts_router, "_table_exists", return_value=True):
+            contracts_router._load_contract_list_items(db, scope, store_code="603", limit=100)
+
+        sql = "\n".join(db.sql).lower()
+        params = db.params[-1]
+        self.assertIn("cg_store_filter.store_code", sql)
+        self.assertEqual(params["store_code"], "603")
+
+    def test_contract_store_options_use_contract_scope_rows(self):
+        options = contracts_router._contract_store_options_from_items(
+            [
+                {"store_codes": "603", "store_names": "常州新世纪商城"},
+                {"store_codes": "601", "store_names": "常州购物中心"},
+            ]
+        )
+
+        self.assertEqual(
+            options,
+            [
+                {"store_code": "601", "store_name": "常州购物中心"},
+                {"store_code": "603", "store_name": "常州新世纪商城"},
+            ],
+        )
 
     def test_contract_list_orders_current_and_shared_contracts_before_expired(self):
         db = _FakeDb()

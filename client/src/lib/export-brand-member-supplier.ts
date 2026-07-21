@@ -319,7 +319,7 @@ function createMemberStructureSheet(report: BrandMemberReport) {
         roundMoney(priorRow?.average_ticket_value ?? 0),
       ];
     }),
-    ["说明：会员等级取交易小票 salehead.custtype，按等级内会员去重；期间等级变化的会员可能出现在多个等级。客单＝销售收入净额÷会员交易小票数。"],
+    ["说明：会员等级取交易小票 salehead.custtype，按等级内会员去重；期间等级变化的会员可能出现在多个等级。客单＝销售收入净额÷正向购买小票数，退货小票不计客次。"],
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   applyBase(sheet, `A1:O${rows.length}`);
@@ -375,7 +375,7 @@ function createPurchaseFrequencySheet(report: BrandMemberReport) {
     [],
     [
       "客群", "定义", "本期会员数", "本期人数占比", "本期销售收入（元）", "本期销售占比",
-      "本期交易小票", "本期消费频次", "本期客单（元）", "本期净销售件数", "本期客件数", "本期件单价（元）",
+      "本期正向购买小票", "本期消费频次", "本期客单（元）", "本期净销售件数", "本期客件数", "本期件单价（元）",
       "同期会员数", "同期人数占比", "同期销售收入（元）", "同期客件数", "同期客单（元）", "同期件单价（元）",
     ],
     ...current.purchase_frequency_analysis.map((row) => {
@@ -402,7 +402,7 @@ function createPurchaseFrequencySheet(report: BrandMemberReport) {
       ];
     }),
     [],
-    ["说明：净销售件数汇总 salegoodslist.sglsl，退货数量按负数冲减；客件数＝净销售件数÷会员交易小票数；件单价＝会员销售收入净额÷净销售件数。"],
+    ["说明：净销售件数汇总 salegoodslist.sglsl，退货数量按负数冲减；退货小票不计客次；客件数＝净销售件数÷正向购买小票数；件单价＝会员销售收入净额÷净销售件数。"],
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   applyBase(sheet, `A1:R${rows.length}`);
@@ -529,8 +529,8 @@ function createDefinitionsSheet(report: BrandMemberReport) {
     ["购买会员数", "期间在目标柜组至少发生一笔正向购买的会员数", "所选本期 / 同期", "按会员去重"],
     ["会员历史身份", "分别追溯至各分析期开始日期之前的全部门店消费历史", "分析期开始前", "用于划分品牌老客与流入客群"],
     ["内部流入", "包含同部门流入与跨部门流入", "目标门店", "同一会员仅归入一个客群"],
-    ["一次客 / 多次客", "一次客为期间内1张会员交易小票；多次客为期间内2张及以上", "所选本期 / 同期", "仅统计至少一笔正向购买的会员"],
-    ["客件数", "会员净销售件数÷会员交易小票数", "所选本期 / 同期", "salegoodslist.sglsl，退货数量按负数冲减"],
+    ["一次客 / 多次客", "一次客为期间内1张正向购买小票；多次客为期间内2张及以上", "所选本期 / 同期", "仅统计至少一笔正向购买的会员；退货小票不计客次"],
+    ["客件数", "会员净销售件数÷正向购买小票数", "所选本期 / 同期", "salegoodslist.sglsl，退货数量按负数冲减"],
     [],
     ["隐私说明"],
     ["本报告仅使用汇总指标，不包含会员姓名、手机号、会员卡号或其他个人识别信息。"],

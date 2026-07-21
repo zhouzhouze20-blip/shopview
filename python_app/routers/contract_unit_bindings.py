@@ -331,7 +331,16 @@ async def update_contract_unit_binding(
 ):
     require_permission(db, current_user, "contract.edit")
     _require_binding_table(db)
-    exists = db.execute(text("SELECT id FROM business_unit_binding WHERE id = :id"), {"id": binding_id}).fetchone()
+    exists = db.execute(
+        text(
+            """
+            SELECT id, shop_unit_id, contract_id, status, start_date, end_date
+            FROM business_unit_binding
+            WHERE id = :id
+            """
+        ),
+        {"id": binding_id},
+    ).mappings().first()
     if not exists:
         raise HTTPException(status_code=404, detail="绑定记录不存在")
 
@@ -344,8 +353,35 @@ async def update_contract_unit_binding(
         raise HTTPException(status_code=400, detail=f"status 非法，允许值: {', '.join(sorted(VALID_STATUS))}")
     start_date = _parse_date(body.get("start_date"), "start_date") if "start_date" in body else None
     end_date = _parse_date(body.get("end_date"), "end_date") if "end_date" in body else None
-    if start_date and end_date and start_date > end_date:
+    final_shop_unit_id = shop_unit_id if "shop_unit_id" in body else exists["shop_unit_id"]
+    final_contract_no = contract_no if "contract_id" in body else exists["contract_id"]
+    final_status = status_value if "status" in body else exists["status"]
+    final_start_date = start_date if "start_date" in body else exists["start_date"]
+    final_end_date = end_date if "end_date" in body else exists["end_date"]
+
+    if final_start_date and final_end_date and final_start_date > final_end_date:
         raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
+    if str(final_status or "ACTIVE").strip().upper() == "ACTIVE":
+        duplicate = db.execute(
+            text(
+                """
+                SELECT id FROM business_unit_binding
+                WHERE id <> :id
+                  AND shop_unit_id = :shop_unit_id
+                  AND upper(trim(contract_id)) = upper(trim(:contract_id))
+                  AND upper(trim(COALESCE(status, 'ACTIVE'))) = 'ACTIVE'
+                LIMIT 1
+                """
+            ),
+            {
+                "id": binding_id,
+                "shop_unit_id": final_shop_unit_id,
+                "contract_id": final_contract_no,
+            },
+        ).fetchone()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="该柜位与合同已有其他有效绑定")
 
     updates = ["updated_at = NOW()"]
     params: dict[str, Any] = {"id": binding_id}

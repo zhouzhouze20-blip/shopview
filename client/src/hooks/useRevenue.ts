@@ -247,18 +247,3 @@ export function useVoidRevenueExtraReceipt(revenueMonth: string) {
     },
   });
 }
-
-export function useRecalculateRevenue() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: { start_date: string; end_date: string }) =>
-      apiPost<{ message: string; summary_rows: number }>("/api/revenue-map/recalculate", input),
-    onSuccess: async (_, input) => {
-      if (input.start_date === input.end_date) {
-        await qc.invalidateQueries({ queryKey: ["revenue-monthly", input.start_date] });
-      }
-      await qc.invalidateQueries({ queryKey: ["revenue-monthly", input.start_date.slice(0, 7)] });
-      await qc.invalidateQueries({ queryKey: ["revenue-monthly"] });
-    },
-  });
-}

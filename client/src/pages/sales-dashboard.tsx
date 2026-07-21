@@ -29,7 +29,12 @@ import {
 } from "@/lib/export-sales-excel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { getSalesDashboardData, isSalesDashboardTimeoutError } from "@/lib/sales-dashboard-request";
+import {
+  getSalesDashboardData,
+  isSalesDashboardTimeoutError,
+  salesDashboardRangeDays,
+  validateSalesDashboardDateRanges,
+} from "@/lib/sales-dashboard-request";
 
 type StoreSummary = {
   store_id: string;
@@ -311,11 +316,16 @@ function TableStatusRow(props: { colSpan: number; loading: boolean; emptyText: s
 function salesDataStatusText(error: unknown, emptyText: string): string {
   if (!error) return emptyText;
   return isSalesDashboardTimeoutError(error)
-    ? "数据请求超时，本次汇总按 0 显示。可缩短日期范围后重试。"
-    : "数据加载失败，本次汇总按 0 显示。请稍后重试。";
+    ? "数据请求超时，本次查询未返回结果。可缩短日期范围后重试。"
+    : "数据加载失败，本次查询未返回结果。请稍后重试。";
 }
 
-function SummaryMetricCard(props: { title: string; value: string; loading: boolean }) {
+function salesTableStatusText(error: unknown, emptyText: string): string {
+  if (!error) return emptyText;
+  return isSalesDashboardTimeoutError(error) ? "查询超时，未返回数据。" : "数据加载失败，请稍后重试。";
+}
+
+function SummaryMetricCard(props: { title: string; value: string; loading: boolean; unavailable?: boolean }) {
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-sm text-slate-500">{props.title}</CardTitle></CardHeader>
@@ -324,6 +334,11 @@ function SummaryMetricCard(props: { title: string; value: string; loading: boole
           <div className="inline-flex h-8 items-center gap-2 text-sm font-medium text-blue-600">
             <Loader2 className="h-4 w-4 animate-spin" />
             加载中…
+          </div>
+        ) : props.unavailable ? (
+          <div>
+            <div className="text-2xl font-semibold text-slate-400">—</div>
+            <div className="mt-1 text-xs font-medium text-amber-700">查询未完成</div>
           </div>
         ) : (
           <div className="text-2xl font-semibold">{props.value}</div>
@@ -490,6 +505,11 @@ export default function SalesDashboardPage() {
   /** 同期对比区间 → API prior_start_date / prior_end_date；改本期区间时按上年同日 range 自动同步 */
   const [priorStartDate, setPriorStartDate] = useState(initialPrior?.start_date ?? today);
   const [priorEndDate, setPriorEndDate] = useState(initialPrior?.end_date ?? today);
+  /** 日期输入先保存在草稿中，点击“查询”后才触发大表请求，避免连续修改四个日期时重复扫描。 */
+  const [draftCurrentStartDate, setDraftCurrentStartDate] = useState(today);
+  const [draftCurrentEndDate, setDraftCurrentEndDate] = useState(today);
+  const [draftPriorStartDate, setDraftPriorStartDate] = useState(initialPrior?.start_date ?? today);
+  const [draftPriorEndDate, setDraftPriorEndDate] = useState(initialPrior?.end_date ?? today);
   const [keyword, setKeyword] = useState("");
   const [departmentProductKeyword, setDepartmentProductKeyword] = useState("");
   const [departmentProductView, setDepartmentProductView] = useState<"goods" | "suppliers" | "groups">("goods");
@@ -525,14 +545,17 @@ export default function SalesDashboardPage() {
   const syncPriorRangeFromCurrent = (start: string, end: string) => {
     const r = priorYearRange(start, end);
     if (r) {
-      setPriorStartDate(r.start_date);
-      setPriorEndDate(r.end_date);
+      setDraftPriorStartDate(r.start_date);
+      setDraftPriorEndDate(r.end_date);
     }
   };
+
+  const draftRangeDays = salesDashboardRangeDays(draftCurrentStartDate, draftCurrentEndDate);
 
   const storesQuery = useQuery<StoreSummary[]>({
     queryKey: ["/api/sales/summary/stores", commonParams],
     queryFn: () => getSalesDashboardData(`/api/sales/summary/stores${buildQuery(commonParams)}`, apiGet),
+    enabled: activeTab === "stores",
   });
 
   const departmentsQuery = useQuery<DepartmentSummary[]>({
@@ -545,7 +568,7 @@ export default function SalesDashboardPage() {
         })}`,
         apiGet,
       ),
-    enabled: activeTab === "departments" || activeTab === "groups" || activeTab === "department-products" || activeTab === "tickets",
+    enabled: activeTab === "departments",
   });
 
   const groupsUnassigned = Boolean(selectedDepartment && isUnassignedDepartmentRow(selectedDepartment));
@@ -571,7 +594,7 @@ export default function SalesDashboardPage() {
         })}`,
         apiGet,
       ),
-    enabled: activeTab === "groups" || activeTab === "tickets" || (activeTab === "department-products" && departmentProductView === "groups"),
+    enabled: activeTab === "groups" || (activeTab === "department-products" && departmentProductView === "groups"),
   });
 
   const departmentGoodsQuery = useQuery<DepartmentGoodsSummary[]>({
@@ -647,7 +670,7 @@ export default function SalesDashboardPage() {
         })}`,
         apiGet,
       ),
-    enabled: Boolean(selectedGroup?.group_code),
+    enabled: activeTab === "tickets" && Boolean(selectedGroup?.group_code),
   });
 
   const ticketDetailQuery = useQuery<TicketDetail>({
@@ -997,13 +1020,62 @@ export default function SalesDashboardPage() {
   }, [ticketsTableTotals]);
 
   const refresh = () => {
-    storesQuery.refetch();
-    if (activeTab === "departments" || activeTab === "groups" || activeTab === "department-products" || activeTab === "tickets") departmentsQuery.refetch();
-    if (activeTab === "groups" || activeTab === "tickets" || (activeTab === "department-products" && departmentProductView === "groups")) groupsQuery.refetch();
+    if (activeTab === "stores") storesQuery.refetch();
+    if (activeTab === "departments") departmentsQuery.refetch();
+    if (activeTab === "groups") groupsQuery.refetch();
+    if (activeTab === "department-products" && departmentProductView === "groups") groupsQuery.refetch();
     if (activeTab === "department-products" && departmentProductView === "goods") departmentGoodsQuery.refetch();
     if (activeTab === "department-products" && departmentProductView === "suppliers") departmentSuppliersQuery.refetch();
     if (activeTab === "tickets" && selectedGroup?.group_code) ticketsQuery.refetch();
     if (selectedBillno) ticketDetailQuery.refetch();
+  };
+
+  const applyDateRange = () => {
+    const ranges = {
+      currentStartDate: draftCurrentStartDate,
+      currentEndDate: draftCurrentEndDate,
+      priorStartDate: draftPriorStartDate,
+      priorEndDate: draftPriorEndDate,
+    };
+    const validationError = validateSalesDashboardDateRanges(ranges);
+    if (validationError) {
+      toast({ title: "日期范围有误", description: validationError, variant: "destructive" });
+      return;
+    }
+    const unchanged =
+      currentStartDate === draftCurrentStartDate &&
+      currentEndDate === draftCurrentEndDate &&
+      priorStartDate === draftPriorStartDate &&
+      priorEndDate === draftPriorEndDate;
+    if (unchanged) {
+      refresh();
+      return;
+    }
+    setCurrentStartDate(draftCurrentStartDate);
+    setCurrentEndDate(draftCurrentEndDate);
+    setPriorStartDate(draftPriorStartDate);
+    setPriorEndDate(draftPriorEndDate);
+  };
+
+  const applyRecentRange = (days: number) => {
+    const end = new Date(`${draftCurrentEndDate || today}T00:00:00`);
+    if (Number.isNaN(end.getTime())) return;
+    const start = new Date(end);
+    start.setDate(start.getDate() - Math.max(0, days - 1));
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const format = (value: Date) => `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+    const nextCurrentStart = format(start);
+    const nextCurrentEnd = format(end);
+    const nextPrior = priorYearRange(nextCurrentStart, nextCurrentEnd);
+    if (!nextPrior) return;
+    setDraftCurrentStartDate(nextCurrentStart);
+    setDraftCurrentEndDate(nextCurrentEnd);
+    setDraftPriorStartDate(nextPrior.start_date);
+    setDraftPriorEndDate(nextPrior.end_date);
+    setCurrentStartDate(nextCurrentStart);
+    setCurrentEndDate(nextCurrentEnd);
+    setPriorStartDate(nextPrior.start_date);
+    setPriorEndDate(nextPrior.end_date);
   };
 
   const drillToStore = (store: StoreSummary) => {
@@ -1290,7 +1362,7 @@ export default function SalesDashboardPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold text-slate-900">销售看板</h1>
@@ -1306,17 +1378,17 @@ export default function SalesDashboardPage() {
           </div>
           <p className="mt-1 text-sm text-slate-500">按权限范围查看门店、部门、柜组与小票明细。</p>
         </div>
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="grid w-full grid-cols-2 items-end gap-3 sm:w-auto xl:grid-cols-[repeat(4,minmax(136px,1fr))_auto]">
           <div className="space-y-1">
             <Label htmlFor="sales-current-start">本期开始日期</Label>
             <Input
               id="sales-current-start"
               type="date"
-              value={currentStartDate}
+              value={draftCurrentStartDate}
               onChange={(event) => {
                 const v = event.target.value;
-                setCurrentStartDate(v);
-                syncPriorRangeFromCurrent(v, currentEndDate);
+                setDraftCurrentStartDate(v);
+                syncPriorRangeFromCurrent(v, draftCurrentEndDate);
               }}
             />
           </div>
@@ -1325,11 +1397,11 @@ export default function SalesDashboardPage() {
             <Input
               id="sales-current-end"
               type="date"
-              value={currentEndDate}
+              value={draftCurrentEndDate}
               onChange={(event) => {
                 const v = event.target.value;
-                setCurrentEndDate(v);
-                syncPriorRangeFromCurrent(currentStartDate, v);
+                setDraftCurrentEndDate(v);
+                syncPriorRangeFromCurrent(draftCurrentStartDate, v);
               }}
             />
           </div>
@@ -1338,8 +1410,8 @@ export default function SalesDashboardPage() {
             <Input
               id="sales-prior-start"
               type="date"
-              value={priorStartDate}
-              onChange={(event) => setPriorStartDate(event.target.value)}
+              value={draftPriorStartDate}
+              onChange={(event) => setDraftPriorStartDate(event.target.value)}
             />
           </div>
           <div className="space-y-1">
@@ -1347,32 +1419,50 @@ export default function SalesDashboardPage() {
             <Input
               id="sales-prior-end"
               type="date"
-              value={priorEndDate}
-              onChange={(event) => setPriorEndDate(event.target.value)}
+              value={draftPriorEndDate}
+              onChange={(event) => setDraftPriorEndDate(event.target.value)}
             />
           </div>
           <Button
-            variant="outline"
-            onClick={refresh}
+            onClick={applyDateRange}
             disabled={salesDataFetching}
             aria-busy={salesDataFetching}
           >
             <RefreshCw className={cn("mr-2 h-4 w-4", salesDataFetching && "animate-spin")} />
-            {salesDataFetching ? "刷新中…" : "刷新"}
+            {salesDataFetching ? "查询中…" : "查询"}
           </Button>
         </div>
       </div>
 
+      {draftRangeDays > 92 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
+          <span>当前本期跨度 {draftRangeDays} 天。大范围查询可能较慢；修改日期后点击“查询”才会重新加载。</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => applyRecentRange(30)} disabled={salesDataFetching}>
+            查询近 30 天
+          </Button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <SummaryMetricCard title="销售收入" value={money(totals.sales)} loading={activeDataInitialLoading} />
-        <SummaryMetricCard title="净毛利" value={money(totals.profit)} loading={activeDataInitialLoading} />
-        <SummaryMetricCard title="小票数" value={number(totals.tickets)} loading={activeDataInitialLoading} />
-        <SummaryMetricCard title="柜组数" value={number(totals.groups)} loading={activeDataInitialLoading} />
+        <SummaryMetricCard title="销售收入" value={money(totals.sales)} loading={activeDataInitialLoading} unavailable={Boolean(activeDataError)} />
+        <SummaryMetricCard title="净毛利" value={money(totals.profit)} loading={activeDataInitialLoading} unavailable={Boolean(activeDataError)} />
+        <SummaryMetricCard title="小票数" value={number(totals.tickets)} loading={activeDataInitialLoading} unavailable={Boolean(activeDataError)} />
+        <SummaryMetricCard title="柜组数" value={number(totals.groups)} loading={activeDataInitialLoading} unavailable={Boolean(activeDataError)} />
       </div>
 
       {activeDataError && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="alert">
-          {salesDataStatusText(activeDataError, "")}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="alert">
+          <span>{salesDataStatusText(activeDataError, "")}</span>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={salesDataFetching}>
+              重试
+            </Button>
+            {isSalesDashboardTimeoutError(activeDataError) && (
+              <Button type="button" variant="outline" size="sm" onClick={() => applyRecentRange(30)} disabled={salesDataFetching}>
+                查询近 30 天
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1458,7 +1548,7 @@ export default function SalesDashboardPage() {
                     <TableStatusRow
                       colSpan={9}
                       loading={storesInitialLoading}
-                      emptyText={salesDataStatusText(storesQuery.error, "当前日期和权限范围内暂无门店销售数据。")}
+                      emptyText={salesTableStatusText(storesQuery.error, "当前日期和权限范围内暂无门店销售数据。")}
                     />
                   ) : (
                     (storesQuery.data ?? []).map((row) => (
@@ -1542,7 +1632,7 @@ export default function SalesDashboardPage() {
                     <TableStatusRow
                       colSpan={9}
                       loading={departmentsInitialLoading}
-                      emptyText={salesDataStatusText(departmentsQuery.error, "当前日期和权限范围内暂无部门销售数据。")}
+                      emptyText={salesTableStatusText(departmentsQuery.error, "当前日期和权限范围内暂无部门销售数据。")}
                     />
                   ) : (
                     (departmentsQuery.data ?? []).map((row) => (
@@ -1688,7 +1778,7 @@ export default function SalesDashboardPage() {
                       <TableStatusRow
                         colSpan={12}
                         loading={departmentSuppliersInitialLoading}
-                        emptyText={salesDataStatusText(departmentSuppliersQuery.error, "当前筛选条件下暂无供应商汇总数据。")}
+                        emptyText={salesTableStatusText(departmentSuppliersQuery.error, "当前筛选条件下暂无供应商汇总数据。")}
                       />
                     ) : (
                       (departmentSuppliersQuery.data ?? []).map((row) => (
@@ -1763,7 +1853,7 @@ export default function SalesDashboardPage() {
                       <TableStatusRow
                         colSpan={14}
                         loading={departmentGoodsInitialLoading}
-                        emptyText={salesDataStatusText(departmentGoodsQuery.error, "当前筛选条件下暂无商品销售明细。")}
+                        emptyText={salesTableStatusText(departmentGoodsQuery.error, "当前筛选条件下暂无商品销售明细。")}
                       />
                     ) : (
                       (departmentGoodsQuery.data ?? []).map((row) => (
@@ -1889,7 +1979,7 @@ export default function SalesDashboardPage() {
                     <TableStatusRow
                       colSpan={showPricedSalesAmount ? 10 : 9}
                       loading={groupsInitialLoading}
-                      emptyText={salesDataStatusText(groupsQuery.error, "当前筛选条件下暂无柜组销售数据。")}
+                      emptyText={salesTableStatusText(groupsQuery.error, "当前筛选条件下暂无柜组销售数据。")}
                     />
                   ) : (
                     (groupsQuery.data ?? []).map((row) => (
@@ -2025,7 +2115,7 @@ export default function SalesDashboardPage() {
                     <TableStatusRow
                       colSpan={showPricedSalesAmount ? 14 : 13}
                       loading={ticketsInitialLoading}
-                      emptyText={salesDataStatusText(
+                      emptyText={salesTableStatusText(
                         ticketsQuery.error,
                         selectedGroup
                           ? `${ticketsViewMode === "prior" ? "同期" : "本期"}区间暂无小票数据。`

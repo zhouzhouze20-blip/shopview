@@ -43,6 +43,7 @@ COUPON_MONTHLY_REBUILD_PERMISSION = "activity_settlement.coupon_monthly.rebuild"
 COUPON_MONTHLY_CONFIRM_PERMISSION = "activity_settlement.coupon_monthly.confirm"
 COUPON_MONTHLY_CARRYOVER_CREATE_PERMISSION = "activity_settlement.coupon_monthly.carryover_create"
 COUPON_CONFIRMED_REVENUE_VIEW_PERMISSION = "activity_settlement.confirmed_revenue.view"
+CREDIT_BUY_MATCH_TYPE_NAME = "贷方前台买券"
 
 
 def _points_effective_date_range(start_date: str, end_date: str) -> tuple[str, str] | None:
@@ -735,11 +736,12 @@ def coupon_confirmed_revenue_daily_sql(include_coupon_type: bool = False) -> str
         FROM activity_coupon_revenue_movement rm
         JOIN activity_coupon_voucher_match m ON m.id = rm.voucher_match_id
         LEFT JOIN users u ON u.user_id = m.confirmed_by
-        WHERE m.confirmed_at >= CAST(:start_date AS DATE)
-          AND m.confirmed_at < CAST(:end_date AS DATE) + INTERVAL '1 day'
+        WHERE rm.business_date >= CAST(:start_date AS DATE)
+          AND rm.business_date < CAST(:end_date AS DATE) + INTERVAL '1 day'
+          AND m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')
           AND (:market_code = '' OR rm.market_code = :market_code)
           {coupon_filter}
-        ORDER BY m.confirmed_at DESC, rm.market_code, rm.coupon_type, rm.id
+        ORDER BY rm.business_date DESC, m.confirmed_at DESC, rm.market_code, rm.coupon_type, rm.id
     """
 
 
@@ -808,6 +810,283 @@ def finance_voucher_amount_filter_sql(alias: str = "v") -> str:
               COALESCE({alias}.localdebitamount, {alias}.debitamount, 0) <> 0
               OR COALESCE({alias}.localcreditamount, {alias}.creditamount, 0) <> 0
             )"""
+
+
+def front_buy_sale_join_sql(log_alias: str = "l", sale_alias: str = "front_sale") -> str:
+    """Return the one-to-one salehead lookup used by front buy/refund rows."""
+    return f"""LEFT JOIN LATERAL (
+              SELECT
+                h.billno,
+                h.ysje,
+                h.sjfk,
+                h.zl
+              FROM salehead h
+              WHERE h.mkt = {log_alias}.tcflmkt
+                AND h.syjh = {log_alias}.tcflsyjid
+                AND {log_alias}.tcflinvno ~ '^[0-9]+$'
+                AND h.fphm = {log_alias}.tcflinvno::numeric
+                AND h.rqsj::date = {log_alias}.tcfldate
+              ORDER BY h.billno DESC
+              LIMIT 1
+            ) {sale_alias} ON TRUE"""
+
+
+def front_buy_face_total_sql(log_alias: str = "l") -> str:
+    """Face total used to allocate one front-buy sale across coupon log rows."""
+    return f"""SUM(ABS(COALESCE({log_alias}.tcflmoney, 0)))
+              FILTER (
+                WHERE {log_alias}.tcflzy IN ('m', 'n')
+                  AND {log_alias}.tcflsource IN ('2', '5')
+              ) OVER (
+                PARTITION BY
+                  {log_alias}.tcfldate,
+                  {log_alias}.tcflmkt,
+                  {log_alias}.tcflsyjid,
+                  {log_alias}.tcflinvno,
+                  {log_alias}.tcflzy
+              )"""
+
+
+def front_buy_actual_amount_sql(log_alias: str = "l", sale_alias: str = "front_sale") -> str:
+    """Signed actual amount for m/n, allocated by each row's share of face value."""
+    face_total_sql = front_buy_face_total_sql(log_alias)
+    allocated_amount_sql = f"""ABS(COALESCE(
+                {sale_alias}.ysje,
+                {sale_alias}.sjfk - COALESCE({sale_alias}.zl, 0)
+              )) * ABS(COALESCE({log_alias}.tcflmoney, 0))
+              / NULLIF(({face_total_sql}), 0)"""
+    return f"""CASE
+              WHEN {log_alias}.tcflzy = 'm'
+               AND {log_alias}.tcflsource IN ('2', '5')
+               AND {sale_alias}.billno IS NOT NULL
+              THEN {allocated_amount_sql}
+              WHEN {log_alias}.tcflzy = 'n'
+               AND {log_alias}.tcflsource IN ('2', '5')
+               AND {sale_alias}.billno IS NOT NULL
+              THEN -({allocated_amount_sql})
+              ELSE NULL
+            END"""
+
+
+def confirmed_voucher_match_movement_sql() -> str:
+    """Build movements immediately for the confirmed voucher-match ids."""
+    return f"""
+            WITH target_matches AS MATERIALIZED (
+              SELECT
+                m.id AS voucher_match_id,
+                m.business_date,
+                to_char(m.business_date, 'YYYY-MM') AS period_month,
+                COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, '')) AS market_code,
+                m.business_store_code,
+                UPPER(TRIM(m.coupon_type)) AS coupon_type,
+                m.coupon_name,
+                m.match_type,
+                m.voucher_detail_id,
+                COALESCE(m.business_amount, 0) AS business_amount
+              FROM activity_coupon_voucher_match m
+              WHERE m.id = ANY(:voucher_match_ids)
+                AND m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')
+                AND m.match_type IN ('CREDIT_BUY', 'DEBIT_USE')
+                AND COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, '')) IS NOT NULL
+            ),
+            target_days AS (
+              SELECT DISTINCT business_date, market_code
+              FROM target_matches
+            ),
+            front_credit_log_rows AS MATERIALIZED (
+              SELECT
+                l.tcfldate AS business_date,
+                l.tcflmkt::varchar AS market_code,
+                CASE
+                  WHEN l.tcflzy = 'm'
+                   AND l.tcflsource IN ('2', '5')
+                   AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'
+                  THEN 'W'
+                  ELSE UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识')))
+                END AS coupon_type,
+                CASE
+                  WHEN l.tcflzy = 'm' THEN ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE -ABS(COALESCE(l.tcflmoney, 0))
+                END AS face_amount,
+                {front_buy_actual_amount_sql("l", "front_sale")} AS actual_amount,
+                CASE WHEN front_sale.billno IS NULL THEN 1 ELSE 0 END AS missing_actual_count
+              FROM tktcardfqlog l
+              JOIN target_days d
+                ON d.business_date = l.tcfldate
+               AND d.market_code = l.tcflmkt::varchar
+              {front_buy_sale_join_sql("l", "front_sale")}
+              WHERE l.tcflzy IN ('m', 'n')
+                AND l.tcflsource IN ('2', '5')
+            ),
+            front_credit_rows AS (
+              SELECT
+                business_date,
+                market_code,
+                coupon_type,
+                SUM(face_amount) AS face_amount,
+                SUM(COALESCE(actual_amount, 0)) AS actual_amount,
+                SUM(missing_actual_count) AS missing_actual_count
+              FROM front_credit_log_rows
+              GROUP BY business_date, market_code, coupon_type
+            ),
+            backend_credit_rows AS (
+              SELECT
+                l.tcfldate AS business_date,
+                l.tcflmkt::varchar AS market_code,
+                CASE
+                  WHEN l.tcflzy = 'M'
+                   AND l.tcflsource = '8'
+                   AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'
+                  THEN 'W'
+                  ELSE UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识')))
+                END AS coupon_type,
+                SUM(CASE
+                  WHEN l.tcflzy = 'M' THEN ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE -ABS(COALESCE(l.tcflmoney, 0))
+                END) AS business_amount
+              FROM tktcardfqlog l
+              JOIN target_days d
+                ON d.business_date = l.tcfldate
+               AND d.market_code = l.tcflmkt::varchar
+              WHERE l.tcflzy IN ('M', 'N', 'w')
+                AND l.tcflsource IN ('2', '8')
+              GROUP BY 1, 2, 3
+            ),
+            confirmed_matches AS (
+              SELECT
+                m.*,
+                r.effective_revenue_rate,
+                r.snapshot_date,
+                f.face_amount AS front_face_amount,
+                f.actual_amount AS front_actual_amount,
+                COALESCE(f.missing_actual_count, 0) AS front_missing_actual_count,
+                COALESCE(b.business_amount, 0) AS backend_business_amount,
+                (m.match_type = 'CREDIT_BUY' AND f.business_date IS NOT NULL) AS has_front_actual
+              FROM target_matches m
+              LEFT JOIN activity_coupon_revenue_rate_snapshot r
+                ON r.snapshot_date = m.business_date
+               AND r.market_code = m.market_code
+               AND UPPER(TRIM(r.coupon_type)) = m.coupon_type
+              LEFT JOIN front_credit_rows f
+                ON f.business_date = m.business_date
+               AND f.market_code = m.market_code
+               AND f.coupon_type = m.coupon_type
+              LEFT JOIN backend_credit_rows b
+                ON b.business_date = m.business_date
+               AND b.market_code = m.market_code
+               AND b.coupon_type = m.coupon_type
+            )
+            INSERT INTO activity_coupon_revenue_movement (
+                business_date, period_month, market_code, business_store_code,
+                coupon_type, coupon_name, match_type, voucher_match_id,
+                source_type, source_key, voucher_detail_id, business_amount,
+                revenue_rate, actual_revenue_amount, rate_snapshot_date,
+                rate_status, movement_direction, created_at, updated_at
+            )
+            SELECT
+                business_date,
+                period_month,
+                market_code,
+                business_store_code,
+                coupon_type,
+                coupon_name,
+                match_type,
+                voucher_match_id,
+                'VOUCHER_MATCH',
+                'voucher_match:' || voucher_match_id::text,
+                voucher_detail_id,
+                CASE WHEN has_front_actual
+                  THEN front_face_amount + backend_business_amount
+                  ELSE business_amount
+                END,
+                CASE
+                  WHEN has_front_actual
+                   AND front_missing_actual_count = 0
+                   AND (ABS(backend_business_amount) <= 0.005 OR effective_revenue_rate IS NOT NULL)
+                   AND ABS(front_face_amount + backend_business_amount) > 0.005
+                  THEN (front_actual_amount + backend_business_amount * COALESCE(effective_revenue_rate, 0))
+                       / (front_face_amount + backend_business_amount)
+                  ELSE effective_revenue_rate
+                END,
+                CASE
+                  WHEN has_front_actual
+                   AND front_missing_actual_count = 0
+                   AND (ABS(backend_business_amount) <= 0.005 OR effective_revenue_rate IS NOT NULL)
+                  THEN front_actual_amount + backend_business_amount * COALESCE(effective_revenue_rate, 0)
+                  WHEN has_front_actual THEN 0
+                  WHEN effective_revenue_rate IS NULL THEN 0
+                  ELSE business_amount * effective_revenue_rate
+                END,
+                CASE WHEN has_front_actual AND ABS(backend_business_amount) <= 0.005 THEN NULL ELSE snapshot_date END,
+                CASE
+                  WHEN has_front_actual AND front_missing_actual_count > 0 THEN 'MISSING_RATE'
+                  WHEN has_front_actual AND ABS(backend_business_amount) > 0.005 AND effective_revenue_rate IS NULL THEN 'MISSING_RATE'
+                  WHEN has_front_actual THEN 'OK'
+                  WHEN effective_revenue_rate IS NULL THEN 'MISSING_RATE'
+                  ELSE 'OK'
+                END,
+                CASE WHEN match_type = 'CREDIT_BUY' THEN 'INCREASE' ELSE 'DECREASE' END,
+                NOW(),
+                NOW()
+            FROM confirmed_matches
+            ON CONFLICT (source_type, source_key)
+            DO UPDATE SET
+                voucher_match_id = EXCLUDED.voucher_match_id,
+                business_date = EXCLUDED.business_date,
+                period_month = EXCLUDED.period_month,
+                market_code = EXCLUDED.market_code,
+                business_store_code = EXCLUDED.business_store_code,
+                coupon_type = EXCLUDED.coupon_type,
+                coupon_name = EXCLUDED.coupon_name,
+                match_type = EXCLUDED.match_type,
+                voucher_detail_id = EXCLUDED.voucher_detail_id,
+                business_amount = EXCLUDED.business_amount,
+                revenue_rate = EXCLUDED.revenue_rate,
+                actual_revenue_amount = EXCLUDED.actual_revenue_amount,
+                rate_snapshot_date = EXCLUDED.rate_snapshot_date,
+                rate_status = EXCLUDED.rate_status,
+                movement_direction = EXCLUDED.movement_direction,
+                updated_at = NOW()
+            """
+
+
+def _sync_confirmed_voucher_match_movements(db: Session, voucher_match_ids: list[int]) -> None:
+    if not voucher_match_ids:
+        return
+    params = {"voucher_match_ids": voucher_match_ids}
+    db.execute(
+        text(
+            """
+            DELETE FROM activity_coupon_revenue_movement rm
+            WHERE rm.source_type = 'VOUCHER_MATCH'
+              AND rm.voucher_match_id = ANY(:voucher_match_ids)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM activity_coupon_voucher_match m
+                WHERE m.id = rm.voucher_match_id
+                  AND m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')
+              )
+            """
+        ),
+        params,
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM activity_coupon_revenue_movement rm
+            USING activity_coupon_voucher_match m
+            WHERE m.id = ANY(:voucher_match_ids)
+              AND m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')
+              AND m.match_type = 'CREDIT_BUY'
+              AND rm.source_type = 'COUPON_RECHARGE'
+              AND rm.business_date = m.business_date
+              AND rm.market_code = COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, ''))
+              AND UPPER(TRIM(rm.coupon_type)) = UPPER(TRIM(m.coupon_type))
+            """
+        ),
+        params,
+    )
+    db.execute(text(confirmed_voucher_match_movement_sql()), params)
 
 
 def _period_or_400(period_month: str) -> str:
@@ -3444,7 +3723,7 @@ async def coupon_summary(
     summary_log_filter = log_filter
     if not activity_id and scope == "standalone":
         recharge_clauses = [
-            "((l.tcflzy = 'm' AND l.tcflsource = '2') OR (l.tcflzy = 'M' AND l.tcflsource = '8'))",
+            "((l.tcflzy = 'm' AND l.tcflsource IN ('2', '5')) OR (l.tcflzy = 'M' AND l.tcflsource = '8'))",
             "COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'",
         ]
         if log_scope_sql:
@@ -3458,7 +3737,7 @@ async def coupon_summary(
         summary_log_filter = f"(({log_filter}) OR ({' AND '.join(recharge_clauses)}))"
     coupon_type_sql = (
         "CASE "
-        "WHEN ((l.tcflzy = 'm' AND l.tcflsource = '2') OR (l.tcflzy = 'M' AND l.tcflsource = '8')) "
+        "WHEN ((l.tcflzy = 'm' AND l.tcflsource IN ('2', '5')) OR (l.tcflzy = 'M' AND l.tcflsource = '8')) "
         " AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O' "
         "THEN 'W' "
         "ELSE COALESCE(NULLIF(l.tcfljetype, ''), '未标识') "
@@ -3613,7 +3892,7 @@ async def voucher_match_candidates(
     match_log_filter = log_filter
     if not activity_id and scope == "standalone":
         recharge_clauses = [
-            "((l.tcflzy = 'm' AND l.tcflsource = '2') OR (l.tcflzy = 'M' AND l.tcflsource = '8'))",
+            "((l.tcflzy = 'm' AND l.tcflsource IN ('2', '5')) OR (l.tcflzy = 'M' AND l.tcflsource = '8'))",
             "COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'",
         ]
         if log_scope_sql:
@@ -3628,7 +3907,7 @@ async def voucher_match_candidates(
 
     coupon_type_sql = (
         "CASE "
-        "WHEN ((l.tcflzy = 'm' AND l.tcflsource = '2') OR (l.tcflzy = 'M' AND l.tcflsource = '8')) "
+        "WHEN ((l.tcflzy = 'm' AND l.tcflsource IN ('2', '5')) OR (l.tcflzy = 'M' AND l.tcflsource = '8')) "
         " AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O' "
         "THEN 'W' "
         "ELSE COALESCE(NULLIF(l.tcfljetype, ''), '未标识') "
@@ -3652,6 +3931,7 @@ async def voucher_match_candidates(
             l.tcflzy AS action_code,
             {coupon_type_sql} AS coupon_type,
             l.tcflvipno AS member_no,
+            (l.tcflzy IN ('m', 'n') AND l.tcflsource IN ('2', '5')) AS is_front_buy,
             CASE
               WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
               WHEN l.tcflzy = 'U' THEN -ABS(COALESCE(l.tcflmoney, 0))
@@ -3660,11 +3940,14 @@ async def voucher_match_candidates(
               ELSE 0
             END AS use_amount,
             CASE
-              WHEN l.tcflzy IN ('m', 'M') AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
-              WHEN l.tcflzy IN ('n', 'N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy IN ('m', 'n') AND l.tcflsource IN ('2', '5')
+              THEN COALESCE(({front_buy_actual_amount_sql("l", "front_sale")}), 0)
+              WHEN l.tcflzy = 'M' AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy IN ('N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
               ELSE 0
             END AS buy_amount
           FROM tktcardfqlog l
+          {front_buy_sale_join_sql("l", "front_sale")}
           WHERE {match_log_filter}
             AND {_voucher_match_flow_exclusion_sql("l")}
         ),
@@ -3696,7 +3979,11 @@ async def voucher_match_candidates(
             coupon_type,
             COALESCE(NULLIF(tq.tqname, ''), coupon_type) AS coupon_name,
             'CREDIT_BUY' AS match_type,
-            '贷方买券' AS match_type_name,
+            CASE
+              WHEN BOOL_AND(is_front_buy) FILTER (WHERE buy_amount <> 0)
+              THEN '{CREDIT_BUY_MATCH_TYPE_NAME}'
+              ELSE '贷方买券'
+            END AS match_type_name,
             SUM(buy_amount) AS business_amount,
             COUNT(*) FILTER (WHERE buy_amount <> 0) AS flow_count,
             COUNT(DISTINCT NULLIF(member_no, '')) FILTER (WHERE buy_amount <> 0) AS member_count
@@ -3857,6 +4144,9 @@ async def save_voucher_matches(
 ):
     if not _table_exists(db, "activity_coupon_voucher_match"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="凭证匹配确认表 activity_coupon_voucher_match 尚未创建")
+    _ensure_coupon_monthly_tables(db)
+    if not _table_exists(db, "activity_coupon_revenue_rate_snapshot"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="卡券收入占比快照表尚未创建")
 
     confirm_status = payload.confirm_status.upper().strip()
     if confirm_status not in {"AUTO_CONFIRMED", "MANUAL_CONFIRMED", "REJECTED"}:
@@ -3969,6 +4259,24 @@ async def save_voucher_matches(
         ),
         rows,
     )
+    voucher_match_ids = []
+    for row in rows:
+        match_id = db.execute(
+            text(
+                """
+                SELECT id
+                FROM activity_coupon_voucher_match
+                WHERE business_date = :business_date
+                  AND business_store_code = :business_store_code
+                  AND coupon_type = :coupon_type
+                  AND match_type = :match_type
+                  AND voucher_detail_id = :voucher_detail_id
+                """
+            ),
+            row,
+        ).scalar_one()
+        voucher_match_ids.append(int(match_id))
+    _sync_confirmed_voucher_match_movements(db, voucher_match_ids)
     db.commit()
     return {"saved": len(rows), "skipped": skipped}
 
@@ -4001,8 +4309,67 @@ async def rebuild_coupon_revenue_movements(
     )
     result = db.execute(
         text(
-            """
-            WITH confirmed_matches AS (
+            f"""
+            WITH front_credit_log_rows AS MATERIALIZED (
+              SELECT
+                l.tcfldate AS business_date,
+                l.tcflmkt::varchar AS market_code,
+                CASE
+                  WHEN l.tcflzy = 'm'
+                   AND l.tcflsource IN ('2', '5')
+                   AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'
+                  THEN 'W'
+                  ELSE UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识')))
+                END AS coupon_type,
+                CASE
+                  WHEN l.tcflzy = 'm' THEN ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE -ABS(COALESCE(l.tcflmoney, 0))
+                END AS face_amount,
+                {front_buy_actual_amount_sql("l", "front_sale")} AS actual_amount,
+                CASE WHEN front_sale.billno IS NULL THEN 1 ELSE 0 END AS missing_actual_count
+              FROM tktcardfqlog l
+              {front_buy_sale_join_sql("l", "front_sale")}
+              WHERE l.tcfldate >= CAST(:start_date AS DATE)
+                AND l.tcfldate < CAST(:end_date AS DATE)
+                AND l.tcflzy IN ('m', 'n')
+                AND l.tcflsource IN ('2', '5')
+                AND (:market_code = '' OR l.tcflmkt::varchar = :market_code)
+            ),
+            front_credit_rows AS (
+              SELECT
+                business_date,
+                market_code,
+                coupon_type,
+                SUM(face_amount) AS face_amount,
+                SUM(COALESCE(actual_amount, 0)) AS actual_amount,
+                SUM(missing_actual_count) AS missing_actual_count
+              FROM front_credit_log_rows
+              GROUP BY business_date, market_code, coupon_type
+            ),
+            backend_credit_rows AS (
+              SELECT
+                l.tcfldate AS business_date,
+                l.tcflmkt::varchar AS market_code,
+                CASE
+                  WHEN l.tcflzy = 'M'
+                   AND l.tcflsource = '8'
+                   AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'
+                  THEN 'W'
+                  ELSE UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识')))
+                END AS coupon_type,
+                SUM(CASE
+                  WHEN l.tcflzy = 'M' THEN ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE -ABS(COALESCE(l.tcflmoney, 0))
+                END) AS business_amount
+              FROM tktcardfqlog l
+              WHERE l.tcfldate >= CAST(:start_date AS DATE)
+                AND l.tcfldate < CAST(:end_date AS DATE)
+                AND l.tcflzy IN ('M', 'N', 'w')
+                AND l.tcflsource IN ('2', '8')
+                AND (:market_code = '' OR l.tcflmkt::varchar = :market_code)
+              GROUP BY business_date, market_code, coupon_type
+            ),
+            confirmed_matches AS (
               SELECT
                 m.id AS voucher_match_id,
                 m.business_date,
@@ -4015,12 +4382,28 @@ async def rebuild_coupon_revenue_movements(
                 m.voucher_detail_id,
                 COALESCE(m.business_amount, 0) AS business_amount,
                 r.effective_revenue_rate,
-                r.snapshot_date
+                r.snapshot_date,
+                f.face_amount AS front_face_amount,
+                f.actual_amount AS front_actual_amount,
+                COALESCE(f.missing_actual_count, 0) AS front_missing_actual_count,
+                COALESCE(b.business_amount, 0) AS backend_business_amount,
+                (
+                  m.match_type = 'CREDIT_BUY'
+                  AND f.business_date IS NOT NULL
+                ) AS has_front_actual
               FROM activity_coupon_voucher_match m
               LEFT JOIN activity_coupon_revenue_rate_snapshot r
                 ON r.snapshot_date = m.business_date
                AND r.market_code = COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, ''))
                AND UPPER(TRIM(r.coupon_type)) = UPPER(TRIM(m.coupon_type))
+              LEFT JOIN front_credit_rows f
+                ON f.business_date = m.business_date
+               AND f.market_code = COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, ''))
+               AND f.coupon_type = UPPER(TRIM(m.coupon_type))
+              LEFT JOIN backend_credit_rows b
+                ON b.business_date = m.business_date
+               AND b.market_code = COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, ''))
+               AND b.coupon_type = UPPER(TRIM(m.coupon_type))
               WHERE m.confirm_status IN ('AUTO_CONFIRMED', 'MANUAL_CONFIRMED')
                 AND m.match_type IN ('CREDIT_BUY', 'DEBIT_USE')
                 AND m.business_date >= CAST(:start_date AS DATE)
@@ -4061,11 +4444,50 @@ async def rebuild_coupon_revenue_movements(
                 'VOUCHER_MATCH',
                 'voucher_match:' || voucher_match_id::text,
                 voucher_detail_id,
-                business_amount,
-                effective_revenue_rate,
-                CASE WHEN effective_revenue_rate IS NULL THEN 0 ELSE business_amount * effective_revenue_rate END,
-                snapshot_date,
-                CASE WHEN effective_revenue_rate IS NULL THEN 'MISSING_RATE' ELSE 'OK' END,
+                CASE
+                  WHEN has_front_actual THEN front_face_amount + backend_business_amount
+                  ELSE business_amount
+                END,
+                CASE
+                  WHEN has_front_actual
+                   AND front_missing_actual_count = 0
+                   AND (
+                     ABS(backend_business_amount) <= 0.005
+                     OR effective_revenue_rate IS NOT NULL
+                   )
+                   AND ABS(front_face_amount + backend_business_amount) > 0.005
+                  THEN (
+                    front_actual_amount
+                    + backend_business_amount * COALESCE(effective_revenue_rate, 0)
+                  ) / (front_face_amount + backend_business_amount)
+                  ELSE effective_revenue_rate
+                END,
+                CASE
+                  WHEN has_front_actual
+                   AND front_missing_actual_count = 0
+                   AND (
+                     ABS(backend_business_amount) <= 0.005
+                     OR effective_revenue_rate IS NOT NULL
+                   )
+                  THEN front_actual_amount
+                     + backend_business_amount * COALESCE(effective_revenue_rate, 0)
+                  WHEN has_front_actual THEN 0
+                  WHEN effective_revenue_rate IS NULL THEN 0
+                  ELSE business_amount * effective_revenue_rate
+                END,
+                CASE
+                  WHEN has_front_actual AND ABS(backend_business_amount) <= 0.005 THEN NULL
+                  ELSE snapshot_date
+                END,
+                CASE
+                  WHEN has_front_actual AND front_missing_actual_count > 0 THEN 'MISSING_RATE'
+                  WHEN has_front_actual
+                   AND ABS(backend_business_amount) > 0.005
+                   AND effective_revenue_rate IS NULL THEN 'MISSING_RATE'
+                  WHEN has_front_actual THEN 'OK'
+                  WHEN effective_revenue_rate IS NULL THEN 'MISSING_RATE'
+                  ELSE 'OK'
+                END,
                 CASE WHEN match_type = 'CREDIT_BUY' THEN 'INCREASE' ELSE 'DECREASE' END,
                 NOW(),
                 NOW()
@@ -4094,36 +4516,62 @@ async def rebuild_coupon_revenue_movements(
     )
     recharge_result = db.execute(
         text(
-            """
-            WITH recharge_rows AS (
+            f"""
+            WITH recharge_log_rows AS MATERIALIZED (
               SELECT
                 l.tcfldate AS business_date,
                 :period_month AS period_month,
                 l.tcflmkt::varchar AS market_code,
                 CASE
-                  WHEN ((l.tcflzy = 'm' AND l.tcflsource = '2') OR (l.tcflzy = 'M' AND l.tcflsource = '8'))
+                  WHEN ((l.tcflzy = 'm' AND l.tcflsource IN ('2', '5')) OR (l.tcflzy = 'M' AND l.tcflsource = '8'))
                    AND COALESCE(NULLIF(l.tcfljetype, ''), '未标识') = 'O'
                   THEN 'W'
                   ELSE UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识')))
                 END AS coupon_type,
-                SUM(CASE
-                  WHEN l.tcflzy IN ('m', 'M') AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
-                  WHEN l.tcflzy IN ('n', 'N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                CASE
+                  WHEN l.tcflzy = 'm' AND l.tcflsource IN ('2', '5') THEN ABS(COALESCE(l.tcflmoney, 0))
+                  WHEN l.tcflzy = 'n' AND l.tcflsource IN ('2', '5') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                  WHEN l.tcflzy = 'M' AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
+                  WHEN l.tcflzy IN ('N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
                   ELSE 0
-                END) AS business_amount,
-                COUNT(*) AS flow_count
+                END AS business_amount,
+                {front_buy_actual_amount_sql("l", "front_sale")} AS front_actual_amount,
+                CASE
+                  WHEN l.tcflzy = 'M' AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
+                  WHEN l.tcflzy IN ('N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE 0
+                END AS rate_based_business_amount,
+                CASE
+                  WHEN l.tcflzy IN ('m', 'n')
+                   AND l.tcflsource IN ('2', '5')
+                   AND front_sale.billno IS NULL
+                  THEN 1
+                  ELSE 0
+                END AS missing_actual_count
               FROM tktcardfqlog l
+              {front_buy_sale_join_sql("l", "front_sale")}
               WHERE l.tcfldate >= CAST(:start_date AS DATE)
                 AND l.tcfldate < CAST(:end_date AS DATE)
-                AND l.tcflzy IN ('m', 'M', 'n', 'N', 'w')
-                AND l.tcflsource IN ('2', '8')
+                AND (
+                  (l.tcflzy IN ('m', 'n') AND l.tcflsource IN ('2', '5'))
+                  OR (l.tcflzy IN ('M', 'N', 'w') AND l.tcflsource IN ('2', '8'))
+                )
                 AND (:market_code = '' OR l.tcflmkt::varchar = :market_code)
-              GROUP BY l.tcfldate, l.tcflmkt::varchar, coupon_type
-              HAVING ABS(SUM(CASE
-                  WHEN l.tcflzy IN ('m', 'M') AND l.tcflsource IN ('2', '8') THEN ABS(COALESCE(l.tcflmoney, 0))
-                  WHEN l.tcflzy IN ('n', 'N', 'w') AND l.tcflsource IN ('2', '8') THEN -ABS(COALESCE(l.tcflmoney, 0))
-                  ELSE 0
-                END)) > 0.005
+            ),
+            recharge_rows AS (
+              SELECT
+                business_date,
+                period_month,
+                market_code,
+                coupon_type,
+                SUM(business_amount) AS business_amount,
+                SUM(COALESCE(front_actual_amount, 0)) AS front_actual_amount,
+                SUM(rate_based_business_amount) AS rate_based_business_amount,
+                SUM(missing_actual_count) AS missing_actual_count,
+                COUNT(*) AS flow_count
+              FROM recharge_log_rows
+              GROUP BY business_date, period_month, market_code, coupon_type
+              HAVING ABS(SUM(business_amount)) > 0.005
             ),
             recharge_with_rate AS (
               SELECT
@@ -4146,6 +4594,24 @@ async def rebuild_coupon_revenue_movements(
                   AND COALESCE(NULLIF(m.market_code, ''), NULLIF(m.business_store_code, '')) = rr.market_code
                   AND UPPER(TRIM(m.coupon_type)) = rr.coupon_type
               )
+            ),
+            recharge_calculated AS (
+              SELECT
+                rw.*,
+                CASE
+                  WHEN rw.missing_actual_count > 0 THEN 'MISSING_RATE'
+                  WHEN ABS(rw.rate_based_business_amount) > 0.005
+                   AND rw.effective_revenue_rate IS NULL THEN 'MISSING_RATE'
+                  ELSE 'OK'
+                END AS calculated_rate_status,
+                CASE
+                  WHEN rw.missing_actual_count > 0 THEN 0
+                  WHEN ABS(rw.rate_based_business_amount) > 0.005
+                   AND rw.effective_revenue_rate IS NULL THEN 0
+                  ELSE rw.front_actual_amount
+                     + rw.rate_based_business_amount * COALESCE(rw.effective_revenue_rate, 0)
+                END AS calculated_revenue_amount
+              FROM recharge_with_rate rw
             )
             INSERT INTO activity_coupon_revenue_movement (
                 business_date,
@@ -4181,14 +4647,18 @@ async def rebuild_coupon_revenue_movements(
                 'coupon_recharge:' || business_date::text || ':' || market_code || ':' || coupon_type,
                 md5('coupon_recharge:' || business_date::text || ':' || market_code || ':' || coupon_type),
                 business_amount,
-                effective_revenue_rate,
-                CASE WHEN effective_revenue_rate IS NULL THEN 0 ELSE business_amount * effective_revenue_rate END,
-                snapshot_date,
-                CASE WHEN effective_revenue_rate IS NULL THEN 'MISSING_RATE' ELSE 'OK' END,
+                CASE
+                  WHEN calculated_rate_status = 'OK' AND ABS(business_amount) > 0.005
+                  THEN calculated_revenue_amount / business_amount
+                  ELSE NULL
+                END,
+                calculated_revenue_amount,
+                CASE WHEN ABS(rate_based_business_amount) > 0.005 THEN snapshot_date ELSE NULL END,
+                calculated_rate_status,
                 'INCREASE',
                 NOW(),
                 NOW()
-            FROM recharge_with_rate
+            FROM recharge_calculated
             ON CONFLICT (source_type, source_key)
             DO UPDATE SET
                 business_date = EXCLUDED.business_date,

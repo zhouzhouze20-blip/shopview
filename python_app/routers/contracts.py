@@ -176,7 +176,16 @@ def _counter_group_scope_join_sql(enabled: bool, code_expr: str, alias: str = "c
                 THEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3)
                 ELSE NULL
               END
-            ) AS store_id
+            ) AS store_id,
+            COALESCE(
+              NULLIF(TRIM(BOTH FROM COALESCE(st.store_code, '')), ''),
+              CASE
+                WHEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3) ~ '^[0-9]+$'
+                THEN SUBSTRING(TRIM(BOTH FROM COALESCE(mf.mfcode, '')) FROM 1 FOR 3)
+                ELSE NULL
+              END
+            ) AS store_code,
+            st.store_name AS store_name
           FROM manaframe mf
           LEFT JOIN manaframe dept
             ON upper(trim(COALESCE(mf.mfpcode, ''))) = upper(trim(COALESCE(dept.mfcode, '')))
@@ -287,6 +296,21 @@ def _contract_department_options_from_items(items: list[dict[str, Any]]) -> list
             options.setdefault(code, names[index] if index < len(names) else "")
     return [
         {"department_code": code, "department_name": name}
+        for code, name in sorted(options.items(), key=lambda entry: entry[0])
+    ]
+
+
+def _contract_store_options_from_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    options: dict[str, str] = {}
+    for item in items:
+        codes = _split_codes(item.get("store_codes"))
+        names = _split_codes(item.get("store_names"))
+        for index, code in enumerate(codes):
+            if not code:
+                continue
+            options.setdefault(code, names[index] if index < len(names) else "")
+    return [
+        {"store_code": code, "store_name": name}
         for code, name in sorted(options.items(), key=lambda entry: entry[0])
     ]
 
@@ -459,6 +483,7 @@ def _load_contract_list_items(
     *,
     keyword: str | None = None,
     status_filter: str | None = None,
+    store_code: str | None = None,
     group_code: str | None = None,
     department_code: str | None = None,
     supplier_code: str | None = None,
@@ -486,6 +511,8 @@ def _load_contract_list_items(
     cmf_name_expr = "COALESCE(mf.mfcname, '')" if has_manaframe else "''"
     department_code_expr = "COALESCE(cg_scope.department_code, '')" if has_counter_groups else "''"
     department_name_expr = "COALESCE(cg_scope.department_name, '')" if has_counter_groups else "''"
+    store_code_expr = "COALESCE(cg_scope.store_code, '')" if has_counter_groups else "''"
+    store_name_expr = "COALESCE(cg_scope.store_name, '')" if has_counter_groups else "''"
     cg_join = _counter_group_scope_join_sql(has_counter_groups, "cmf_primary.cmfmfid", "cg")
     cmf_scope_join = _counter_group_scope_join_sql(has_counter_groups, "cmf.cmfmfid", "cg_scope")
     scope_entry_expr = (
@@ -554,6 +581,8 @@ def _load_contract_list_items(
                 string_agg(DISTINCT NULLIF(trim({cmf_name_expr}), ''), ',' ORDER BY NULLIF(trim({cmf_name_expr}), '')) AS group_names,
                 string_agg(DISTINCT NULLIF(trim({department_code_expr}), ''), ',' ORDER BY NULLIF(trim({department_code_expr}), '')) AS department_codes,
                 string_agg(DISTINCT NULLIF(trim({department_name_expr}), ''), ',' ORDER BY NULLIF(trim({department_name_expr}), '')) AS department_names,
+                string_agg(DISTINCT NULLIF(trim({store_code_expr}), ''), ',' ORDER BY NULLIF(trim({store_code_expr}), '')) AS store_codes,
+                string_agg(DISTINCT NULLIF(trim({store_name_expr}), ''), ',' ORDER BY NULLIF(trim({store_name_expr}), '')) AS store_names,
                 string_agg(DISTINCT {scope_entry_expr}, ';;' ORDER BY {scope_entry_expr}) AS scope_entries,
                 string_agg(DISTINCT NULLIF(trim(COALESCE(cmf.cmfbrand, '')), ''), ',' ORDER BY NULLIF(trim(COALESCE(cmf.cmfbrand, '')), '')) AS range_brands,
                 MIN(cmf.cmfeffdate) AS range_start_date,
@@ -603,6 +632,8 @@ def _load_contract_list_items(
               cmf_summary.group_names,
               cmf_summary.department_codes,
               cmf_summary.department_names,
+              cmf_summary.store_codes,
+              cmf_summary.store_names,
               cmf_summary.scope_entries,
               cmf_summary.range_brands,
               cmf_summary.range_start_date,
@@ -661,6 +692,22 @@ def _load_contract_list_items(
     if normalized_status and normalized_status != "ALL":
         sql += " AND upper(trim(COALESCE(cm.cmstatus, ''))) = upper(:status)"
         params["status"] = normalized_status
+
+    normalized_store = (store_code or "").strip()
+    if normalized_store and normalized_store != "ALL":
+        if has_counter_groups:
+            sql += f"""
+                  AND EXISTS (
+                    SELECT 1
+                    FROM contmanaframe cmf_store_filter
+                    {_counter_group_scope_join_sql(has_counter_groups, "cmf_store_filter.cmfmfid", "cg_store_filter")}
+                    WHERE cmf_store_filter.cmfcontno = cm.cmcontno
+                      AND upper(trim(COALESCE(cg_store_filter.store_code, ''))) = upper(trim(:store_code))
+                  )
+                """
+            params["store_code"] = normalized_store
+        else:
+            sql += " AND 1=0"
 
     normalized_group = (group_code or "").strip()
     if normalized_group:
@@ -745,6 +792,7 @@ def _load_contract_list_items(
 async def list_contracts(
     keyword: str | None = Query(None, description="合同号/主题/供应商/品牌/柜组搜索"),
     status_filter: str | None = Query(None, alias="status", description="合同状态"),
+    store_code: str | None = Query(None, description="门店编码"),
     group_code: str | None = Query(None, description="柜组编码"),
     department_code: str | None = Query(None, description="部门编码"),
     supplier_code: str | None = Query(None, description="供应商编码"),
@@ -762,6 +810,7 @@ async def list_contracts(
             contract_scope,
             keyword=keyword,
             status_filter=status_filter,
+            store_code=store_code,
             group_code=group_code,
             department_code=department_code,
             supplier_code=supplier_code,
@@ -800,6 +849,29 @@ async def list_contract_departments(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取合同部门筛选项失败: {str(e)}",
+        )
+
+
+@router.get("/filter-options")
+async def list_contract_filter_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """合同台账筛选项：一次查询返回当前用户合同范围内的门店和部门。"""
+    try:
+        require_permission(db, current_user, "contract.view")
+        contract_scope = load_business_scope(db, current_user, fallback_resource_code="contract")
+        items = _load_contract_list_items(db, contract_scope, limit=None)
+        return {
+            "stores": _contract_store_options_from_items(items),
+            "departments": _contract_department_options_from_items(items),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取合同筛选项失败: {str(e)}",
         )
 
 

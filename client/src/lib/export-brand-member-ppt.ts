@@ -374,9 +374,9 @@ export function buildSupplierPresentation(
       addText(slide, label, { x, y: 5.05, w: 1.72, h: 0.25, fontSize: 11.5, bold: true, color: C.goldLight });
       addText(slide, note, { x, y: 5.36, w: 1.72, h: 0.22, fontSize: 9.5, color: C.muted });
     });
-    addText(slide, "客件数＝会员净销售件数÷会员交易小票数｜退货数量按负数冲减", { x: 0.75, y: 6.18, w: 5.8, h: 0.26, fontSize: 9.5, color: C.muted });
+    addText(slide, "客件数＝会员净销售件数÷正向购买小票数｜退货小票不计客次，退货数量按负数冲减", { x: 0.75, y: 6.18, w: 5.8, h: 0.26, fontSize: 9.5, color: C.muted });
     addFooter(slide, storeName, report.target.group_name, period, 5);
-    slide.addNotes("一次客为期间内1张会员交易小票，多次客为期间内2张及以上会员交易小票。客件数按会员净销售件数除以会员交易小票数计算，退货数量按负数冲减。");
+    slide.addNotes("一次客为期间内1张正向购买小票，多次客为期间内2张及以上正向购买小票，退货小票不计客次。客件数按会员净销售件数除以正向购买小票数计算，退货数量按负数冲减。");
   }
 
   return pptx;
