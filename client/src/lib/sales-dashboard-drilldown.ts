@@ -74,12 +74,19 @@ function normalizeScopeName(value: unknown): string {
   return String(value ?? "").trim().replace(/（/g, "(").replace(/）/g, ")");
 }
 
-export function isCenterCosmeticsRetailPriceScope(store: StoreScope, department: DepartmentScope): boolean {
+export function isCosmeticsRetailPriceScope(store: StoreScope, department: DepartmentScope): boolean {
   if (!store || !department) return false;
   const storeId = String(store.store_id ?? "").trim();
   const departmentCode = String(department.department_code ?? "").trim();
-  const storeMatches = ["1", "601"].includes(storeId) || normalizeScopeName(store.store_name) === "常州购物中心";
-  const departmentMatches =
-    departmentCode === "6010101" || normalizeScopeName(department.department_name) === "中心一部(化妆)";
-  return storeMatches && departmentMatches;
+  const storeName = normalizeScopeName(store.store_name);
+  const departmentName = normalizeScopeName(department.department_name);
+
+  const isShoppingCenterCosmetics =
+    (["1", "601"].includes(storeId) || storeName === "常州购物中心") &&
+    (departmentCode === "6010101" || departmentName === "中心一部(化妆)");
+  const isNewCenturyCosmetics =
+    (["3", "603"].includes(storeId) || ["常州新世纪", "常州新世纪商城"].includes(storeName)) &&
+    (departmentCode === "6030101" || departmentName === "新世纪一部(化妆)");
+
+  return isShoppingCenterCosmetics || isNewCenturyCosmetics;
 }

@@ -13,9 +13,12 @@ import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiRequest } from "@/lib/api";
 import {
   buildOd0002Params,
+  changeOd0002CurrentDate,
   changeOd0002Store,
   contentDispositionFilename,
+  formatCount,
   formatMoneyWan,
+  formatMoneyYuan,
   formatPercent,
   getOd0002QueryMessage,
   OD0002_ALL_STORES,
@@ -33,7 +36,14 @@ import {
   type Od0002Row,
 } from "@/lib/od0002-report";
 
-type Filters = { start: string; end: string; storeId: string; departmentId: string };
+type Filters = {
+  start: string;
+  end: string;
+  priorStart: string;
+  priorEnd: string;
+  storeId: string;
+  departmentId: string;
+};
 type AuthorizedStore = { store_id: string | number; store_code: string; store_name: string };
 type AuthorizedDepartment = { store_code: string; department_code: string; department_name: string };
 
@@ -46,7 +56,16 @@ function defaultFilters(): Filters {
   const end = new Date(now);
   end.setDate(end.getDate() - 1);
   const start = new Date(end.getFullYear(), end.getMonth(), 1);
-  return { start: localIsoDate(start), end: localIsoDate(end), storeId: OD0002_ALL_STORES, departmentId: OD0002_ALL_DEPARTMENTS };
+  const startIso = localIsoDate(start);
+  const endIso = localIsoDate(end);
+  return {
+    start: startIso,
+    end: endIso,
+    priorStart: previousYearDate(startIso),
+    priorEnd: previousYearDate(endIso),
+    storeId: OD0002_ALL_STORES,
+    departmentId: OD0002_ALL_DEPARTMENTS,
+  };
 }
 
 function yoyColorClass(value: number | null): string {
@@ -57,6 +76,12 @@ function yoyColorClass(value: number | null): string {
 }
 
 const metricCells = (metrics: Od0002Metric) => [
+  { value: formatCount(metrics.ticket_count_current), rawValue: metrics.ticket_count_current, isYoy: false },
+  { value: formatCount(metrics.ticket_count_prior), rawValue: metrics.ticket_count_prior, isYoy: false },
+  { value: formatPercent(metrics.ticket_count_yoy), rawValue: metrics.ticket_count_yoy, isYoy: true },
+  { value: formatMoneyYuan(metrics.average_ticket_current), rawValue: metrics.average_ticket_current, isYoy: false },
+  { value: formatMoneyYuan(metrics.average_ticket_prior), rawValue: metrics.average_ticket_prior, isYoy: false },
+  { value: formatPercent(metrics.average_ticket_yoy), rawValue: metrics.average_ticket_yoy, isYoy: true },
   { value: formatMoneyWan(metrics.sales_current), rawValue: metrics.sales_current, isYoy: false },
   { value: formatMoneyWan(metrics.sales_prior), rawValue: metrics.sales_prior, isYoy: false },
   { value: formatPercent(metrics.sales_yoy), rawValue: metrics.sales_yoy, isYoy: true },
@@ -112,17 +137,33 @@ export default function Od0002SalesGrossProfitPage() {
   }, [globalStoreCode]);
 
   const queryString = useMemo(
-    () => buildOd0002Params(submitted.start, submitted.end, submitted.storeId, submitted.departmentId).toString(),
+    () => buildOd0002Params(
+      submitted.start,
+      submitted.end,
+      submitted.storeId,
+      submitted.departmentId,
+      submitted.priorStart,
+      submitted.priorEnd,
+    ).toString(),
     [submitted],
   );
   const reportQuery = useQuery<Od0002Response>({
     queryKey: ["/api/sales/reports/od0002", submitted, queryVersion],
     queryFn: () => apiGet(`/api/sales/reports/od0002?${queryString}`),
-    enabled: hasSubmitted && Boolean(submitted.start && submitted.end && submitted.start <= submitted.end),
+    enabled: hasSubmitted && Boolean(
+      submitted.start
+      && submitted.end
+      && submitted.priorStart
+      && submitted.priorEnd
+      && submitted.start <= submitted.end
+      && submitted.priorStart <= submitted.priorEnd
+    ),
   });
 
   const rows = hasSubmitted ? reportQuery.data?.dimensions[activeTab] ?? [] : [];
-  const pagedRows = activeTab === "groups" ? paginateRows(rows, page) : rows;
+  const pagedRows = activeTab === "groups" || activeTab === "special_sales"
+    ? paginateRows(rows, page)
+    : rows;
   const activeTotal = hasSubmitted ? reportQuery.data?.totals[activeTab] : undefined;
   const pages = Math.max(1, Math.ceil(rows.length / 50));
   const visible = visibleOd0002Columns(activeTab, submitted.storeId);
@@ -142,8 +183,22 @@ export default function Od0002SalesGrossProfitPage() {
     setDraftDirty(true);
   };
 
+  const updateCurrentDate = (field: "start" | "end", value: string) => {
+    setDraft((current) => changeOd0002CurrentDate(current, field, value));
+    setDraftDirty(true);
+  };
+
+  const hasValidDraftPeriod = Boolean(
+    draft.start
+    && draft.end
+    && draft.priorStart
+    && draft.priorEnd
+    && draft.start <= draft.end
+    && draft.priorStart <= draft.priorEnd
+  );
+
   const submit = () => {
-    if (!draft.start || !draft.end || draft.start > draft.end) return;
+    if (!hasValidDraftPeriod) return;
     setSubmitted({ ...draft });
     setQueryVersion((value) => value + 1);
     setHasSubmitted(true);
@@ -184,7 +239,7 @@ export default function Od0002SalesGrossProfitPage() {
     <div className="space-y-6 p-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">OD0002 门店销售毛利汇总表</h1>
-        <p className="mt-1 text-sm text-muted-foreground">金额单位：万元；同期为本期日期自动回退一年。</p>
+        <p className="mt-1 text-sm text-muted-foreground">销售收入、毛利单位：万元；客单单位：元；同期默认按本期日期回退一年，自动带出后可手工修改。</p>
       </div>
 
       <Card>
@@ -196,19 +251,19 @@ export default function Od0002SalesGrossProfitPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="od0002-start">本期开始</Label>
-                  <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => updateDraft({ start: event.target.value })} />
+                  <Input id="od0002-start" type="date" value={draft.start} onChange={(event) => updateCurrentDate("start", event.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="od0002-end">本期结束</Label>
-                  <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => updateDraft({ end: event.target.value })} />
+                  <Input id="od0002-end" type="date" value={draft.end} onChange={(event) => updateCurrentDate("end", event.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="od0002-prior-start">同期开始（自动）</Label>
-                  <Input id="od0002-prior-start" readOnly value={draft.start ? previousYearDate(draft.start) : ""} />
+                  <Label htmlFor="od0002-prior-start">同期开始（自动，可修改）</Label>
+                  <Input id="od0002-prior-start" type="date" value={draft.priorStart} onChange={(event) => updateDraft({ priorStart: event.target.value })} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="od0002-prior-end">同期结束（自动）</Label>
-                  <Input id="od0002-prior-end" readOnly value={draft.end ? previousYearDate(draft.end) : ""} />
+                  <Label htmlFor="od0002-prior-end">同期结束（自动，可修改）</Label>
+                  <Input id="od0002-prior-end" type="date" value={draft.priorEnd} onChange={(event) => updateDraft({ priorEnd: event.target.value })} />
                 </div>
               </div>
             </section>
@@ -241,7 +296,7 @@ export default function Od0002SalesGrossProfitPage() {
                 </div>
               </div>
               <div className="mt-auto flex flex-wrap justify-end gap-2 pt-2">
-                <Button onClick={submit} disabled={reportQuery.isFetching || draft.start > draft.end}>
+                <Button onClick={submit} disabled={reportQuery.isFetching || !hasValidDraftPeriod}>
                   {reportQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}<span>查询</span>
                 </Button>
                 <Button variant="outline" onClick={exportReport} disabled={exporting || !hasSubmitted || !reportQuery.data}>
@@ -252,6 +307,7 @@ export default function Od0002SalesGrossProfitPage() {
             </section>
           </div>
           {draft.start > draft.end && <p className="text-sm text-red-600">本期结束日期不能早于开始日期</p>}
+          {draft.priorStart > draft.priorEnd && <p className="text-sm text-red-600">同期结束日期不能早于开始日期</p>}
           {exportError && <p role="alert" className="text-sm text-red-600">{exportError}</p>}
         </CardContent>
       </Card>
@@ -281,12 +337,14 @@ export default function Od0002SalesGrossProfitPage() {
                     <TableHead rowSpan={2}>部门</TableHead>
                     <TableHead rowSpan={2}>区域</TableHead>
                     <TableHead rowSpan={2}>品类</TableHead>
+                    <TableHead colSpan={3} className="text-center">来客数</TableHead>
+                    <TableHead colSpan={3} className="text-center">客单</TableHead>
                     <TableHead colSpan={3} className="text-center">销售收入</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利率</TableHead>
                   </TableRow>
                   <TableRow>
-                    {["本期", "同期", "同比", "本期", "同期", "同比", "本期", "同期", "同比"].map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
+                    {Array.from({ length: 5 }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -340,25 +398,28 @@ export default function Od0002SalesGrossProfitPage() {
                 <TableHeader className="sticky top-0 z-20 bg-white">
                   <TableRow>
                     {visible.includes("store") && <TableHead rowSpan={2}>门店</TableHead>}
-                    {activeTab === "groups" && <TableHead rowSpan={2}>部门</TableHead>}
-                    <TableHead rowSpan={2}>{activeTab === "groups" ? "柜组" : "维度"}</TableHead>
+                    {(activeTab === "groups" || activeTab === "special_sales") && <TableHead rowSpan={2}>部门</TableHead>}
+                    <TableHead rowSpan={2}>{activeTab === "groups" || activeTab === "special_sales" ? "柜组" : "维度"}</TableHead>
+                    {activeTab === "special_sales" && <TableHead rowSpan={2}>品牌</TableHead>}
+                    <TableHead colSpan={3} className="text-center">来客数</TableHead>
+                    <TableHead colSpan={3} className="text-center">客单</TableHead>
                     <TableHead colSpan={3} className="text-center">销售收入</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利</TableHead>
                     <TableHead colSpan={3} className="text-center">毛利率</TableHead>
                   </TableRow>
                   <TableRow>
-                    {["本期", "同期", "同比", "本期", "同期", "同比", "本期", "同期", "同比"].map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
+                    {Array.from({ length: 5 }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pagedRows.map((row, index) => (
-                    <TableRow key={`${row.store_code ?? "all"}-${row.department_code ?? "department"}-${row.dimension_code ?? row.dimension_name ?? index}`}>
+                    <TableRow key={`${row.store_code ?? "all"}-${row.department_code ?? "department"}-${row.dimension_code ?? row.dimension_name ?? index}-${row.brand_code ?? "brand"}`}>
                       {visible.includes("store") && (
                         <TableCell className="py-2">
                           <HierarchyValue name={row.store_name} code={row.store_code} />
                         </TableCell>
                       )}
-                      {activeTab === "groups" && (
+                      {(activeTab === "groups" || activeTab === "special_sales") && (
                         <TableCell className="py-2">
                           <HierarchyValue name={row.department_name} code={row.department_code} />
                         </TableCell>
@@ -366,6 +427,11 @@ export default function Od0002SalesGrossProfitPage() {
                       <TableCell className="py-2">
                         <HierarchyValue name={row.dimension_name} code={row.dimension_code} />
                       </TableCell>
+                      {activeTab === "special_sales" && (
+                        <TableCell className="py-2">
+                          <HierarchyValue name={row.brand_name} code={row.brand_code} />
+                        </TableCell>
+                      )}
                       {metricCells(row.metrics).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>
                   ))}
@@ -374,8 +440,9 @@ export default function Od0002SalesGrossProfitPage() {
                   <TableFooter>
                     <TableRow>
                       {visible.includes("store") && <TableCell className="py-2" />}
-                      {activeTab === "groups" && <TableCell className="py-2" />}
+                      {(activeTab === "groups" || activeTab === "special_sales") && <TableCell className="py-2" />}
                       <TableCell className="py-2">合计</TableCell>
+                      {activeTab === "special_sales" && <TableCell className="py-2" />}
                       {metricCells(activeTotal).map((cell, cellIndex) => <TableCell key={cellIndex} className={`py-2 text-right tabular-nums ${cell.isYoy ? yoyColorClass(cell.rawValue) : ""}`}>{cell.value}</TableCell>)}
                     </TableRow>
                   </TableFooter>
@@ -384,7 +451,7 @@ export default function Od0002SalesGrossProfitPage() {
             </div>
           )}
 
-          {activeTab === "groups" && rows.length > 50 && (
+          {(activeTab === "groups" || activeTab === "special_sales") && rows.length > 50 && (
             <div className="mt-4 flex items-center justify-end gap-3 text-sm">
               <span>第 {page} / {pages} 页，共 {rows.length} 条</span>
               <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</Button>

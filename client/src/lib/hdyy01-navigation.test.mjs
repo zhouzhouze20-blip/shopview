@@ -21,16 +21,24 @@ function findNode(items, id) {
   return null;
 }
 
-test("HDYY01 menu follows OD0002 in the sales reports folder", () => {
+test("new-century reports use the approved report order", () => {
   const reports = findNode(navigationItems, "sales-reports");
+  const newCenturyReports = findNode(navigationItems, "new-century-reports");
   assert.ok(reports);
+  assert.ok(newCenturyReports);
 
-  const reportIds = reports.subItems.map((item) => item.id);
-  const od0002Index = reportIds.indexOf(OD0002_ID);
-  assert.notEqual(od0002Index, -1);
-  assert.equal(reportIds[od0002Index + 1], HDYY01_ID);
+  const reportIds = newCenturyReports.subItems.map((item) => item.id);
+  const dailyFollowupIndex = reportIds.indexOf("daily-sales-followup");
+  assert.notEqual(dailyFollowupIndex, -1);
+  assert.deepEqual(reportIds.slice(dailyFollowupIndex, dailyFollowupIndex + 5), [
+    "daily-sales-followup",
+    OD0002_ID,
+    "od0004-monthly-followup",
+    "od0005-micro-mall-brand-sales",
+    HDYY01_ID,
+  ]);
 
-  const hdyy01 = reports.subItems[od0002Index + 1];
+  const hdyy01 = newCenturyReports.subItems[dailyFollowupIndex + 4];
   assert.equal(hdyy01.name, "HDYY01柜组经营分析表");
   assert.equal(hdyy01.icon, FileSpreadsheet);
 });

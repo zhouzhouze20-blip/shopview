@@ -131,9 +131,11 @@ def _manaframe_name_select_sql(enabled: bool, alias: str = "mf") -> str:
 def _contract_type_join_sql(enabled: bool, contract_alias: str = "cm") -> str:
     if not enabled:
         return ""
+    # ERP 单字符编码区分大小写；转成大写会让 I/i、L/l 等字典项同时命中，
+    # 造成一份合同扩成两行并在 LIMIT 之后被去重，破坏合同台账分页。
     return (
         "LEFT JOIN contmaintype cmt "
-        f"ON upper(trim(COALESCE({contract_alias}.cmtype, ''))) = upper(trim(COALESCE(cmt.cmtypecode, '')))"
+        f"ON trim(COALESCE({contract_alias}.cmtype, '')) = trim(COALESCE(cmt.cmtypecode, ''))"
     )
 
 
@@ -557,7 +559,7 @@ def _load_contract_list_items(
                 string_agg(DISTINCT NULLIF(upper(trim(COALESCE(bu.contract_mode, ''))), ''), ',' ORDER BY NULLIF(upper(trim(COALESCE(bu.contract_mode, ''))), '')) AS contract_modes
               FROM business_unit_binding b
               LEFT JOIN business_units bu ON bu.id = b.shop_unit_id
-              WHERE upper(trim(COALESCE(b.status, 'ACTIVE'))) IN ('ACTIVE', 'HISTORY')
+              WHERE upper(trim(COALESCE(b.status, 'ACTIVE'))) = 'ACTIVE'
               GROUP BY b.contract_id
             )
             """
@@ -616,6 +618,7 @@ def _load_contract_list_items(
               cm.cmcatname,
               cm.cmeffdate,
               cm.cmlapdate,
+              cm.sjcgdate,
               cm.cmmoney,
               cm.cmpaycode,
               cm.cmyfkmode,
@@ -1006,18 +1009,17 @@ async def get_contracts_by_unit(
             """
                 binding_matches AS (
                   SELECT
-                    b.contract_id,
-                    CAST(:unit_code AS varchar) AS group_code
+                    b.contract_id
                   FROM business_unit_binding b
                   WHERE b.shop_unit_id = :unit_id
-                    AND upper(trim(COALESCE(b.status, 'ACTIVE'))) IN ('ACTIVE', 'HISTORY')
+                    AND upper(trim(COALESCE(b.status, 'ACTIVE'))) = 'ACTIVE'
                     AND COALESCE(trim(b.contract_id), '') <> ''
                 ),
             """
             if has_business_unit_binding
             else """
                 binding_matches AS (
-                  SELECT NULL::varchar AS contract_id, NULL::varchar AS group_code
+                  SELECT NULL::varchar AS contract_id
                   WHERE false
                 ),
             """
@@ -1029,165 +1031,8 @@ async def get_contracts_by_unit(
                 {binding_matches_cte}
                 matched_contracts AS (
                   SELECT
-                    COALESCE(cmf.cmfcontno, cm.cmcontno) AS cmfcontno,
-                    COALESCE(cmf.cmfmfid, cm.cmchar9) AS cmfmfid,
-                    cmf.cmfmarket,
-                    cmf.cmfeffdate,
-                    cmf.cmflapdate,
-                    cmf.cmfjzmj,
-                    cmf.cmfsymj,
-                    cmf.cmfavgsyf,
-                    cmf.cmftotsyf,
-                    cmf.cmfcharter,
-                    cmf.cmfmemo,
-                    cmf.cmfbrand,
-                    cmf.cmfaddr,
-                    cmf.cmfarea,
-                    cmf.cmfismaster,
-                    cmf.cmfzjmj,
-                    cm.cmcontno,
-                    cm.cmstatus,
-                    cm.cmtype,
-                    {_contract_type_name_select_sql(has_contmaintype)}
-                    cm.cmmfid,
-                    cm.cmsupid,
-                    {_supplier_name_select_sql(has_supplierbase)}
-                    cm.cmwmid,
-                    cm.cmtitle,
-                    cm.cmobject,
-                    cm.cmppname,
-                    cm.cmcatname,
-                    cm.cmeffdate,
-                    cm.cmlapdate,
-                    cm.cmmoney,
-                    cm.cmpaycode,
-                    cm.cmbysettle,
-                    cm.cmyfkmode,
-                    cm.cmsetmode,
-                    cm.cmjsmkt,
-                    cm.cmkl,
-                    cm.cminputor,
-                    cm.cminputdate,
-                    cm.cmauditor,
-                    cm.cmauditdate,
-                    cm.cmannulor,
-                    cm.cmannuldate,
-                    cm.cmmemo,
-                    cm.cmmasterno,
-                    cm.cmseqno,
-                    cm.cmcontact,
-                    cm.cmadd,
-                    cm.cmtel,
-                    cm.cmfax,
-                    cm.cmemail,
-                    cm.cmchar9,
-                    cm.cmsptype,
-                    cm.signdate,
-                    cm.deliverydate,
-                    cm.tackbackdate,
-                    cm.sjcgdate,
-                    cm.effectdate,
-                    cm.zxqsrq,
-                    cm.zxjzrq,
-                    {_counter_group_scope_select_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")},
-                    FALSE AS matched_by_unit_binding,
-                    (
-                      cm.cmstatus = 'Y'
-                      AND CURRENT_DATE BETWEEN cm.cmeffdate::date AND cm.cmlapdate::date
-                    ) AS is_current_effective
-                  FROM contmain cm
-                  LEFT JOIN contmanaframe cmf
-                    ON cm.cmcontno = cmf.cmfcontno
-                   AND upper(trim(COALESCE(cmf.cmfmfid, ''))) = upper(trim(:unit_code))
-                   AND {cmf_store_match}
-                  {_supplier_join_sql(has_supplierbase)}
-                  {_contract_type_join_sql(has_contmaintype)}
-                  {_counter_group_scope_join_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")}
-                  WHERE upper(trim(COALESCE(cm.cmchar9, ''))) = upper(trim(:unit_code))
-                    AND {contract_store_match}
-
-                  UNION ALL
-
-                  SELECT
-                    COALESCE(cmf.cmfcontno, cm.cmcontno) AS cmfcontno,
-                    COALESCE(cmf.cmfmfid, cm.cmchar9) AS cmfmfid,
-                    cmf.cmfmarket,
-                    cmf.cmfeffdate,
-                    cmf.cmflapdate,
-                    cmf.cmfjzmj,
-                    cmf.cmfsymj,
-                    cmf.cmfavgsyf,
-                    cmf.cmftotsyf,
-                    cmf.cmfcharter,
-                    cmf.cmfmemo,
-                    cmf.cmfbrand,
-                    cmf.cmfaddr,
-                    cmf.cmfarea,
-                    cmf.cmfismaster,
-                    cmf.cmfzjmj,
-                    cm.cmcontno,
-                    cm.cmstatus,
-                    cm.cmtype,
-                    {_contract_type_name_select_sql(has_contmaintype)}
-                    cm.cmmfid,
-                    cm.cmsupid,
-                    {_supplier_name_select_sql(has_supplierbase)}
-                    cm.cmwmid,
-                    cm.cmtitle,
-                    cm.cmobject,
-                    cm.cmppname,
-                    cm.cmcatname,
-                    cm.cmeffdate,
-                    cm.cmlapdate,
-                    cm.cmmoney,
-                    cm.cmpaycode,
-                    cm.cmbysettle,
-                    cm.cmyfkmode,
-                    cm.cmsetmode,
-                    cm.cmjsmkt,
-                    cm.cmkl,
-                    cm.cminputor,
-                    cm.cminputdate,
-                    cm.cmauditor,
-                    cm.cmauditdate,
-                    cm.cmannulor,
-                    cm.cmannuldate,
-                    cm.cmmemo,
-                    cm.cmmasterno,
-                    cm.cmseqno,
-                    cm.cmcontact,
-                    cm.cmadd,
-                    cm.cmtel,
-                    cm.cmfax,
-                    cm.cmemail,
-                    cm.cmchar9,
-                    cm.cmsptype,
-                    cm.signdate,
-                    cm.deliverydate,
-                    cm.tackbackdate,
-                    cm.sjcgdate,
-                    cm.effectdate,
-                    cm.zxqsrq,
-                    cm.zxjzrq,
-                    {_counter_group_scope_select_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")},
-                    FALSE AS matched_by_unit_binding,
-                    (
-                      cm.cmstatus = 'Y'
-                      AND CURRENT_DATE BETWEEN cm.cmeffdate::date AND cm.cmlapdate::date
-                    ) AS is_current_effective
-                  FROM contmanaframe cmf
-                  LEFT JOIN contmain cm ON cm.cmcontno = cmf.cmfcontno
-                  {_supplier_join_sql(has_supplierbase)}
-                  {_contract_type_join_sql(has_contmaintype)}
-                  {_counter_group_scope_join_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")}
-                  WHERE upper(trim(COALESCE(cmf.cmfmfid, ''))) = upper(trim(:unit_code))
-                    AND {cmf_store_match}
-
-                  UNION ALL
-
-                  SELECT
                     COALESCE(cmf.cmfcontno, cm.cmcontno, bm.contract_id) AS cmfcontno,
-                    COALESCE(cmf.cmfmfid, bm.group_code, cm.cmchar9) AS cmfmfid,
+                    COALESCE(cmf.cmfmfid, cm.cmchar9) AS cmfmfid,
                     cmf.cmfmarket,
                     cmf.cmfeffdate,
                     cmf.cmflapdate,
@@ -1246,7 +1091,7 @@ async def get_contracts_by_unit(
                     cm.effectdate,
                     cm.zxqsrq,
                     cm.zxjzrq,
-                    {_counter_group_scope_select_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, bm.group_code, cm.cmchar9)")},
+                    {_counter_group_scope_select_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")},
                     TRUE AS matched_by_unit_binding,
                     (
                       cm.cmstatus = 'Y'
@@ -1257,14 +1102,10 @@ async def get_contracts_by_unit(
                     ON upper(trim(COALESCE(cm.cmcontno, ''))) = upper(trim(COALESCE(bm.contract_id, '')))
                   LEFT JOIN contmanaframe cmf
                     ON upper(trim(COALESCE(cmf.cmfcontno, ''))) = upper(trim(COALESCE(bm.contract_id, '')))
-                   AND (
-                     bm.group_code IS NULL
-                     OR upper(trim(COALESCE(cmf.cmfmfid, ''))) = upper(trim(COALESCE(bm.group_code, '')))
-                   )
                    AND {cmf_store_match}
                   {_supplier_join_sql(has_supplierbase)}
                   {_contract_type_join_sql(has_contmaintype)}
-                  {_counter_group_scope_join_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, bm.group_code, cm.cmchar9)")}
+                  {_counter_group_scope_join_sql(has_counter_groups, "COALESCE(cmf.cmfmfid, cm.cmchar9)")}
                   WHERE COALESCE(trim(bm.contract_id), '') <> ''
                     AND {contract_store_match}
                 )

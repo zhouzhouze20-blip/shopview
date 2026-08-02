@@ -1,5 +1,5 @@
 import type React from "react";
-import { Activity, BarChart3, Building2, Calculator, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, HardHat, Settings, Shield, Target, TicketPercent, Truck, Users, Warehouse } from "lucide-react";
+import { Activity, BarChart3, Building2, Calculator, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, FolderClosed, HardHat, Settings, Shield, Target, TicketPercent, Truck, Users, Warehouse } from "lucide-react";
 
 export interface NavigationItem {
   id: string;
@@ -49,6 +49,7 @@ export const navigationItems: NavigationItem[] = [
     icon: BarChart3,
     subItems: [
       { id: "sales-dashboard", name: "销售看板", icon: BarChart3 },
+      { id: "category-performance", name: "品类主管绩效", icon: Target },
       {
         id: "activity-analysis-group",
         name: "活动分析",
@@ -72,10 +73,54 @@ export const navigationItems: NavigationItem[] = [
         name: "报表",
         icon: BarChart3,
         subItems: [
-          { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
-          { id: "settled-gross-profit-ranking", name: "结算后销售毛利排行表", icon: FileSpreadsheet },
-          { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
-          { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
+          {
+            id: "new-century-reports",
+            name: "新世纪报表",
+            icon: FolderClosed,
+            subItems: [
+              { id: "daily-sales-followup", name: "OD0001 销售逐日跟进表", icon: FileSpreadsheet },
+              { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
+              { id: "od0004-monthly-followup", name: "OD0004 销售逐月跟进表", icon: FileSpreadsheet },
+              { id: "od0005-micro-mall-brand-sales", name: "OD0005 微商城品牌销售统计", icon: FileSpreadsheet },
+              { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
+            ],
+          },
+          {
+            id: "center-reports",
+            name: "中心报表",
+            icon: FolderClosed,
+            subItems: [
+              { id: "daily-sales-followup", name: "OD0001 销售逐日跟进表", icon: FileSpreadsheet },
+              { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
+              { id: "od0003-center-sales-followup", name: "OD0003 中心销售跟进表", icon: FileSpreadsheet },
+              { id: "od0004-monthly-followup", name: "OD0004 销售逐月跟进表", icon: FileSpreadsheet },
+              { id: "od0005-micro-mall-brand-sales", name: "OD0005 微商城品牌销售统计", icon: FileSpreadsheet },
+              { id: "hy0001-key-brand-member", name: "HY0001 重点品牌会员消费情况", icon: FileSpreadsheet },
+              { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
+            ],
+          },
+          {
+            id: "building-reports",
+            name: "大楼报表",
+            icon: FolderClosed,
+            subItems: [
+              { id: "daily-sales-followup", name: "OD0001 销售逐日跟进表", icon: FileSpreadsheet },
+              { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
+              { id: "od0004-monthly-followup", name: "OD0004 销售逐月跟进表", icon: FileSpreadsheet },
+              { id: "od0005-micro-mall-brand-sales", name: "OD0005 微商城品牌销售统计", icon: FileSpreadsheet },
+              { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
+              { id: "non-rental-monthly-revenue", name: "非租赁品牌月度收益表", icon: FileSpreadsheet },
+            ],
+          },
+          {
+            id: "other-reports",
+            name: "其他",
+            icon: FolderClosed,
+            subItems: [
+              { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
+              { id: "settled-gross-profit-ranking", name: "结算后销售毛利排行表", icon: FileSpreadsheet },
+            ],
+          },
         ],
       },
     ],
@@ -96,7 +141,15 @@ export const navigationItems: NavigationItem[] = [
     icon: CreditCard,
     subItems: [
       { id: "merchant-planning", name: "招商规划", icon: Target },
-      { id: "revenue-map", name: "收益地图", icon: CircleDollarSign },
+      {
+        id: "revenue-management",
+        name: "收益管理",
+        icon: CircleDollarSign,
+        subItems: [
+          { id: "revenue-map", name: "收益地图", icon: CircleDollarSign },
+          { id: "revenue-dashboard", name: "收益看板", icon: BarChart3 },
+        ],
+      },
       { id: "joint-renewal-revenue", name: "联营续签收益分析", icon: FileSpreadsheet },
       { id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet },
       {

@@ -43,6 +43,9 @@ from routers import (
     contracts,
     contract_unit_bindings,
     sales,
+    od0005_micro_mall,
+    non_rental_monthly_revenue,
+    category_performance,
     brand_member_analysis,
     joint_renewal_revenue,
     revenue,
@@ -104,6 +107,9 @@ app.include_router(floor_area_report.router)
 app.include_router(contracts.router)
 app.include_router(contract_unit_bindings.router)
 app.include_router(sales.router)
+app.include_router(od0005_micro_mall.router)
+app.include_router(non_rental_monthly_revenue.router)
+app.include_router(category_performance.router)
 app.include_router(brand_member_analysis.router)
 app.include_router(joint_renewal_revenue.router)
 app.include_router(revenue.router)

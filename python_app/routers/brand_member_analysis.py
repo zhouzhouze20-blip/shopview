@@ -157,7 +157,7 @@ async def brand_member_report(
         if getattr(exc.orig, "pgcode", None) == "57014":
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="品牌会员分析查询超时，请确认数据库迁移已执行后重试。",
+                detail="品牌会员分析查询超时，请缩短日期范围后重试。",
             ) from exc
         raise
 

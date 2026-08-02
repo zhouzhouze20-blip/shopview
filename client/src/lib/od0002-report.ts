@@ -8,9 +8,16 @@ export type Od0002DimensionKey =
   | "areas"
   | "categories"
   | "groups"
+  | "special_sales"
   | "floors";
 
 export interface Od0002Metric {
+  ticket_count_current: number;
+  ticket_count_prior: number;
+  ticket_count_yoy: number | null;
+  average_ticket_current: number | null;
+  average_ticket_prior: number | null;
+  average_ticket_yoy: number | null;
   sales_current: number;
   sales_prior: number;
   sales_yoy: number | null;
@@ -33,6 +40,8 @@ export interface Od0002Row {
   area_name?: string | null;
   category_code?: string | null;
   category_name?: string | null;
+  brand_code?: string | null;
+  brand_name?: string | null;
   row_type?: Od0002HierarchyRowType;
   metrics: Od0002Metric;
   total: Od0002Metric;
@@ -71,6 +80,7 @@ export const OD0002_TABS: ReadonlyArray<{
   { key: "areas", label: "区域" },
   { key: "categories", label: "品类" },
   { key: "groups", label: "柜组" },
+  { key: "special_sales", label: "特卖" },
   { key: "floors", label: "楼层" },
 ];
 
@@ -110,8 +120,12 @@ export function buildOd0002Params(
   end: string,
   storeId: string,
   departmentId: string = OD0002_ALL_DEPARTMENTS,
+  priorStart?: string,
+  priorEnd?: string,
 ): URLSearchParams {
   const params = new URLSearchParams({ start_date: start, end_date: end });
+  if (priorStart?.trim()) params.set("prior_start_date", priorStart.trim());
+  if (priorEnd?.trim()) params.set("prior_end_date", priorEnd.trim());
   const normalizedStore = storeId.trim();
   if (normalizedStore && normalizedStore !== OD0002_ALL_STORES) {
     params.set("store_id", normalizedStore);
@@ -121,6 +135,32 @@ export function buildOd0002Params(
     params.set("department_id", normalizedDepartment);
   }
   return params;
+}
+
+export type Od0002PeriodFilters = {
+  start: string;
+  end: string;
+  priorStart: string;
+  priorEnd: string;
+};
+
+export function changeOd0002CurrentDate<T extends Od0002PeriodFilters>(
+  draft: T,
+  field: "start" | "end",
+  value: string,
+): T {
+  if (field === "start") {
+    return {
+      ...draft,
+      start: value,
+      priorStart: value ? previousYearDate(value) : "",
+    };
+  }
+  return {
+    ...draft,
+    end: value,
+    priorEnd: value ? previousYearDate(value) : "",
+  };
 }
 
 export type Od0002DepartmentDraft = Od0002DraftFilters & { departmentId: string };
@@ -134,6 +174,19 @@ export type Od0002VisibleColumn = "store" | "dimension" | "sales" | "profit" | "
 export function formatMoneyWan(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return (value / 10_000).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+export function formatCount(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return Math.round(value).toLocaleString("zh-CN");
+}
+
+export function formatMoneyYuan(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return value.toLocaleString("zh-CN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });

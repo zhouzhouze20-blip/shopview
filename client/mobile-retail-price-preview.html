@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>手机销售看板｜本期零售价预览</title>
+    <style>
+      * { box-sizing: border-box; }
+      :root {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #0f172a;
+        background: #dfe7f2;
+      }
+      body { margin: 0; min-height: 100vh; }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      .preview-shell { min-height: 100vh; padding: 18px 12px 32px; }
+      .preview-controls {
+        width: min(440px, 100%);
+        margin: 0 auto 12px;
+        padding: 5px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+        background: rgba(255,255,255,.86);
+        border: 1px solid rgba(148,163,184,.3);
+        border-radius: 16px;
+        box-shadow: 0 8px 30px rgba(15,23,42,.08);
+        backdrop-filter: blur(12px);
+      }
+      .preview-controls button {
+        border: 0;
+        border-radius: 12px;
+        padding: 9px 8px;
+        color: #64748b;
+        background: transparent;
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .preview-controls button.active {
+        color: #fff;
+        background: linear-gradient(135deg, #0f6f73, #0b4358);
+        box-shadow: 0 4px 12px rgba(13,88,96,.2);
+      }
+      .phone {
+        width: min(440px, 100%);
+        min-height: 790px;
+        margin: 0 auto;
+        overflow: hidden;
+        background: #f2f6fc;
+        border: 1px solid rgba(148,163,184,.35);
+        border-radius: 30px;
+        box-shadow: 0 28px 70px rgba(15,23,42,.2);
+      }
+      .topbar {
+        padding: 22px 20px 18px;
+        color: #fff;
+        background:
+          radial-gradient(circle at 90% 130%, rgba(14,153,139,.42), transparent 42%),
+          linear-gradient(135deg, #071126, #0a2430);
+      }
+      .brand { margin-left: 44px; color: #75dfd1; font-size: 11px; font-weight: 750; letter-spacing: .2em; }
+      .title-row { display: flex; align-items: center; gap: 13px; margin-top: 5px; }
+      .back { color: #dce6ee; font-size: 28px; line-height: 1; }
+      h1 { margin: 0; font-size: 25px; line-height: 1.2; letter-spacing: -.02em; }
+      .period { display: flex; justify-content: space-between; margin-top: 16px; color: #c3ced9; font-size: 13px; }
+      .content { padding: 12px; }
+      .overview {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        overflow: hidden;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 20px;
+        box-shadow: 0 2px 7px rgba(15,23,42,.06);
+      }
+      .overview > div { min-width: 0; padding: 13px 14px; }
+      .overview > div + div { border-left: 1px solid #eef2f7; }
+      .metric-label { color: #64748b; font-size: 12px; }
+      .metric-value { margin-top: 2px; font-size: 25px; font-weight: 780; letter-spacing: -.04em; }
+      .metric-subgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 7px; color: #94a3b8; font-size: 10px; }
+      .metric-subgrid > div:last-child { text-align: right; }
+      .metric-subgrid strong { display: block; margin-top: 2px; color: #64748b; font-size: 11px; white-space: nowrap; }
+      .metric-subgrid .down { color: #059669; }
+      .section-heading { display: flex; align-items: center; gap: 9px; min-width: 0; margin: 13px 2px 10px; }
+      .circle-back {
+        width: 37px; height: 37px; flex: 0 0 37px;
+        display: grid; place-items: center;
+        border: 1.5px solid #0f172a;
+        border-radius: 50%;
+        background: #fff;
+        font-size: 23px;
+      }
+      .section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 760; }
+      .section-count { flex: 0 0 auto; color: #94a3b8; font-size: 11px; white-space: nowrap; }
+      .search {
+        width: 100%;
+        margin-bottom: 10px;
+        padding: 12px 16px;
+        border: 1.5px solid #172033;
+        border-radius: 17px;
+        background: #fff;
+        color: #64748b;
+        font-size: 15px;
+      }
+      .card {
+        width: 100%;
+        padding: 14px;
+        border: 1px solid #dbe3ed;
+        border-radius: 20px;
+        background: #fff;
+        box-shadow: 0 3px 9px rgba(15,23,42,.06);
+      }
+      .card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+      .card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 780; }
+      .card-code { flex: 0 0 auto; color: #94a3b8; font-size: 11px; }
+      .chevron { margin-left: auto; color: #cbd5e1; font-size: 22px; }
+      .main-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+      .main-metric { padding: 9px 10px; border-radius: 12px; background: #f7fafc; }
+      .main-metric label { display: block; color: #94a3b8; font-size: 11px; }
+      .main-metric b { display: block; margin-top: 2px; font-size: 19px; }
+      .main-metric small { display: block; margin-top: 4px; color: #94a3b8; font-size: 10px; white-space: nowrap; }
+      .main-metric small strong { color: #64748b; font-size: 11px; }
+      .retail {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-top: 10px; padding: 9px 11px;
+        border-radius: 12px;
+        background: linear-gradient(90deg, #eff6ff, #eef2ff);
+        color: #2563eb;
+        font-size: 12px;
+      }
+      .retail strong { color: #1e3a8a; font-size: 15px; letter-spacing: -.02em; }
+      .mini-metrics {
+        display: grid; grid-template-columns: 1fr 1fr 1fr;
+        margin-top: 10px; padding: 8px 0;
+        border: 1px solid #eef2f7;
+        border-radius: 12px;
+        text-align: center;
+      }
+      .mini-metrics > div + div { border-left: 1px solid #eef2f7; }
+      .mini-metrics label { display: block; color: #94a3b8; font-size: 10px; }
+      .mini-metrics span { display: block; margin-top: 2px; color: #334155; font-size: 12px; }
+      .mini-metrics .down { color: #059669; font-weight: 700; }
+      .view-switch { display: flex; gap: 7px; margin-top: 10px; }
+      .view-switch button {
+        flex: 1;
+        padding: 9px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        background: #fff;
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .view-switch button.active { border-color: #0f766e; color: #fff; background: #0f766e; }
+      .ticket-card { padding: 18px; }
+      .ticket-head { display: flex; justify-content: space-between; gap: 10px; }
+      .ticket-title { font-size: 20px; font-weight: 780; }
+      .ticket-date { margin-top: 7px; color: #94a3b8; font-size: 13px; }
+      .ticket-icon { color: #cbd5e1; font-size: 24px; }
+      .ticket-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 18px; margin-top: 15px; color: #64748b; font-size: 14px; }
+      .ticket-metrics strong { color: #0f172a; }
+      .footnote { margin: 18px 0 3px; text-align: center; color: #94a3b8; font-size: 11px; }
+      [hidden] { display: none !important; }
+      @media (max-width: 480px) {
+        .preview-shell { padding: 0; }
+        .preview-controls {
+          width: 100%; margin: 0; padding: 7px 8px;
+          border: 0; border-radius: 0;
+          position: sticky; top: 0; z-index: 5;
+        }
+        .phone { width: 100%; min-height: calc(100vh - 51px); border: 0; border-radius: 0; box-shadow: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="preview-shell">
+      <nav class="preview-controls" aria-label="预览范围">
+        <button type="button" class="active" data-store="center">购物中心化妆部</button>
+        <button type="button" data-store="new-century">新世纪化妆部</button>
+      </nav>
+
+      <article class="phone">
+        <header class="topbar">
+          <div class="brand">SHOPVIEW</div>
+          <div class="title-row"><span class="back">←</span><h1>销售看板</h1></div>
+          <div class="period"><span>周昊</span><span>2026-07-24 至 2026-07-24</span></div>
+        </header>
+
+        <div class="content">
+          <section class="overview">
+            <div>
+              <div class="metric-label">销售收入</div>
+              <div class="metric-value" data-sales>¥974</div>
+              <div class="metric-subgrid">
+                <div>同期销售<strong data-prior-sales>¥2,887</strong></div>
+                <div>销售同比<strong class="down" data-yoy>-66.26%</strong></div>
+              </div>
+            </div>
+            <div>
+              <div class="metric-label">净毛利</div>
+              <div class="metric-value" data-profit>¥147</div>
+              <div class="metric-subgrid">
+                <div>同期毛利<strong data-prior-profit>¥510</strong></div>
+                <div>毛利同比<strong class="down" data-profit-yoy>-71.18%</strong></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="section-heading">
+            <div class="circle-back">←</div>
+            <div class="section-name" data-section-name>中心一部(化妆)</div>
+            <div class="section-count" data-section-count>19 项 · 权限范围</div>
+          </div>
+
+          <div class="view-switch">
+            <button type="button" class="active" data-view="group">柜组卡片</button>
+            <button type="button" data-view="ticket">小票卡片</button>
+          </div>
+
+          <section data-group-view>
+            <div class="search">⌕　搜索柜组编码或名称</div>
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title" data-group-name>STENDERS施丹兰厅</div>
+                <div class="card-code" data-group-code>6010114003</div>
+                <div class="chevron">›</div>
+              </div>
+              <div class="main-metrics">
+                <div class="main-metric">
+                  <label>销售收入</label><b data-sales>¥974</b>
+                  <small>同期销售 <strong data-prior-sales>¥2,887</strong></small>
+                </div>
+                <div class="main-metric">
+                  <label>净毛利</label><b data-profit>¥147</b>
+                  <small>同期毛利 <strong data-prior-profit>¥510</strong></small>
+                </div>
+              </div>
+              <div class="retail"><span>本期零售价</span><strong data-retail>¥1,299</strong></div>
+              <div class="mini-metrics">
+                <div><label>销售同比</label><span class="down" data-yoy>-66.26%</span></div>
+                <div><label>毛利率</label><span data-margin>15.09%</span></div>
+                <div><label>小票数</label><span data-tickets>1</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section data-ticket-view hidden>
+            <div class="card ticket-card">
+              <div class="ticket-head">
+                <div>
+                  <div class="ticket-title" data-ticket-title>小票 4369</div>
+                  <div class="ticket-date">2026-07-24T10:11:44</div>
+                </div>
+                <div class="ticket-icon">▧</div>
+              </div>
+              <div class="retail"><span>本期零售价</span><strong data-retail>¥1,299</strong></div>
+              <div class="ticket-metrics">
+                <div>销售 <strong data-sales>¥974</strong></div>
+                <div>毛利 <strong data-profit>¥147</strong></div>
+                <div>毛利率 <strong data-margin>15.09%</strong></div>
+                <div>数量 <strong>1</strong></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="footnote">仅为界面预览 · 不连接真实业务数据</div>
+        </div>
+      </article>
+    </div>
+
+    <script>
+      const samples = {
+        center: {
+          department: "中心一部(化妆)", count: "19 项 · 权限范围",
+          group: "STENDERS施丹兰厅", code: "6010114003", ticket: "小票 4369",
+          retail: "¥1,299", sales: "¥974", priorSales: "¥2,887",
+          profit: "¥147", priorProfit: "¥510", yoy: "-66.26%", profitYoy: "-71.18%",
+          margin: "15.09%", tickets: "1"
+        },
+        "new-century": {
+          department: "新世纪一部(化妆)", count: "32 项 · 权限范围",
+          group: "LANCOME兰蔻厅", code: "6030101018", ticket: "小票 7832",
+          retail: "¥8,680", sales: "¥7,460", priorSales: "¥9,120",
+          profit: "¥1,268", priorProfit: "¥1,550", yoy: "-18.20%", profitYoy: "-18.19%",
+          margin: "17.00%", tickets: "3"
+        }
+      };
+
+      function applySample(key) {
+        const item = samples[key];
+        document.querySelector("[data-section-name]").textContent = item.department;
+        document.querySelector("[data-section-count]").textContent = item.count;
+        document.querySelector("[data-group-name]").textContent = item.group;
+        document.querySelector("[data-group-code]").textContent = item.code;
+        document.querySelector("[data-ticket-title]").textContent = item.ticket;
+        document.querySelectorAll("[data-retail]").forEach((node) => node.textContent = item.retail);
+        document.querySelectorAll("[data-sales]").forEach((node) => node.textContent = item.sales);
+        document.querySelectorAll("[data-prior-sales]").forEach((node) => node.textContent = item.priorSales);
+        document.querySelectorAll("[data-profit]").forEach((node) => node.textContent = item.profit);
+        document.querySelectorAll("[data-prior-profit]").forEach((node) => node.textContent = item.priorProfit);
+        document.querySelectorAll("[data-yoy]").forEach((node) => node.textContent = item.yoy);
+        document.querySelector("[data-profit-yoy]").textContent = item.profitYoy;
+        document.querySelectorAll("[data-margin]").forEach((node) => node.textContent = item.margin);
+        document.querySelector("[data-tickets]").textContent = item.tickets;
+      }
+
+      document.querySelectorAll("[data-store]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-store]").forEach((item) => item.classList.toggle("active", item === button));
+          applySample(button.dataset.store);
+        });
+      });
+
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const ticketView = button.dataset.view === "ticket";
+          document.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item === button));
+          document.querySelector("[data-group-view]").hidden = ticketView;
+          document.querySelector("[data-ticket-view]").hidden = !ticketView;
+        });
+      });
+    </script>
+  </body>
+</html>

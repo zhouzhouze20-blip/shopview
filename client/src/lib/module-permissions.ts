@@ -21,6 +21,7 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   contracts: ["contract.view"],
   "contract-unit-bindings": ["contract.view"],
   "sales-dashboard": ["sales.view"],
+  "category-performance": ["sales.category_performance.view"],
   "activity-analysis": ["activity_analysis.view"],
   "points-activity-analysis": ["activity_analysis.points.view"],
   "voucher-match": ["activity_settlement.voucher_match.view"],
@@ -28,15 +29,22 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   "coupon-monthly-balance": ["activity_settlement.coupon_monthly.view"],
   "star-diamond-analysis": ["activity_analysis.star_diamond.view"],
   "brand-member-analysis": ["sales.brand_member_analysis.view"],
-  "commodity-sales-detail": ["sales.view"],
-  "settled-gross-profit-ranking": ["sales.od0002.view"],
+  "commodity-sales-detail": ["sales.commodity_detail.view"],
+  "settled-gross-profit-ranking": ["sales.settled_gross_profit.view"],
   "od0002-sales-gross-profit": ["sales.od0002.view"],
+  "daily-sales-followup": ["sales.od0001.view"],
+  "od0003-center-sales-followup": ["sales.od0003.view"],
+  "od0004-monthly-followup": ["sales.od0004.view"],
+  "od0005-micro-mall-brand-sales": ["sales.od0005.view"],
+  "hy0001-key-brand-member": ["sales.hy0001.view"],
+  "non-rental-monthly-revenue": ["sales.non_rental_monthly_revenue.view"],
   "hdyy01-group-operation-analysis": ["sales.hdyy01.view"],
   "inventory-detail": ["sales.inventory.view"],
   "historical-inventory-detail": ["sales.inventory_history.view"],
   "inventory-movement-detail": ["sales.inventory_movement.view"],
   "merchant-planning": ["merchant_planning.view"],
   "revenue-map": ["revenue.view"],
+  "revenue-dashboard": ["revenue.dashboard.view"],
   "joint-renewal-revenue": ["revenue.view"],
   "joint-settlement": ["settlement.view"],
   decorations: ["decoration.view"],
@@ -53,7 +61,36 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   "contract-permissions": ["system.data_policy.manage"],
   "wecom-rules": ["system.data_policy.manage"],
   "audit-logs": ["system.audit_log.view"],
+  "mobile-sales-dashboard": ["mobile.sales.view"],
+  "mobile-contracts": ["mobile.contracts.view"],
+  "mobile-inventory": ["mobile.inventory.view"],
+  "mobile-revenue-dashboard": ["mobile.revenue_dashboard.view"],
 };
+
+// Mobile entry permissions are an additional channel gate. The matching
+// business permission remains required because the underlying APIs enforce it.
+export const MODULE_PERMISSION_DEPENDENCIES: Record<string, string[]> = {
+  "mobile-sales-dashboard": ["sales.view"],
+  "mobile-contracts": ["contract.view"],
+  "mobile-inventory": ["sales.inventory.view"],
+  "mobile-revenue-dashboard": ["revenue.dashboard.view"],
+};
+
+export const DEFAULT_MOBILE_ROLE_PERMISSION_CODES = [
+  "mobile.sales.view",
+  "mobile.contracts.view",
+  "mobile.inventory.view",
+] as const;
+
+export function getDefaultMobileRolePermissionIds(
+  permissions: Array<{ id: number; permission_code: string }>,
+): number[] {
+  const defaultCodes = new Set<string>(DEFAULT_MOBILE_ROLE_PERMISSION_CODES);
+  return permissions
+    .filter((permission) => defaultCodes.has(permission.permission_code))
+    .map((permission) => permission.id)
+    .sort((a, b) => a - b);
+}
 
 export function isAdminUser(user?: AuthModuleUser | null): boolean {
   return Boolean(user?.role_codes?.some((roleCode) => ADMIN_ROLE_CODES.has(roleCode)));
@@ -65,7 +102,9 @@ export function canAccessModule(user: AuthModuleUser | null | undefined, moduleI
   const requiredPermissions = MODULE_PERMISSION_REQUIREMENTS[moduleId];
   if (!requiredPermissions?.length) return false;
   const permissionSet = new Set(user.permission_codes ?? []);
-  return requiredPermissions.some((permissionCode) => permissionSet.has(permissionCode));
+  if (!requiredPermissions.some((permissionCode) => permissionSet.has(permissionCode))) return false;
+  const dependencies = MODULE_PERMISSION_DEPENDENCIES[moduleId] ?? [];
+  return dependencies.every((permissionCode) => permissionSet.has(permissionCode));
 }
 
 export function filterAccessibleModuleTree<T extends ModuleTreeItem>(items: T[], user: AuthModuleUser | null | undefined): T[] {

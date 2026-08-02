@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <title>ShopView 手机版紧凑布局预览</title>
+  </head>
+  <body>
+    <main class="min-h-[100dvh] bg-slate-100 pb-4 text-slate-900">
+      <header class="sticky top-0 z-20 bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-3 pb-2.5 pt-2.5 text-white shadow-md">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-baseline gap-2"><span class="text-[10px] tracking-[.14em] text-teal-200">SHOPVIEW</span><h1 class="text-base font-semibold">销售看板</h1></div>
+          <button class="h-8 w-8 rounded-full" aria-label="退出登录">↗</button>
+        </div>
+        <div class="mt-1 flex justify-between text-[10px] text-slate-300"><span>周辰</span><span>2026-07-19 至 2026-07-19</span></div>
+      </header>
+
+      <div class="mx-auto max-w-xl space-y-2 px-2.5 pt-2.5">
+        <div class="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm" id="metrics"></div>
+        <section>
+          <div class="mb-2 flex min-h-8 items-center gap-2 px-0.5">
+            <button class="h-8 w-8 shrink-0 rounded-full border border-slate-200 bg-white">←</button>
+            <div class="flex min-w-0 flex-1 items-baseline gap-2"><h2 class="truncate text-sm font-semibold">常州购物中心</h2><span class="text-[10px] text-slate-400">8 项 · 权限范围</span></div>
+          </div>
+          <div class="space-y-1.5" id="departments"></div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const metrics = [
+        ["销售收入", "¥1,989,581", "同期销售", "¥1,784,326"],
+        ["净毛利", "¥252,881", "同期毛利", "¥226,491"],
+      ];
+      document.querySelector("#metrics").innerHTML = `
+        <div class="grid grid-cols-2 divide-x divide-slate-100">
+          ${metrics.map(([label, value, priorLabel, priorValue]) => `
+            <div class="min-w-0 px-3 py-2.5">
+              <div class="text-[10px] leading-4 text-slate-500">${label}</div>
+              <div class="truncate text-lg font-semibold leading-6 tabular-nums tracking-tight text-slate-950">${value}</div>
+              <div class="mt-1 flex min-w-0 items-baseline gap-1.5 text-[10px] leading-4 text-slate-400">
+                <span class="shrink-0">${priorLabel}</span><span class="truncate font-medium tabular-nums text-slate-600">${priorValue}</span>
+              </div>
+            </div>`).join("")}
+        </div>
+        <div class="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 bg-slate-50/70">
+          <div class="flex items-center justify-between px-3 py-2 text-[11px]"><span class="text-slate-500">小票数</span><b class="tabular-nums">1,774</b></div>
+          <div class="flex items-center justify-between px-3 py-2 text-[11px]"><span class="text-slate-500">柜组数</span><b class="tabular-nums">201</b></div>
+        </div>`;
+
+      const departments = [
+        ["中心BF部(超市)", "6010104", "¥33,038", "¥47,986", "-31.15%", "¥5,640", "¥7,810", "17.07%", "106"],
+        ["中心一部(化妆)", "6010101", "¥398,562", "¥354,980", "+12.28%", "¥102,341", "¥91,305", "25.68%", "318"],
+        ["中心二部(女装)", "6010102", "¥286,902", "¥301,372", "-4.80%", "¥51,090", "¥54,872", "17.81%", "241"],
+        ["中心三部(男装)", "6010103", "¥241,807", "¥223,559", "+8.16%", "¥42,385", "¥38,740", "17.53%", "198"],
+        ["中心四部(运动)", "6010105", "¥307,110", "¥296,010", "+3.75%", "¥38,930", "¥36,880", "12.68%", "280"],
+        ["中心五部(童装)", "6010106", "¥190,506", "¥205,315", "-7.21%", "¥22,360", "¥24,160", "11.74%", "176"],
+        ["中心六部(家居)", "6010107", "¥284,014", "¥279,375", "+1.66%", "¥31,890", "¥30,995", "11.23%", "264"],
+        ["中心营运部", "6010199", "¥247,642", "¥235,679", "+5.08%", "¥58,245", "¥54,802", "23.52%", "191"],
+      ];
+      document.querySelector("#departments").innerHTML = departments.map(([name, code, sales, priorSales, yoy, profit, priorProfit, margin, tickets]) => `
+        <article class="rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+          <div class="flex items-center justify-between gap-2"><div class="flex min-w-0 items-baseline gap-1.5"><b class="truncate text-[13px] leading-4">${name}</b><span class="text-[9px] tabular-nums text-slate-400">${code}</span></div><span class="text-slate-300">›</span></div>
+          <div class="mt-1.5 grid grid-cols-2 gap-2">
+            ${[["销售收入", sales, "同期销售", priorSales], ["净毛利", profit, "同期毛利", priorProfit]].map(([label, value, priorLabel, priorValue]) => `
+              <div class="min-w-0 rounded-lg bg-slate-50 px-2 py-1.5">
+                <div class="text-[9px] leading-3 text-slate-400">${label}</div><div class="truncate text-xs font-semibold leading-4 tabular-nums">${value}</div>
+                <div class="mt-0.5 truncate text-[9px] leading-3 text-slate-400">${priorLabel} <span class="font-medium text-slate-600">${priorValue}</span></div>
+              </div>`).join("")}
+          </div>
+          <div class="mt-1.5 grid grid-cols-3 divide-x divide-slate-100 rounded-lg border border-slate-100 py-1 text-center">
+            ${[["销售同比", yoy], ["毛利率", margin], ["小票数", tickets]].map(([label, value]) => `<div class="min-w-0 px-1 text-[9px] leading-3 text-slate-400"><div>${label}</div><div class="truncate font-semibold tabular-nums ${label === "销售同比" ? (value.startsWith("+") ? "text-red-600" : "text-emerald-600") : "text-slate-700"}">${value}</div></div>`).join("")}
+          </div>
+        </article>`).join("");
+    </script>
+  </body>
+</html>

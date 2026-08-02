@@ -78,6 +78,9 @@ test("keeps only occurrence dates and the five real-time inventory filters", asy
   assert.doesNotMatch(page, />门店<\/Label>/);
   assert.doesNotMatch(page, />商品规格<\/Label>/);
   assert.doesNotMatch(page, /movement-subinventory/);
+  assert.match(page, /InventoryFilterAutocomplete/);
+  assert.match(page, /optionsEndpoint=\{`\$\{REPORT_ENDPOINT\}\/options`\}/);
+  assert.match(page, /dates=\{\{ start_date: draft\.start_date, end_date: draft\.end_date \}\}/);
 });
 
 test("uses the real-time inventory name for the tab and page title", async () => {

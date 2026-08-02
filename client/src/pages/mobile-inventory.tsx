@@ -22,6 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModuleAccessLog } from "@/hooks/use-module-access-log";
 import { apiGet } from "@/lib/api";
 import { canAccessModule } from "@/lib/module-permissions";
 import {
@@ -95,7 +96,7 @@ const formatSellingCalculation = (row: InventoryRow) => {
 export default function MobileInventoryPage() {
   const { menuUser } = useAuth();
   const [, setLocation] = useLocation();
-  const hasAccess = canAccessModule(menuUser, "inventory-detail");
+  const hasAccess = canAccessModule(menuUser, "mobile-inventory");
   const [activeTab, setActiveTab] = useState("product");
   const [inputCode, setInputCode] = useState("");
   const [submittedCode, setSubmittedCode] = useState("");
@@ -111,6 +112,13 @@ export default function MobileInventoryPage() {
   const [scanStarting, setScanStarting] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const { recordQuery } = useModuleAccessLog({
+    moduleId: "mobile-inventory",
+    moduleName: "手机端实时库存查询",
+    clientType: "mobile",
+    enabled: hasAccess,
+  });
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({ exact_code: submittedCode, limit: "500" });
@@ -233,12 +241,13 @@ export default function MobileInventoryPage() {
     }
     setInputCode(normalized);
     setScanError(null);
+    recordQuery({ query_type: "product_inventory", barcode: normalized });
     if (normalized === submittedCode) {
       void refetchInventory();
     } else {
       setSubmittedCode(normalized);
     }
-  }, [inputCode, refetchInventory, submittedCode]);
+  }, [inputCode, recordQuery, refetchInventory, submittedCode]);
 
   const startScan = async () => {
     if (!hasAccess || scanStarting) return;
@@ -267,6 +276,7 @@ export default function MobileInventoryPage() {
     }
     setSupplierInput(normalized);
     setSupplierError(null);
+    recordQuery({ query_type: "supplier_inventory", supplier_name: normalized });
     if (normalized === submittedSupplier) {
       void supplierQuery.refetch();
     } else {
@@ -280,6 +290,11 @@ export default function MobileInventoryPage() {
       return;
     }
     setGroupError(null);
+    recordQuery({
+      query_type: "group_inventory",
+      group_code: selectedGroup.code || selectedGroup.value,
+      group_name: selectedGroup.name || selectedGroup.label,
+    });
     if (selectedGroup.value === submittedGroup?.value) {
       void groupQuery.refetch();
     } else {
@@ -341,7 +356,7 @@ export default function MobileInventoryPage() {
           <CardContent className="px-6 py-12 text-center">
             <ShieldCheck className="mx-auto h-10 w-10 text-slate-400" />
             <div className="mt-4 font-semibold">暂无库存查询权限</div>
-            <div className="mt-2 text-sm text-slate-500">请联系管理员开通“查看实时库存查询”权限。</div>
+            <div className="mt-2 text-sm text-slate-500">请联系管理员同时开通“手机端实时库存查询”和“查看实时库存查询”权限。</div>
           </CardContent>
         </Card>
       </main>
@@ -716,7 +731,7 @@ export default function MobileInventoryPage() {
                   <CardContent className="p-5">
                     <div className="text-xs text-teal-100">已选柜组</div>
                     <div className="mt-1 text-lg font-semibold leading-7">{submittedGroup.label}</div>
-                    <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="mt-4 grid grid-cols-2 gap-2">
                       <div className="rounded-2xl bg-white/10 p-3">
                         <div className="text-xs text-teal-100">库存数量</div>
                         <div className="mt-1 text-2xl font-bold tabular-nums">{formatNumber(groupSummary?.inventory_quantity, 4)}</div>
@@ -725,35 +740,42 @@ export default function MobileInventoryPage() {
                         <div className="text-xs text-teal-100">库存明细</div>
                         <div className="mt-1 text-2xl font-bold tabular-nums">{Number(groupSummary?.total_count || groupRows.length)}</div>
                       </div>
+                      <div className="col-span-2 flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2.5">
+                        <div>
+                          <div className="text-xs text-teal-100">总库存金额</div>
+                          <div className="mt-0.5 text-[10px] text-teal-100/80">按零售价合计</div>
+                        </div>
+                        <div className="text-xl font-bold tabular-nums">¥{formatNumber(groupSummary?.retail_amount, 2)}</div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
 
-                <section className="space-y-4">
+                <section className="space-y-3">
                   {groupSupplierGroups.map((supplierGroup) => (
-                    <Card key={supplierGroup.supplier} className="overflow-hidden rounded-3xl border-0 shadow-sm">
-                      <CardHeader className="border-b bg-teal-50 pb-3">
-                        <CardTitle className="text-base leading-6 text-teal-950">{supplierGroup.supplier}</CardTitle>
-                        <CardDescription>
+                    <Card key={supplierGroup.supplier} className="overflow-hidden rounded-2xl border-0 shadow-sm">
+                      <CardHeader className="space-y-1 border-b bg-teal-50 px-4 py-3">
+                        <CardTitle className="text-sm leading-5 text-teal-950">{supplierGroup.supplier}</CardTitle>
+                        <CardDescription className="text-[11px] leading-4">
                           {supplierGroup.rows.length} 条明细 · 库存数量 {formatNumber(supplierGroup.quantity, 4)}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="divide-y p-0">
                         {supplierGroup.rows.map((row, index) => (
-                          <div key={`${row.goods_code}-${row.subinventory_display}-${index}`} className="space-y-3 p-4">
-                            <div className="flex items-start justify-between gap-3">
+                          <div key={`${row.goods_code}-${row.subinventory_display}-${index}`} className="px-3 py-2.5">
+                            <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="font-semibold leading-5 text-slate-900">{row.goods_name || row.goods_code}</div>
-                                <div className="mt-1 break-all text-xs text-slate-500">商品 {row.goods_code} · 条码 {row.barcode || "—"}</div>
+                                <div className="text-sm font-semibold leading-5 text-slate-900">{row.goods_name || row.goods_code}</div>
+                                <div className="mt-0.5 break-all text-[11px] leading-4 text-slate-500">商品 {row.goods_code} · 条码 {row.barcode || "—"}</div>
                               </div>
-                              <div className="shrink-0 rounded-xl bg-emerald-50 px-3 py-2 text-right text-emerald-700">
-                                <div className="text-[10px]">库存数量</div>
-                                <div className="text-base font-bold tabular-nums">{formatNumber(row.inventory_quantity, 4)}</div>
+                              <div className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-right text-emerald-700">
+                                <div className="text-[9px] leading-3">库存数量</div>
+                                <div className="text-sm font-bold leading-5 tabular-nums">{formatNumber(row.inventory_quantity, 4)}</div>
                               </div>
                             </div>
-                            <div className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                              <div>子库存：{row.subinventory_display || "—"}</div>
-                              <div>售价：{formatSellingCalculation(row)}</div>
+                            <div className="mt-1.5 flex flex-wrap gap-x-2 text-[11px] leading-4 text-slate-500">
+                              <span>子库存：{row.subinventory_display || "—"}</span>
+                              <span>售价：{formatSellingCalculation(row)}</span>
                             </div>
                           </div>
                         ))}

@@ -52,10 +52,11 @@ test("contract list table starts with department contract number date range and 
 test("contract list dates stay on one line and expired contracts are red", () => {
   assert.match(
     source,
-    /<TableRow key=\{item\.cmcontno\} className=\{[^}]*isPastDate\(item\.cmlapdate\)[^}]*text-red-600/s,
+    /<TableRow key=\{item\.cmcontno\} className=\{[^}]*isPastDate\(getContractDisplayEndDate\(item\)\)[^}]*text-red-600/s,
   );
   assert.match(source, /<TableCell className="whitespace-nowrap">\{fmtDate\(item\.cmeffdate\)\}<\/TableCell>/);
-  assert.match(source, /<TableCell className="whitespace-nowrap">\{fmtDate\(item\.cmlapdate\)\}<\/TableCell>/);
+  assert.match(source, /<TableCell className="whitespace-nowrap">\{fmtDate\(getContractDisplayEndDate\(item\)\)\}<\/TableCell>/);
+  assert.match(source, /fmtDate\(getContractDisplayEndDate\(contractMain\)\)/);
 });
 
 test("unit contract active card and table follow contract list fields", () => {
@@ -160,4 +161,46 @@ test("contract filters use department selector instead of group code text input"
   assert.match(source, /<Label className="text-xs">部门<\/Label>/);
   assert.match(source, /setListDepartmentCode/);
   assert.match(source, /departmentCode: listDepartmentCode/);
+});
+
+test("selected store filters the contract ledger request", () => {
+  assert.match(source, /const selectedContractStoreCode = useMemo/);
+  assert.match(
+    source,
+    /useContractsList\(\{[\s\S]*storeCode: selectedContractStoreCode,[\s\S]*\}\);/,
+  );
+  assert.match(
+    source,
+    /setListPage\(0\);[\s\S]*\}, \[storeFilter, listKeyword, listStatus, listDepartmentCode, listPageSize\]\);/,
+  );
+});
+
+test("contract ledger counter numbers are editable only with the dedicated permission", () => {
+  assert.match(source, /permission_codes\?\.includes\("contract\.unit_binding\.edit"\)/);
+  assert.match(source, /<DialogTitle>编辑合同柜位号<\/DialogTitle>/);
+  assert.match(source, /useReplaceContractUnitBindings/);
+  assert.match(source, /shopUnitIds: Array\.from\(selectedBindingUnits\.keys\(\)\)/);
+  assert.match(source, /原绑定会停用并保留审计记录/);
+  assert.match(source, /const bindingFloorLabels = useMemo/);
+  assert.match(source, /楼层 \{bindingFloorLabels\.get\(unit\.floor_id\) \|\| "未知楼层"\}/);
+});
+
+test("contract ledger can directly delete a current counter binding with confirmation", () => {
+  assert.match(source, /const deleteContractUnitBinding = async \(item: ContractListItem\)/);
+  assert.match(source, /确定删除合同 \$\{item\.cmcontno\} 的柜位 \$\{unitCodes\}/);
+  assert.match(source, /只会解除当前柜位绑定，合同和历史记录都会保留/);
+  assert.match(source, /shopUnitIds: \[\]/);
+  assert.match(source, /<Trash2 className="mr-1 h-3\.5 w-3\.5" \/>/);
+  assert.match(source, />\s*删除\s*<\/Button>/s);
+});
+
+test("contract binding unit options are restricted to the contract store", () => {
+  assert.match(
+    source,
+    /const bindingEditorContractStoreId = Number\(bindingEditorContract\?\.cmjsmkt\);/,
+  );
+  assert.match(
+    source,
+    /useBusinessUnits\(\{\s*storeId:[\s\S]*Number\.isFinite\(bindingEditorContractStoreId\)[\s\S]*keyword: bindingUnitKeyword/s,
+  );
 });

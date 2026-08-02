@@ -493,8 +493,10 @@ def inventory_movement_base_sql(filter_sql: str, scope_sql: str) -> str:
         floor_node.mfcode AS floor_code,
         floor_node.mfcname AS floor_name,
         j.jglmfid AS group_code,
+        mf.mfcname AS group_name,
         {group_display} AS group_display,
         j.jglsupid AS supplier_code,
+        sb.sbcname AS supplier_name,
         {supplier_display} AS supplier_display,
         j.jglgdid AS goods_code,
         gb.gbcname AS goods_name,
@@ -763,6 +765,74 @@ def load_inventory_movement_detail_report(
             + "。"
         ),
     }
+
+
+def load_inventory_movement_filter_options(
+    db: Session,
+    *,
+    field: str,
+    query: str,
+    filters: Mapping[str, Any],
+    scope_sql: str,
+    scope_params: Mapping[str, Any],
+    limit: int,
+) -> list[dict[str, str]]:
+    option_columns = {
+        "supplier": ("supplier_code", "supplier_display", "supplier_code", "supplier_name"),
+        "group": ("group_code", "group_display", "group_code", "group_name"),
+        "goods_code": ("goods_code", "goods_code", "goods_code", "goods_name"),
+        "goods_name": ("goods_name", "goods_name", "goods_code", "goods_name"),
+        "barcode": ("barcode", "barcode", "barcode", "goods_name"),
+    }
+    if field not in option_columns:
+        raise ValueError(f"Unsupported inventory movement option field: {field}")
+
+    params: dict[str, Any] = dict(scope_params)
+    option_filters = {**filters, field: query}
+    filter_sql = build_inventory_movement_filter_sql(option_filters, params)
+    base_sql = inventory_movement_base_sql(filter_sql, scope_sql)
+    value_column, display_column, code_column, name_column = option_columns[field]
+    params["option_limit"] = limit
+
+    rows = db.execute(
+        text(
+            f"""
+            WITH movements AS ({base_sql}),
+            options AS (
+              SELECT DISTINCT
+                TRIM(BOTH FROM COALESCE({value_column}::text, '')) AS value,
+                TRIM(BOTH FROM COALESCE({display_column}::text, '')) AS display_value,
+                TRIM(BOTH FROM COALESCE({code_column}::text, '')) AS code,
+                TRIM(BOTH FROM COALESCE({name_column}::text, '')) AS name
+              FROM movements
+              WHERE NULLIF(TRIM(BOTH FROM COALESCE({value_column}::text, '')), '') IS NOT NULL
+            )
+            SELECT
+              value,
+              CASE
+                WHEN field_value.name <> '' AND field_value.code <> ''
+                  THEN '[' || field_value.code || '] ' || field_value.name
+                WHEN field_value.name <> '' THEN field_value.name
+                ELSE field_value.display_value
+              END AS label,
+              code,
+              name
+            FROM options field_value
+            ORDER BY label, value
+            LIMIT :option_limit
+            """
+        ),
+        params,
+    ).mappings().all()
+    return [
+        {
+            "value": str(row["value"] or ""),
+            "label": str(row["label"] or row["value"] or ""),
+            "code": str(row["code"] or ""),
+            "name": str(row["name"] or ""),
+        }
+        for row in rows
+    ]
 
 
 def load_inventory_filter_options(

@@ -33,7 +33,11 @@ from services.od0002_report import (
 )
 from services.hdyy01_report import load_hdyy01_report
 from services.hdyy01_excel import build_hdyy01_workbook_file
+from services.hy0001_report import load_hy0001_report
+from services.hy0001_excel import build_hy0001_workbook_file
 from services.od0002_excel import build_od0002_workbook_file
+from services.daily_followup_report import load_daily_followup_report
+from services.monthly_followup_report import load_monthly_followup_report
 from services.settled_gross_profit_report import load_settled_gross_profit_report
 from services.settled_gross_profit_excel import (
     build_settled_gross_profit_workbook_file,
@@ -49,10 +53,18 @@ from services.inventory_detail_report import (
     load_inventory_detail_report,
     load_inventory_filter_options,
     load_inventory_movement_detail_report,
+    load_inventory_movement_filter_options,
 )
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
+
+COMMODITY_DETAIL_PERMISSION = "sales.commodity_detail.view"
+DAILY_FOLLOWUP_PERMISSION = "sales.od0001.view"
+OD0003_PERMISSION = "sales.od0003.view"
+OD0004_PERMISSION = "sales.od0004.view"
+SETTLED_GROSS_PROFIT_PERMISSION = "sales.settled_gross_profit.view"
+HY0001_PERMISSION = "sales.hy0001.view"
 
 
 class SalesAnalysisRequest(BaseModel):
@@ -66,6 +78,8 @@ class SalesAnalysisRequest(BaseModel):
     unassigned_department: bool = Field(False, description="仅未归属部门")
     group_code: str | None = Field(None, description="柜组编码")
     keyword: str | None = Field(None, description="柜组搜索关键词")
+    exclude_rental: bool = Field(False, description="是否排除租赁经营方式 sglwmid=5")
+    exclude_backoffice_departments: bool = Field(False, description="是否排除后台职能部门销售")
     limit: int = Field(200, ge=1, le=1000, description="最大分析柜组数")
     include_ai: bool = Field(True, description="是否生成 AI 经营分析文案")
 
@@ -76,7 +90,7 @@ class ReportDepartmentOption(BaseModel):
     label: str
 
 
-SALES_EXCLUDED_DEPARTMENT_NAMES = (
+SALES_BACKOFFICE_DEPARTMENT_NAMES = (
     "中心营运部",
     "本店尾部",
     "中心财务部",
@@ -93,8 +107,16 @@ SALES_EXCLUDED_DEPARTMENT_NAMES = (
     "新世纪物业",
     "新世纪信息",
     "新世纪信息部",
-    "半山租赁部",
-    "华山租赁部",
+    "百货营运部",
+    "集团战略信息中心",
+    "集团信息部",
+    "集团财务部",
+    "大楼规划营运部",
+    "大楼信息",
+    "大楼物业",
+    "书店企划部",
+    "书店信息部",
+    "书店物业部",
 )
 
 
@@ -166,10 +188,24 @@ def _sql_string_list(values: Iterable[str]) -> str:
     return ", ".join("'" + value.replace("'", "''") + "'" for value in values)
 
 
-def _sales_department_exclusion_sql(alias: str = "cg") -> str:
-    # Keep sales dashboards aligned with the finance/export department report:
-    # all departments are included, including operations, info, property, and planning/customer-service buckets.
-    return ""
+def _sales_department_exclusion_sql(alias: str = "cg", *, enabled: bool = False) -> str:
+    """Optionally remove sales assigned to known back-office departments.
+
+    The dashboard includes every department by default.  This list is intentionally
+    exact-name based so ordinary operating departments are never removed by a broad
+    keyword match; it can be reviewed and adjusted with the business owner.
+    """
+    if not enabled:
+        return ""
+    names = _sql_string_list(SALES_BACKOFFICE_DEPARTMENT_NAMES)
+    return f" AND TRIM(BOTH FROM COALESCE({alias}.department_name, '')) NOT IN ({names})"
+
+
+def _sales_rental_exclusion_sql(alias: str = "s", *, enabled: bool = False) -> str:
+    """Optionally remove rental fact rows while retaining blank operation modes."""
+    if not enabled:
+        return ""
+    return f" AND TRIM(BOTH FROM COALESCE({alias}.sglwmid, '')) <> '5'"
 
 
 def _manaframe_group_source_sql(alias: str = "cg") -> str:
@@ -214,21 +250,35 @@ def _stores_market_join_sql(has_stores: bool) -> str:
     )
 
 
+def _resolved_store_id_sql(
+    has_counter_groups: bool,
+    *,
+    has_stores: bool = False,
+    sales_alias: str = "s",
+) -> str:
+    if has_counter_groups and has_stores:
+        return (
+            f"COALESCE((st_mkt.store_id)::varchar, (cg.store_id)::varchar, "
+            f"{sales_alias}.sglmarket::varchar)"
+        )
+    if has_counter_groups:
+        return f"COALESCE((cg.store_id)::varchar, {sales_alias}.sglmarket::varchar)"
+    if has_stores:
+        return f"COALESCE((st_mkt.store_id)::varchar, {sales_alias}.sglmarket::varchar)"
+    return f"{sales_alias}.sglmarket::varchar"
+
+
 def _group_scope_select_sql(enabled: bool, *, has_stores: bool = False) -> str:
+    store_key = _resolved_store_id_sql(
+        enabled,
+        has_stores=has_stores,
+    )
     if not enabled:
-        if has_stores:
-            store_key = "COALESCE((st_mkt.store_id)::varchar, s.sglmarket::varchar)"
-        else:
-            store_key = "s.sglmarket::varchar"
         return (
             f"s.sglmfid AS group_code, NULL::varchar AS group_name, "
             f"NULL::varchar AS department_code, NULL::varchar AS department_name, "
             f"{store_key} AS store_id"
         )
-    if has_stores:
-        store_key = "COALESCE((st_mkt.store_id)::varchar, (cg.store_id)::varchar, s.sglmarket::varchar)"
-    else:
-        store_key = "COALESCE((cg.store_id)::varchar, s.sglmarket::varchar)"
     return (
         "COALESCE(cg.group_code, s.sglmfid) AS group_code, "
         "cg.group_name AS group_name, "
@@ -395,6 +445,25 @@ def _hdyy01_deny_resolution_guard_sql(scope: Any) -> str:
     return " " + " ".join(guards) if guards else ""
 
 
+def _hy0001_deny_resolution_guard_sql(scope: Any) -> str:
+    """Fail closed when a denied HY0001 dimension cannot be resolved."""
+    if "__all__" in scope.deny:
+        return ""
+
+    guards: list[str] = []
+    if scope.deny.get("store", set()):
+        guards.append("AND st.store_id IS NOT NULL")
+    if scope.deny.get("department", set()):
+        guards.append("AND NULLIF(TRIM(BOTH FROM dept.mfcode), '') IS NOT NULL")
+    if scope.deny.get("group", set()):
+        guards.append("AND NULLIF(TRIM(BOTH FROM mf.mfcode), '') IS NOT NULL")
+    if scope.deny.get("category", set()):
+        guards.append("AND ac.category_code IS NOT NULL")
+    if scope.deny.get("floor", set()):
+        guards.append("AND NULLIF(TRIM(BOTH FROM mf.mflc), '') IS NOT NULL")
+    return " " + " ".join(guards) if guards else ""
+
+
 @router.get("/reports/hdyy01/stores")
 async def hdyy01_stores(
     db: Session = Depends(get_db),
@@ -530,19 +599,20 @@ def _load_hdyy01_for_request(
     return report, scope
 
 
-@router.get("/reports/od0002/stores")
-async def od0002_stores(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return every store visible to OD0002, independent of sales dates."""
-    require_permission(db, current_user, "sales.od0002.view")
+def _load_report_store_options(
+    db: Session,
+    current_user: User,
+    *,
+    permission_code: str,
+    prefix: str,
+) -> list[dict[str, Any]]:
+    require_permission(db, current_user, permission_code)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     scope_params: dict[str, Any] = {}
     scope_filter_sql = _business_scope_filter_sql(
         scope,
         scope_params,
-        prefix="od0002_stores",
+        prefix=prefix,
         store_expr="st.store_id::text",
         department_code_expr="dept.mfcode",
         department_name_expr="dept.mfcname",
@@ -558,20 +628,21 @@ async def od0002_stores(
     )
 
 
-@router.get("/reports/od0002/departments")
-async def od0002_departments(
-    store_id: str | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return permission-scoped OD0002 department options."""
-    require_permission(db, current_user, "sales.od0002.view")
+def _load_report_department_options(
+    db: Session,
+    current_user: User,
+    store_id: str | None,
+    *,
+    permission_code: str,
+    prefix: str,
+) -> list[dict[str, Any]]:
+    require_permission(db, current_user, permission_code)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     scope_params: dict[str, Any] = {}
     scope_filter_sql = _business_scope_filter_sql(
         scope,
         scope_params,
-        prefix="od0002_departments",
+        prefix=prefix,
         store_expr="st.store_id::text",
         department_code_expr="dept.mfcode",
         department_name_expr="dept.mfcname",
@@ -586,6 +657,176 @@ async def od0002_departments(
     )
 
 
+@router.get("/reports/od0002/stores")
+async def od0002_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every store visible to OD0002, independent of sales dates."""
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code="sales.od0002.view",
+        prefix="od0002_stores",
+    )
+
+
+@router.get("/reports/od0002/departments")
+async def od0002_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return permission-scoped OD0002 department options."""
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code="sales.od0002.view",
+        prefix="od0002_departments",
+    )
+
+
+@router.get("/reports/daily-followup/stores")
+async def daily_followup_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code=DAILY_FOLLOWUP_PERMISSION,
+        prefix="daily_followup_stores",
+    )
+
+
+@router.get("/reports/daily-followup/departments")
+async def daily_followup_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code=DAILY_FOLLOWUP_PERMISSION,
+        prefix="daily_followup_departments",
+    )
+
+
+@router.get("/reports/od0003/stores")
+async def od0003_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code=OD0003_PERMISSION,
+        prefix="od0003_stores",
+    )
+
+
+@router.get("/reports/od0003/departments")
+async def od0003_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code=OD0003_PERMISSION,
+        prefix="od0003_departments",
+    )
+
+
+@router.get("/reports/od0004/stores")
+async def od0004_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code=OD0004_PERMISSION,
+        prefix="od0004_stores",
+    )
+
+
+@router.get("/reports/od0004/departments")
+async def od0004_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code=OD0004_PERMISSION,
+        prefix="od0004_departments",
+    )
+
+
+@router.get("/reports/hy0001/stores")
+async def hy0001_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code=HY0001_PERMISSION,
+        prefix="hy0001_stores",
+    )
+
+
+@router.get("/reports/hy0001/departments")
+async def hy0001_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code=HY0001_PERMISSION,
+        prefix="hy0001_departments",
+    )
+
+
+@router.get("/reports/settled-gross-profit/stores")
+async def settled_gross_profit_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_store_options(
+        db,
+        current_user,
+        permission_code=SETTLED_GROSS_PROFIT_PERMISSION,
+        prefix="settled_gross_profit_stores",
+    )
+
+
+@router.get("/reports/settled-gross-profit/departments")
+async def settled_gross_profit_departments(
+    store_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _load_report_department_options(
+        db,
+        current_user,
+        store_id,
+        permission_code=SETTLED_GROSS_PROFIT_PERMISSION,
+        prefix="settled_gross_profit_departments",
+    )
+
+
 @router.get("/reports/od0002")
 async def od0002_report(
     start_date: date,
@@ -594,9 +835,276 @@ async def od0002_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     department_id: str | None = None,
+    prior_start_date: date | None = None,
+    prior_end_date: date | None = None,
 ):
     """OD0002 sales and gross-profit comparison report."""
     report, _ = _load_od0002_for_request(
+        start_date,
+        end_date,
+        store_id,
+        db,
+        current_user,
+        department_id,
+        prior_start_date,
+        prior_end_date,
+    )
+    return report
+
+
+@router.get("/reports/daily-followup")
+async def daily_followup_report(
+    financial_year: int = Query(..., ge=2000, le=2100),
+    financial_month: int = Query(..., ge=1, le=12),
+    dimension: Literal["departments", "groups", "special_sales"] = Query("departments"),
+    store_id: str | None = None,
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permission-scoped daily sales follow-up for one financial month."""
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+
+    require_permission(db, current_user, DAILY_FOLLOWUP_PERMISSION)
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="daily_followup",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    report = load_daily_followup_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        financial_year=financial_year,
+        financial_month=financial_month,
+        dimension=dimension,
+        selected_store=selected_store,
+        selected_department=selected_department,
+        cutoff_at_yesterday=True,
+    )
+    report["scope_description"] = _od0002_scope_description(scope)
+    return report
+
+
+@router.get("/reports/od0003")
+async def od0003_report(
+    financial_year: int = Query(..., ge=2000, le=2100),
+    financial_month: int = Query(..., ge=1, le=12),
+    store_id: str | None = None,
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """OD0003 center sales follow-up, returned at brand/counter-group grain."""
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+
+    require_permission(db, current_user, OD0003_PERMISSION)
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="od0003",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    report = load_daily_followup_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        financial_year=financial_year,
+        financial_month=financial_month,
+        dimension="groups",
+        selected_store=selected_store,
+        selected_department=selected_department,
+        include_ytd=True,
+    )
+    report["scope_description"] = _od0002_scope_description(scope)
+    return report
+
+
+@router.get("/reports/od0004")
+async def od0004_report(
+    financial_year: int = Query(..., ge=2000, le=2100),
+    dimension: Literal["departments", "groups", "special_sales"] = Query("departments"),
+    store_id: str | None = None,
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permission-scoped monthly sales follow-up for one financial year."""
+    selected_store = (store_id or "").strip() or None
+    selected_department = (department_id or "").strip() or None
+
+    require_permission(db, current_user, OD0004_PERMISSION)
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    has_explicit_store_scope = bool(
+        scope.deny.get("store", set())
+        or (not scope.all_access and scope.allow.get("store", set()))
+    )
+    selected_scope_store_id = (
+        _od0002_store_id_for_code(db, selected_store)
+        if selected_store is not None and has_explicit_store_scope
+        else None
+    )
+    if selected_store is not None and has_explicit_store_scope and (
+        selected_scope_store_id is None
+        or _scope_explicitly_rejects_store(scope, selected_scope_store_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="od0004",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    report = load_monthly_followup_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        financial_year=financial_year,
+        dimension=dimension,
+        selected_store=selected_store,
+        selected_department=selected_department,
+    )
+    report["scope_description"] = _od0002_scope_description(scope)
+    return report
+
+
+def _load_hy0001_for_request(
+    start_date: date,
+    end_date: date,
+    store_id: str,
+    db: Session,
+    current_user: User,
+    department_id: str | None = None,
+) -> tuple[dict[str, Any], Any]:
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    selected_store = (store_id or "").strip()
+    selected_department = (department_id or "").strip() or None
+    if not selected_store:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="HY0001 requires one selected store",
+        )
+
+    require_permission(db, current_user, HY0001_PERMISSION)
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    selected_scope_store_id = _od0002_store_id_for_code(db, selected_store)
+    if selected_scope_store_id is None or _scope_explicitly_rejects_store(
+        scope, selected_scope_store_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无该门店数据权限",
+        )
+
+    scope_params: dict[str, Any] = {}
+    scope_filter_sql = _business_scope_filter_sql(
+        scope,
+        scope_params,
+        prefix="hy0001",
+        store_expr="st.store_id::text",
+        department_code_expr="dept.mfcode",
+        department_name_expr="dept.mfcname",
+        group_expr="mf.mfcode",
+        category_code_expr="ac.category_code",
+        category_name_expr="ac.category_name",
+        floor_expr="mf.mflc",
+    )
+    scope_filter_sql += _hy0001_deny_resolution_guard_sql(scope)
+    report = load_hy0001_report(
+        db,
+        TrustedScopeSql(scope_filter_sql),
+        scope_params,
+        start_date=start_date,
+        end_date=end_date,
+        selected_store=selected_store,
+        selected_department=selected_department,
+    )
+    report["scope_description"] = _od0002_scope_description(scope)
+    return report, scope
+
+
+@router.get("/reports/hy0001")
+async def hy0001_report(
+    start_date: date,
+    end_date: date,
+    store_id: str = Query(..., min_length=1),
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """HY0001 key-brand member consumption by member level."""
+    report, _ = _load_hy0001_for_request(
         start_date, end_date, store_id, db, current_user, department_id
     )
     return report
@@ -609,11 +1117,25 @@ def _load_od0002_for_request(
     db: Session,
     current_user: User,
     department_id: str | None = None,
+    prior_start_date: date | None = None,
+    prior_end_date: date | None = None,
 ) -> tuple[dict[str, Any], Any]:
     if end_date < start_date:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="end_date must be on or after start_date",
+        )
+    if (prior_start_date is None) != (prior_end_date is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="prior_start_date and prior_end_date must be provided together",
+        )
+    if prior_start_date is None or prior_end_date is None:
+        prior_start_date, prior_end_date = compare_period(start_date, end_date)
+    elif prior_end_date < prior_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="prior_end_date must be on or after prior_start_date",
         )
 
     selected_store = (store_id or "").strip() or None
@@ -639,7 +1161,6 @@ def _load_od0002_for_request(
             detail="无该门店数据权限",
         )
 
-    prior_start_date, prior_end_date = compare_period(start_date, end_date)
     scope_params: dict[str, Any] = {}
     scope_filter_sql = _business_scope_filter_sql(
         scope,
@@ -699,7 +1220,7 @@ def _load_settled_gross_profit_for_request(
 
     selected_store = (store_id or "").strip() or None
     selected_department = (department_id or "").strip() or None
-    require_permission(db, current_user, "sales.od0002.view")
+    require_permission(db, current_user, SETTLED_GROSS_PROFIT_PERMISSION)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     has_explicit_store_scope = bool(
         scope.deny.get("store", set())
@@ -778,6 +1299,39 @@ class _ClosingStreamingResponse(StreamingResponse):
             self._close_file()
 
 
+@router.get("/reports/hy0001/export")
+async def hy0001_export(
+    start_date: date,
+    end_date: date,
+    store_id: str = Query(..., min_length=1),
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    report, _ = _load_hy0001_for_request(
+        start_date, end_date, store_id, db, current_user, department_id
+    )
+    export_file = await run_in_threadpool(build_hy0001_workbook_file, report)
+    filename = (
+        f"HY0001重点品牌会员消费情况_{store_id}_"
+        f"{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    )
+
+    def stream_chunks():
+        while chunk := export_file.read(64 * 1024):
+            yield chunk
+
+    return _ClosingStreamingResponse(
+        stream_chunks(),
+        close_file=export_file.close,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        },
+        background=BackgroundTask(export_file.close),
+    )
+
+
 @router.get("/reports/hdyy01/export")
 async def hdyy01_export(
     start_date: date,
@@ -823,9 +1377,18 @@ async def od0002_export(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     department_id: str | None = None,
+    prior_start_date: date | None = None,
+    prior_end_date: date | None = None,
 ):
     report, scope = _load_od0002_for_request(
-        start_date, end_date, store_id, db, current_user, department_id
+        start_date,
+        end_date,
+        store_id,
+        db,
+        current_user,
+        department_id,
+        prior_start_date,
+        prior_end_date,
     )
     export_report = dict(report)
     export_report["scope_description"] = _od0002_scope_description(scope)
@@ -1284,13 +1847,18 @@ def _department_detail_filter_sql(
     unassigned_department: bool,
     has_counter_groups: bool,
     has_stores: bool,
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
 ) -> str:
-    filters = ""
+    filters = _sales_rental_exclusion_sql("s", enabled=exclude_rental)
     if store_id:
         filters += _store_scope_filter_sql(has_counter_groups, has_stores)
         params["store_id"] = store_id
     if has_counter_groups:
-        filters += _sales_department_exclusion_sql("cg")
+        filters += _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
     if unassigned_department and has_counter_groups:
         filters += _unassigned_department_filter_sql()
     elif department_code and has_counter_groups:
@@ -1628,6 +2196,47 @@ def _load_inventory_movement_report_for_request(
     return report, scope
 
 
+@router.get("/reports/inventory-movement-detail/options")
+def inventory_movement_detail_filter_options(
+    start_date: date = Query(..., description="发生开始日期 YYYY-MM-DD"),
+    end_date: date = Query(..., description="发生结束日期 YYYY-MM-DD"),
+    field: Literal["supplier", "group", "goods_code", "goods_name", "barcode"] = Query(...),
+    q: str = Query(..., min_length=1, max_length=100, description="编码或名称关键词"),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    filters = _inventory_movement_filters(
+        start_date=start_date,
+        end_date=end_date,
+        accounting_start_date=None,
+        accounting_end_date=None,
+        store=None,
+        group=None,
+        supplier=None,
+        goods_code=None,
+        goods_name=None,
+        barcode=None,
+        specification=None,
+        subinventory=None,
+    )
+    _scope, scope_sql, scope_params = _inventory_movement_request_scope(
+        db=db,
+        current_user=current_user,
+    )
+    return {
+        "options": load_inventory_movement_filter_options(
+            db,
+            field=field,
+            query=q.strip(),
+            filters=filters,
+            scope_sql=scope_sql,
+            scope_params=scope_params,
+            limit=limit,
+        )
+    }
+
+
 @router.get("/reports/inventory-detail/options")
 def inventory_detail_filter_options(
     field: Literal["supplier", "group", "goods_code", "goods_name", "barcode"] = Query(...),
@@ -1888,7 +2497,7 @@ async def commodity_sales_detail_departments(
     current_user: User = Depends(get_current_user),
 ):
     """商品销售明细部门下拉：直接取 manaframe 的柜组上级部门主数据。"""
-    require_permission(db, current_user, "sales.view")
+    require_permission(db, current_user, COMMODITY_DETAIL_PERMISSION)
     if not _table_exists(db, "manaframe"):
         return []
 
@@ -1943,7 +2552,7 @@ async def commodity_sales_detail_report(
     current_user: User = Depends(get_current_user),
 ):
     """ERP 633 商品销售明细：直接按 ERP SQL 口径汇总，使用 manaframe 作为柜组主数据。"""
-    require_permission(db, current_user, "sales.view")
+    require_permission(db, current_user, COMMODITY_DETAIL_PERMISSION)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     table_name = _salegoodslist_table(db)
     if not _table_exists(db, "manaframe"):
@@ -2156,6 +2765,8 @@ def _group_level_sales_rows(
     keyword: str | None,
     limit: int | None,
     unrestricted: bool = False,
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
 ) -> list[dict[str, Any]]:
     """柜组粒度汇总（含 store_id 等 scope 字段），供柜组列表与门店聚合复用。
 
@@ -2167,12 +2778,16 @@ def _group_level_sales_rows(
     mkt_join = _stores_market_join_sql(has_stores)
     params: dict[str, Any] = {}
     date_filters = _date_filter_sql(params, start_date, end_date)
+    date_filters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
     filters = ""
     if store_id:
         filters += _store_scope_filter_sql(has_counter_groups, has_stores)
         params["store_id"] = store_id
     if has_counter_groups:
-        filters += _sales_department_exclusion_sql("cg")
+        filters += _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
     if unassigned_department and has_counter_groups:
         filters += _unassigned_department_filter_sql()
     elif department_code and has_counter_groups:
@@ -2316,6 +2931,136 @@ def _aggregate_stores_from_group_rows(rows: list[dict[str, Any]]) -> list[dict[s
     return sorted(result, key=lambda x: float(x["effective_sales"]), reverse=True)
 
 
+def _store_summary_rows_with_comparison(
+    db: Session,
+    *,
+    scope: Any,
+    start_date: str,
+    end_date: str,
+    prior_start_date: str,
+    prior_end_date: str,
+    limit: int,
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
+) -> list[dict[str, Any]]:
+    """Aggregate current and prior store totals in one permission-scoped fact-table scan."""
+    table_name = _salegoodslist_table(db)
+    has_counter_groups = _table_exists(db, "manaframe")
+    has_stores = _table_exists(db, "stores")
+    group_join = _counter_group_join_sql(has_counter_groups)
+    market_join = _stores_market_join_sql(has_stores)
+    store_expr = _resolved_store_id_sql(
+        has_counter_groups,
+        has_stores=has_stores,
+    )
+    group_expr = "COALESCE(cg.group_code, s.sglmfid)" if has_counter_groups else "s.sglmfid"
+    department_code_expr = "cg.department_code" if has_counter_groups else "NULL::varchar"
+    department_name_expr = "cg.department_name" if has_counter_groups else "NULL::varchar"
+
+    params: dict[str, Any] = {
+        "current_start_date": start_date,
+        "current_end_date": end_date,
+        "prior_start_date": prior_start_date,
+        "prior_end_date": prior_end_date,
+        "limit": limit,
+    }
+    scope_filter = _business_scope_filter_sql(
+        scope,
+        params,
+        prefix="store_summary",
+        store_expr=store_expr,
+        department_code_expr=department_code_expr if has_counter_groups else None,
+        department_name_expr=department_name_expr if has_counter_groups else None,
+        group_expr=group_expr,
+    )
+    current_period = (
+        "s.sglhsrq >= CAST(:current_start_date AS DATE) "
+        "AND s.sglhsrq <= CAST(:current_end_date AS DATE)"
+    )
+    prior_period = (
+        "s.sglhsrq >= CAST(:prior_start_date AS DATE) "
+        "AND s.sglhsrq <= CAST(:prior_end_date AS DATE)"
+    )
+    rental_filter = _sales_rental_exclusion_sql("s", enabled=exclude_rental)
+    department_filter = (
+        _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
+        if has_counter_groups
+        else ""
+    )
+
+    return _fetch_mappings(
+        db,
+        f"""
+        WITH group_period AS (
+          SELECT
+            {store_expr} AS store_id,
+            {group_expr} AS group_code,
+            {department_code_expr} AS department_code,
+            {department_name_expr} AS department_name,
+            COUNT(CASE WHEN {current_period} THEN 1 END) AS current_row_count,
+            COUNT(DISTINCT CASE WHEN {current_period} THEN s.sglbillno END) AS current_ticket_count,
+            COALESCE(SUM(CASE WHEN {current_period} THEN s.sglsl ELSE 0 END), 0) AS current_quantity,
+            COALESCE(SUM(CASE WHEN {current_period} THEN s.sglxssr ELSE 0 END), 0) AS current_sales,
+            COALESCE(SUM(CASE WHEN {current_period} THEN s.sgln2 ELSE 0 END), 0) AS current_profit,
+            COUNT(CASE WHEN {prior_period} THEN 1 END) AS prior_row_count,
+            COUNT(DISTINCT CASE WHEN {prior_period} THEN s.sglbillno END) AS prior_ticket_count,
+            COALESCE(SUM(CASE WHEN {prior_period} THEN s.sglxssr ELSE 0 END), 0) AS prior_sales,
+            COALESCE(SUM(CASE WHEN {prior_period} THEN s.sgln2 ELSE 0 END), 0) AS prior_profit
+          FROM {table_name} s
+          {group_join}
+          {market_join}
+          WHERE (({current_period}) OR ({prior_period}))
+            {rental_filter}
+            {department_filter}
+            {scope_filter}
+          GROUP BY 1, 2, 3, 4
+        )
+        SELECT
+          store_id,
+          COUNT(DISTINCT CASE
+            WHEN current_row_count > 0
+            THEN COALESCE(NULLIF(department_code, ''), '') || '|' ||
+                 COALESCE(NULLIF(department_name, ''), '未归属部门')
+          END) AS department_count,
+          COUNT(DISTINCT CASE
+            WHEN current_row_count > 0 THEN NULLIF(TRIM(BOTH FROM COALESCE(group_code, '')), '')
+          END) AS group_count,
+          COALESCE(SUM(current_ticket_count), 0) AS ticket_count,
+          COALESCE(SUM(current_quantity), 0) AS quantity,
+          COALESCE(SUM(current_sales), 0) AS gross_sales,
+          COALESCE(SUM(current_sales), 0) AS effective_sales,
+          COALESCE(SUM(current_profit), 0) AS net_profit,
+          CASE
+            WHEN COALESCE(SUM(current_sales), 0) = 0 THEN 0
+            ELSE COALESCE(SUM(current_profit), 0) / NULLIF(SUM(current_sales), 0)
+          END AS net_margin,
+          CASE
+            WHEN COALESCE(SUM(current_sales), 0) = 0 THEN 0
+            ELSE COALESCE(SUM(current_profit), 0) / NULLIF(SUM(current_sales), 0)
+          END AS ticket_margin,
+          COALESCE(SUM(prior_sales), 0) AS same_period_effective_sales,
+          COALESCE(SUM(prior_profit), 0) AS same_period_net_profit,
+          COALESCE(SUM(prior_ticket_count), 0) AS same_period_ticket_count,
+          CASE
+            WHEN COALESCE(SUM(prior_sales), 0) = 0 THEN 0
+            ELSE COALESCE(SUM(prior_profit), 0) / NULLIF(SUM(prior_sales), 0)
+          END AS same_period_margin
+        FROM group_period
+        WHERE store_id IS NOT NULL AND TRIM(BOTH FROM store_id) <> ''
+        GROUP BY store_id
+        ORDER BY GREATEST(
+          COALESCE(SUM(current_sales), 0),
+          COALESCE(SUM(prior_sales), 0)
+        ) DESC
+        LIMIT :limit
+        """,
+        params,
+    )
+
+
 @router.get("/summary/latest-date")
 def latest_sales_date(
     db: Session = Depends(get_db),
@@ -2331,6 +3076,8 @@ def store_summary(
     end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD"),
     prior_start_date: str | None = Query(None, description="同期开始 YYYY-MM-DD；与 prior_end_date 同时传入时覆盖自动「上年同期」区间"),
     prior_end_date: str | None = Query(None, description="同期结束 YYYY-MM-DD"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2340,6 +3087,46 @@ def store_summary(
     """
     require_permission(db, current_user, "sales.view")
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    if prior_start_date and prior_end_date:
+        optimized_prior_start, optimized_prior_end = (
+            prior_start_date.strip(),
+            prior_end_date.strip(),
+        )
+    else:
+        optimized_prior_start, optimized_prior_end = _prior_year_same_period(
+            start_date,
+            end_date,
+        )
+    if (
+        start_date
+        and end_date
+        and optimized_prior_start
+        and optimized_prior_end
+    ):
+        aggregated = _store_summary_rows_with_comparison(
+            db,
+            scope=scope,
+            start_date=start_date.strip(),
+            end_date=end_date.strip(),
+            prior_start_date=optimized_prior_start,
+            prior_end_date=optimized_prior_end,
+            limit=limit,
+            exclude_rental=exclude_rental,
+            exclude_backoffice_departments=exclude_backoffice_departments,
+        )
+        if _table_exists(db, "stores"):
+            names = _batch_store_display_names(
+                db,
+                [str(row["store_id"]) for row in aggregated if row.get("store_id")],
+            )
+            for row in aggregated:
+                store_key = str(row.get("store_id") or "")
+                row["store_name"] = names.get(store_key, store_key)
+        else:
+            for row in aggregated:
+                row["store_name"] = str(row.get("store_id") or "")
+        return aggregated
+
     raw = _group_level_sales_rows(
         db,
         start_date=start_date,
@@ -2351,6 +3138,8 @@ def store_summary(
         keyword=None,
         limit=None,
         unrestricted=True,
+        exclude_rental=exclude_rental,
+        exclude_backoffice_departments=exclude_backoffice_departments,
     )
     allowed = [r for r in raw if _row_allowed(scope, r)]
     aggregated = _aggregate_stores_from_group_rows(allowed)
@@ -2370,6 +3159,8 @@ def store_summary(
             keyword=None,
             limit=None,
             unrestricted=True,
+            exclude_rental=exclude_rental,
+            exclude_backoffice_departments=exclude_backoffice_departments,
         )
         prior_allowed = [r for r in prior_raw if _row_allowed(scope, r)]
         prior_agg = _aggregate_stores_from_group_rows(prior_allowed)
@@ -2398,6 +3189,8 @@ def department_summary(
     prior_start_date: str | None = Query(None, description="同期开始 YYYY-MM-DD"),
     prior_end_date: str | None = Query(None, description="同期结束 YYYY-MM-DD"),
     store_id: str | None = Query(None, description="门店ID/市场号"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2410,11 +3203,15 @@ def department_summary(
     mkt_join = _stores_market_join_sql(has_stores)
     params: dict[str, Any] = {}
     filters = _date_filter_sql(params, start_date, end_date)
+    filters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
     if store_id:
         filters += _store_scope_filter_sql(has_counter_groups, has_stores)
         params["store_id"] = store_id
     if has_counter_groups:
-        filters += _sales_department_exclusion_sql("cg")
+        filters += _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
 
     group_join = _counter_group_join_sql(has_counter_groups)
     scope_select = _group_scope_select_sql(has_counter_groups, has_stores=has_stores)
@@ -2445,11 +3242,15 @@ def department_summary(
     if py_start and py_end:
         pparams: dict[str, Any] = {}
         pfilters = _date_filter_sql(pparams, py_start, py_end)
+        pfilters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
         if store_id:
             pfilters += _store_scope_filter_sql(has_counter_groups, has_stores)
             pparams["store_id"] = store_id
         if has_counter_groups:
-            pfilters += _sales_department_exclusion_sql("cg")
+            pfilters += _sales_department_exclusion_sql(
+                "cg",
+                enabled=exclude_backoffice_departments,
+            )
         prior_rows = _fetch_mappings(
             db,
             f"""
@@ -2492,6 +3293,8 @@ def group_summary(
     unassigned_department: bool = Query(False, description="仅未归属部门（无部门编码的聚合桶）"),
     group_code: str | None = Query(None, description="柜组编码"),
     keyword: str | None = Query(None, description="柜组编码/名称"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2508,6 +3311,8 @@ def group_summary(
         group_code=group_code,
         keyword=keyword,
         limit=limit,
+        exclude_rental=exclude_rental,
+        exclude_backoffice_departments=exclude_backoffice_departments,
     )
     current = [_strip_scope(row) for row in rows if _row_allowed(scope, row)]
     if prior_start_date and prior_end_date:
@@ -2525,6 +3330,8 @@ def group_summary(
             group_code=group_code,
             keyword=keyword,
             limit=None,
+            exclude_rental=exclude_rental,
+            exclude_backoffice_departments=exclude_backoffice_departments,
         )
         prior_stripped = [_strip_scope(r) for r in prior_rows if _row_allowed(scope, r)]
         merged = _merge_group_summaries_same_period(current, prior_stripped)
@@ -2547,6 +3354,8 @@ def department_goods_summary(
     group_code: str | None = Query(None, description="柜组编码"),
     supplier_code: str | None = Query(None, description="供应商编码"),
     keyword: str | None = Query(None, description="商品/条码/柜组/供应商关键词"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(500, ge=1, le=2000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2571,6 +3380,8 @@ def department_goods_summary(
         unassigned_department=unassigned_department,
         has_counter_groups=has_counter_groups,
         has_stores=has_stores,
+        exclude_rental=exclude_rental,
+        exclude_backoffice_departments=exclude_backoffice_departments,
     )
     if group_code:
         filters += " AND upper(trim(COALESCE(s.sglmfid, ''))) = upper(trim(:group_code))"
@@ -2713,6 +3524,8 @@ def department_supplier_summary(
     department_code: str | None = Query(None, description="部门编码"),
     unassigned_department: bool = Query(False, description="仅未归属部门"),
     keyword: str | None = Query(None, description="供应商编码/名称关键词"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(300, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2733,6 +3546,8 @@ def department_supplier_summary(
         unassigned_department=unassigned_department,
         has_counter_groups=has_counter_groups,
         has_stores=has_stores,
+        exclude_rental=exclude_rental,
+        exclude_backoffice_departments=exclude_backoffice_departments,
     )
     if keyword:
         params["keyword_like"] = f"%{keyword.strip()}%"
@@ -2842,6 +3657,8 @@ async def sales_analysis(
         group_code=request.group_code,
         keyword=request.keyword,
         limit=request.limit,
+        exclude_rental=request.exclude_rental,
+        exclude_backoffice_departments=request.exclude_backoffice_departments,
     )
     current = [_strip_scope(dict(row)) for row in rows if _row_allowed(scope, row)]
 
@@ -2861,6 +3678,8 @@ async def sales_analysis(
             group_code=request.group_code,
             keyword=request.keyword,
             limit=None,
+            exclude_rental=request.exclude_rental,
+            exclude_backoffice_departments=request.exclude_backoffice_departments,
         )
         prior_stripped = [_strip_scope(dict(row)) for row in prior_rows if _row_allowed(scope, row)]
         merged = _merge_group_summaries_same_period(current, prior_stripped)[: request.limit]
@@ -2885,6 +3704,8 @@ async def sales_analysis(
             "unassigned_department": request.unassigned_department,
             "group_code": request.group_code,
             "keyword": request.keyword,
+            "exclude_rental": request.exclude_rental,
+            "exclude_backoffice_departments": request.exclude_backoffice_departments,
             "limit": request.limit,
         },
         include_ai=request.include_ai,
@@ -2905,8 +3726,13 @@ def map_group_summary(
         end_date=end_date,
         store_id=store_id,
         department_code=department_code,
+        prior_start_date=None,
+        prior_end_date=None,
+        unassigned_department=False,
         group_code=None,
         keyword=None,
+        exclude_rental=False,
+        exclude_backoffice_departments=False,
         limit=1000,
         db=db,
         current_user=current_user,
@@ -2921,6 +3747,8 @@ def group_tickets(
     goods_code: str | None = Query(None, description="商品编码"),
     barcode: str | None = Query(None, description="商品条码"),
     supplier_code: str | None = Query(None, description="供应商编码"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -2946,6 +3774,7 @@ def group_tickets(
     mkt_join = _stores_market_join_sql(has_stores)
     params: dict[str, Any] = {"group_code": group_code, "limit": limit}
     filters = _date_filter_sql(params, start_date, end_date)
+    filters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
     filters += _ticket_product_filter_sql(
         params,
         goods_code=goods_code,
@@ -2953,7 +3782,10 @@ def group_tickets(
         supplier_code=supplier_code,
     )
     if has_counter_groups:
-        filters += _sales_department_exclusion_sql("cg")
+        filters += _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
     group_join = _counter_group_join_sql(has_counter_groups)
     scope_select = _group_scope_select_sql(has_counter_groups, has_stores=has_stores)
     has_salehead = _table_exists(db, "salehead")

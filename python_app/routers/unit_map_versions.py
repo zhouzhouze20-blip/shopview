@@ -13,6 +13,7 @@ from sqlalchemy import text
 from typing import Optional
 import xml.etree.ElementTree as ET
 import re
+from collections import Counter, defaultdict
 
 from models.database import get_db
 from routers.authz import require_permission_dependency
@@ -27,6 +28,123 @@ router = APIRouter(
 
 _NUM_RE = re.compile(r"[-+]?(?:\d+\.\d+|\d+|\.\d+)(?:[eE][-+]?\d+)?")
 _TRANSFORM_RE = re.compile(r"([a-zA-Z]+)\s*\(([^)]*)\)")
+
+
+def _normalized_path_fingerprint(d: str, decimals: int = 4) -> str:
+  """Normalize path formatting while retaining commands and coordinates."""
+  tokens = re.findall(r"[A-Za-z]|[-+]?(?:\d+\.\d+|\d+|\.\d+)(?:[eE][-+]?\d+)?", d or "")
+  normalized: list[str] = []
+  for token in tokens:
+    if re.fullmatch(r"[A-Za-z]", token):
+      normalized.append(token)
+      continue
+    value = round(float(token), decimals)
+    normalized.append(_fmt_num(value))
+  return " ".join(normalized)
+
+
+def _simple_closed_path_points(d: str, decimals: int = 4) -> Optional[list[tuple[float, float]]]:
+  """Return vertices for a closed M/L/H/V path; curves deliberately fall back to strict matching."""
+  tokens = re.findall(r"[A-Za-z]|[-+]?(?:\d+\.\d+|\d+|\.\d+)(?:[eE][-+]?\d+)?", d or "")
+  if not tokens:
+    return None
+
+  points: list[tuple[float, float]] = []
+  current_x = current_y = 0.0
+  start_x = start_y = 0.0
+  command = ""
+  index = 0
+  closed = False
+
+  def is_command(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z]", value))
+
+  try:
+    while index < len(tokens):
+      if is_command(tokens[index]):
+        command = tokens[index]
+        index += 1
+        if command in "Zz":
+          closed = True
+          current_x, current_y = start_x, start_y
+          continue
+      if command.upper() not in {"M", "L", "H", "V"}:
+        return None
+
+      relative = command.islower()
+      upper = command.upper()
+      if upper in {"M", "L"}:
+        if index + 1 >= len(tokens) or is_command(tokens[index]) or is_command(tokens[index + 1]):
+          return None
+        x, y = float(tokens[index]), float(tokens[index + 1])
+        index += 2
+        if relative:
+          x += current_x
+          y += current_y
+        current_x, current_y = x, y
+        if upper == "M":
+          start_x, start_y = x, y
+          command = "l" if relative else "L"
+        points.append((round(x, decimals), round(y, decimals)))
+      elif upper == "H":
+        if index >= len(tokens) or is_command(tokens[index]):
+          return None
+        x = float(tokens[index])
+        index += 1
+        current_x = current_x + x if relative else x
+        points.append((round(current_x, decimals), round(current_y, decimals)))
+      else:
+        if index >= len(tokens) or is_command(tokens[index]):
+          return None
+        y = float(tokens[index])
+        index += 1
+        current_y = current_y + y if relative else y
+        points.append((round(current_x, decimals), round(current_y, decimals)))
+  except (TypeError, ValueError, IndexError):
+    return None
+
+  if not closed or len(points) < 3:
+    return None
+  if points[-1] == points[0]:
+    points.pop()
+  return points if len(points) >= 3 else None
+
+
+def _canonical_closed_path_fingerprint(points: list[tuple[float, float]]) -> str:
+  """Ignore start vertex and drawing direction for the same closed polygon."""
+  variants: list[tuple[tuple[float, float], ...]] = []
+  for sequence in (points, list(reversed(points))):
+    variants.extend(tuple(sequence[offset:] + sequence[:offset]) for offset in range(len(sequence)))
+  canonical = min(variants)
+  return "polygon:" + ";".join(f"{_fmt_num(x)},{_fmt_num(y)}" for x, y in canonical)
+
+
+def _path_geometry_fingerprint(d: str) -> str:
+  points = _simple_closed_path_points(d)
+  if points:
+    return _canonical_closed_path_fingerprint(points)
+  return "path:" + _normalized_path_fingerprint(d)
+
+
+def _match_paths_by_geometry(paths: list[tuple[str, str]], previous_geos: list) -> dict[int, object]:
+  """
+  Match only unique one-to-one geometry fingerprints.
+
+  Ambiguous duplicate shapes are intentionally left for manual review instead of
+  guessing a cabinet number.
+  """
+  incoming_fingerprints = [_path_geometry_fingerprint(d) for _, d in paths]
+  incoming_counts = Counter(incoming_fingerprints)
+  previous_by_fingerprint: dict[str, list] = defaultdict(list)
+  for geo in previous_geos:
+    previous_by_fingerprint[_path_geometry_fingerprint(geo.path_data)].append(geo)
+
+  matches: dict[int, object] = {}
+  for index, fingerprint in enumerate(incoming_fingerprints):
+    candidates = previous_by_fingerprint.get(fingerprint, [])
+    if incoming_counts[fingerprint] == 1 and len(candidates) == 1:
+      matches[index] = candidates[0]
+  return matches
 
 
 def _matrix_multiply(m1: tuple[float, float, float, float, float, float], m2: tuple[float, float, float, float, float, float]) -> tuple[float, float, float, float, float, float]:
@@ -583,8 +701,8 @@ async def import_svg_to_version(
   """
   导入柜位版本 SVG（批量版）：
   - 解析 SVG 中所有带 id 与 d 的 <path>
-  - 临时规则：unit_code = path 的 id（如 path42）
-  - 自动 upsert business_units + geo_elements
+  - 与同楼层上一张已导入柜位图按 path 坐标做唯一匹配
+  - 坐标相同则继承原 business_unit；坐标变化则保留 path.id，等待人工编辑
   """
   try:
     # 1) 获取版本信息
@@ -612,73 +730,111 @@ async def import_svg_to_version(
     if not paths:
       raise HTTPException(status_code=400, detail="SVG 中未找到可导入的 path（需要同时具备 id 与 d）")
 
+    duplicate_svg_ids = sorted(svg_id for svg_id, count in Counter(svg_id for svg_id, _ in paths).items() if count > 1)
+    if duplicate_svg_ids:
+      preview = ", ".join(duplicate_svg_ids[:10])
+      raise HTTPException(status_code=400, detail=f"SVG 中存在重复 path id，无法安全导入: {preview}")
+
+    # 4) 选择同楼层最近一张已有几何的历史版本作为匹配基准。
+    previous_version = db.execute(
+      text(
+        """
+        SELECT v.id, v.version_code
+        FROM unit_map_versions v
+        WHERE v.floor_id = :floor_id
+          AND v.id <> :version_id
+          AND EXISTS (SELECT 1 FROM geo_elements g WHERE g.version_id = v.id)
+        ORDER BY v.is_active DESC, v.created_at DESC NULLS LAST, v.id DESC
+        LIMIT 1
+        """
+      ),
+      {"floor_id": floor_id, "version_id": version_id},
+    ).fetchone()
+    previous_geos = []
+    if previous_version:
+      previous_geos = db.execute(
+        text(
+          """
+          SELECT g.id, g.unit_id, g.path_data, bu.unit_code
+          FROM geo_elements g
+          JOIN business_units bu ON bu.id = g.unit_id
+          WHERE g.version_id = :version_id
+          ORDER BY g.id
+          """
+        ),
+        {"version_id": previous_version.id},
+      ).fetchall()
+    geometry_matches = _match_paths_by_geometry(paths, previous_geos)
+
     created_units = 0
     created_geos = 0
-    updated_geos = 0
+    inherited_geos = 0
+    review_svg_ids: list[str] = []
 
-    # 4) 逐个 upsert（简单可靠；后续需要性能可再批量化）
-    for (svg_id, d) in paths:
-      unit_code = svg_id  # 临时规则：unit_code = path id
+    # 重新上传同一版本时，以本次 SVG 为准，避免保留已从图纸删除的旧 path。
+    replaced_geos = db.execute(
+      text("DELETE FROM geo_elements WHERE version_id = :version_id"),
+      {"version_id": version_id},
+    ).rowcount or 0
 
-      bu = db.execute(
-        text("SELECT id FROM business_units WHERE floor_id = :floor_id AND unit_code = :unit_code"),
-        {"floor_id": floor_id, "unit_code": unit_code},
-      ).fetchone()
-      if bu:
-        unit_id = bu.id
+    # 5) 坐标匹配成功的复用原柜位；其余继续用 path.id 作为待编辑柜位号。
+    for index, (svg_id, d) in enumerate(paths):
+      matched_geo = geometry_matches.get(index)
+      if matched_geo is not None:
+        unit_id = matched_geo.unit_id
+        unit_code = matched_geo.unit_code
+        inherited_geos += 1
       else:
-        bu_row = db.execute(
-          text(
-            """
-            INSERT INTO business_units (floor_id, unit_code)
-            VALUES (:floor_id, :unit_code)
-            RETURNING id
-            """
-          ),
+        unit_code = svg_id
+        review_svg_ids.append(svg_id)
+
+        bu = db.execute(
+          text("SELECT id FROM business_units WHERE floor_id = :floor_id AND unit_code = :unit_code"),
           {"floor_id": floor_id, "unit_code": unit_code},
         ).fetchone()
-        unit_id = bu_row.id
-        created_units += 1
+        if bu:
+          unit_id = bu.id
+        else:
+          bu_row = db.execute(
+            text(
+              """
+              INSERT INTO business_units (floor_id, unit_code)
+              VALUES (:floor_id, :unit_code)
+              RETURNING id
+              """
+            ),
+            {"floor_id": floor_id, "unit_code": unit_code},
+          ).fetchone()
+          unit_id = bu_row.id
+          created_units += 1
 
-      existing_geo = db.execute(
-        text("SELECT id FROM geo_elements WHERE version_id = :version_id AND unit_id = :unit_id"),
-        {"version_id": version_id, "unit_id": unit_id},
-      ).fetchone()
-      if existing_geo:
-        db.execute(
-          text(
-            """
-            UPDATE geo_elements
-            SET svg_element_id = :svg_element_id, path_data = :path_data
-            WHERE id = :id
-            """
-          ),
-          {"svg_element_id": svg_id, "path_data": d, "id": existing_geo.id},
-        )
-        updated_geos += 1
-      else:
-        db.execute(
-          text(
-            """
-            INSERT INTO geo_elements (version_id, unit_id, svg_element_id, path_data)
-            VALUES (:version_id, :unit_id, :svg_element_id, :path_data)
-            """
-          ),
-          {"version_id": version_id, "unit_id": unit_id, "svg_element_id": svg_id, "path_data": d},
-        )
-        created_geos += 1
+      db.execute(
+        text(
+          """
+          INSERT INTO geo_elements (version_id, unit_id, svg_element_id, path_data)
+          VALUES (:version_id, :unit_id, :svg_element_id, :path_data)
+          """
+        ),
+        {"version_id": version_id, "unit_id": unit_id, "svg_element_id": svg_id, "path_data": d},
+      )
+      created_geos += 1
 
     db.commit()
     return {
       "message": "导入成功",
-      "rule": "unit_code = path.id（临时规则）",
+      "rule": "相同坐标继承上一版柜位号；不同坐标保留 path.id，等待人工编辑",
       "version_id": version_id,
       "floor_id": floor_id,
+      "matched_from_version_id": previous_version.id if previous_version else None,
+      "matched_from_version_code": previous_version.version_code if previous_version else None,
       "paths_total": len(paths),
       "paths_skipped": skipped,
+      "paths_inherited": inherited_geos,
+      "paths_need_review": len(review_svg_ids),
+      "review_svg_ids": review_svg_ids,
       "business_units_created": created_units,
       "geo_elements_created": created_geos,
-      "geo_elements_updated": updated_geos,
+      "geo_elements_replaced": replaced_geos,
     }
   except HTTPException:
     raise

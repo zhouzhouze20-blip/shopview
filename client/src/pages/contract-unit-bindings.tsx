@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useBusinessUnits } from "@/hooks/useBusinessUnits";
-import { useContractsList } from "@/hooks/useContracts";
+import { getContractDisplayEndDate, useContractsList } from "@/hooks/useContracts";
 import { formatOperationMethod } from "@/lib/operation-method";
 import {
   ContractUnitBindingItem,
@@ -40,13 +40,17 @@ function normalizeContractNo(value: string) {
 export default function ContractUnitBindingsPage() {
   const { toast } = useToast();
   const bindingFormRef = useRef<HTMLDivElement>(null);
+  const initialContractNo = useMemo(
+    () => normalizeContractNo(new URLSearchParams(window.location.search).get("contract_id") || ""),
+    [],
+  );
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("ACTIVE");
   const [unitKeyword, setUnitKeyword] = useState("");
-  const [contractKeyword, setContractKeyword] = useState("");
+  const [contractKeyword, setContractKeyword] = useState(initialContractNo);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [shopUnitId, setShopUnitId] = useState("");
-  const [contractId, setContractId] = useState("");
+  const [contractId, setContractId] = useState(initialContractNo);
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
   const [contractPickerOpen, setContractPickerOpen] = useState(false);
 
@@ -76,7 +80,7 @@ export default function ContractUnitBindingsPage() {
     return {
       businessType: formatOperationMethod(selectedContract?.cmwmid) || null,
       startDate: selectedContract?.cmeffdate ? selectedContract.cmeffdate.slice(0, 10) : null,
-      endDate: selectedContract?.cmlapdate ? selectedContract.cmlapdate.slice(0, 10) : null,
+      endDate: getContractDisplayEndDate(selectedContract)?.slice(0, 10) ?? null,
       remark: selectedContract
         ? `前端手工补维护；合同=${selectedContract.cmcontno}；柜位=${selectedUnit?.unit_code || shopUnitId}`
         : "前端手工补维护",
@@ -263,7 +267,7 @@ export default function ContractUnitBindingsPage() {
                         >
                           <div className="font-medium">{item.cmcontno}</div>
                           <div className="truncate text-xs text-muted-foreground">
-                            {item.cmtitle || item.supplier_name || "-"} · {fmtDate(item.cmeffdate)} 至 {fmtDate(item.cmlapdate)}
+                            {item.cmtitle || item.supplier_name || "-"} · {fmtDate(item.cmeffdate)} 至 {fmtDate(getContractDisplayEndDate(item))}
                           </div>
                         </button>
                       ))
@@ -276,7 +280,7 @@ export default function ContractUnitBindingsPage() {
               {selectedContract ? (
                 <p className="text-xs text-muted-foreground">
                   {selectedContract.cmtitle || "-"} · {selectedContract.cmsupid || "-"} · {fmtDate(selectedContract.cmeffdate)} 至{" "}
-                  {fmtDate(selectedContract.cmlapdate)}
+                  {fmtDate(getContractDisplayEndDate(selectedContract))}
                 </p>
               ) : null}
             </div>

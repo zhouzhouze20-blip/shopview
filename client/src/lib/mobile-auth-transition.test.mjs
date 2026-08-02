@@ -25,3 +25,18 @@ test("initial auth, logout, and silent mobile login share one loading screen", (
   assert.match(loginSource, /return <AuthLoadingScreen \/>/);
   assert.doesNotMatch(appSource, /正在加载登录状态/);
 });
+
+test("a rejected mobile WeCom login cannot immediately restart after the error query is consumed", () => {
+  assert.match(
+    loginSource,
+    /const \[mobileAutoLoginBlocked\] = useState\([\s\S]*?URLSearchParams\(window\.location\.search\)\.has\("auth_error"\)/,
+  );
+  assert.match(
+    loginSource,
+    /if \(!mobileClient \|\| !isWeComClient\(\) \|\| mobileAutoLoginBlocked\) return;/,
+  );
+  assert.match(
+    loginSource,
+    /mobileClient && isWeComClient\(\) && !mobileAutoLoginBlocked && !mobileAutoLoginFailed/,
+  );
+});

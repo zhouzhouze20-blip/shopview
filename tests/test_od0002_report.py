@@ -177,7 +177,13 @@ def test_compare_period_rejects_end_before_start():
 
 
 def test_metric_triplet_calculates_weighted_margin_and_yoy():
-    assert metric_triplet(120, 24, 100, 15) == {
+    assert metric_triplet(120, 24, 100, 15, 3, 2) == {
+        "ticket_count_current": 3,
+        "ticket_count_prior": 2,
+        "ticket_count_yoy": 0.5,
+        "average_ticket_current": 40.0,
+        "average_ticket_prior": 50.0,
+        "average_ticket_yoy": -0.2,
         "sales_current": 120.0,
         "sales_prior": 100.0,
         "sales_yoy": 0.2,
@@ -195,6 +201,10 @@ def test_metric_triplet_returns_none_when_denominator_is_zero():
 
     assert result["sales_yoy"] is None
     assert result["profit_yoy"] is None
+    assert result["ticket_count_yoy"] is None
+    assert result["average_ticket_current"] is None
+    assert result["average_ticket_prior"] is None
+    assert result["average_ticket_yoy"] is None
     assert result["margin_current"] is None
     assert result["margin_prior"] is None
     assert result["margin_change"] is None
@@ -265,6 +275,10 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert "join manaframe dept" in compact
     assert "join area_category_dedup ac" in compact
     assert "join stores st" in compact
+    assert "left join codebrand cb" in compact
+    assert "s.sglppcode" in compact
+    assert "cb.cbid" in compact
+    assert "cb.cbcname" in compact
     assert "s.sglmfid" in compact and "mf.mfcode" in compact
     assert "mf.mfpcode" in compact and "dept.mfcode" in compact
     assert "mf.mfchr1" in compact and "ac.category_code" in compact
@@ -273,8 +287,12 @@ def test_build_report_query_uses_od0002_sources_filters_and_bound_params():
     assert "trim(both from coalesce(ac.area_name, '')) <> '其他类别区域'" in compact
     assert "replace(coalesce(ac.area_name" not in compact
     assert scope_sql in sql
-    assert "s.sglmarket::text = :selected_store" in sql
+    assert "s.sglmarket = :selected_store" in sql
     assert "s.sglmarket::text as store_code" in compact
+    assert "s.sglbillno" in compact
+    assert "count(distinct ticket_current)" in compact
+    assert "count(distinct ticket_prior)" in compact
+    assert "'dimension_totals' as dimension_type" in compact
     assert "st.store_name as store_name" in compact
     assert "substring(trim(both from coalesce(mf.mfcode" not in compact
     assert set(EXCLUDED_DEPARTMENT_CODES).issubset(set(params["excluded_department_codes"]))
@@ -334,7 +352,24 @@ def test_build_report_query_filters_sales_dates_before_dimension_joins():
     assert "sglhsrq between :start_date and :end_date" in filtered_sales
 
 
-def test_build_report_query_contains_six_dimensions_and_store_grouping():
+def test_build_report_query_preaggregates_sales_before_normalized_dimension_joins():
+    sql, _ = build_report_query(
+        date(2026, 1, 1), date(2026, 7, 28),
+        date(2025, 1, 1), date(2025, 7, 28),
+        TrustedScopeSql(""), {},
+        selected_store="603",
+    )
+    compact = " ".join(sql.split()).lower()
+    filtered_sales = compact.split("filtered_sales as", 1)[1].split("),", 1)[0]
+
+    assert "group by s.sglmarket, s.sglmfid, s.sglppcode, s.sglbillno" in filtered_sales
+    assert "s.sglmarket = :selected_store" in filtered_sales
+    assert "enriched_sales as" in compact
+    assert compact.count("join manaframe mf") == 1
+    assert compact.count("from filtered_sales s") == 1
+
+
+def test_build_report_query_contains_all_dimensions_and_store_grouping():
     sql, _ = build_report_query(
         date(2026, 1, 1),
         date(2026, 1, 31),
@@ -344,7 +379,16 @@ def test_build_report_query_contains_six_dimensions_and_store_grouping():
         {},
     )
 
-    for dimension in ("stores", "departments", "areas", "categories", "groups", "floors"):
+    for dimension in (
+        "stores",
+        "departments",
+        "department_categories",
+        "areas",
+        "categories",
+        "groups",
+        "special_sales",
+        "floors",
+    ):
         assert f"'{dimension}' AS dimension_type" in sql
     for cte in ("departments", "areas", "categories", "groups", "floors"):
         section = sql.split(f"{cte} AS (", 1)[1].split("),", 1)[0]
@@ -364,10 +408,68 @@ def test_group_query_aggregates_by_store_department_and_group():
     block = compact.split("groups as (", 1)[1].split("), floors as", 1)[0]
 
     assert "department_code, department_name" in block
+    assert "area_code, area_name" in block
+    assert "category_code, category_name" in block
     assert (
         "group by store_code, store_name, department_code, department_name, "
+        "area_code, area_name, category_code, category_name, "
         "group_code, group_name"
     ) in block
+
+
+def test_normalize_rows_preserves_group_area_and_category():
+    rows = [
+        {
+            "dimension_type": "groups",
+            "store_code": "601",
+            "store_name": "一店",
+            "department_code": "6010101",
+            "department_name": "一店一部(化妆)",
+            "area_code": "A01",
+            "area_name": "化妆品区域",
+            "category_code": "C01",
+            "category_name": "国际化妆品",
+            "dimension_code": "6010101005",
+            "dimension_name": "L'oreal欧莱雅厅",
+            "sales_current": 100,
+            "profit_current": 20,
+            "sales_prior": 80,
+            "profit_prior": 12,
+        }
+    ]
+
+    dimensions, _ = normalize_rows(rows)
+
+    assert dimensions["groups"][0]["area_code"] == "A01"
+    assert dimensions["groups"][0]["area_name"] == "化妆品区域"
+    assert dimensions["groups"][0]["category_code"] == "C01"
+    assert dimensions["groups"][0]["category_name"] == "国际化妆品"
+
+
+def test_special_sale_query_filters_floor_16_and_aggregates_by_group_and_brand():
+    sql, _ = build_report_query(
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        date(2025, 1, 1),
+        date(2025, 1, 31),
+        TrustedScopeSql(""),
+        {},
+    )
+    compact = " ".join(sql.lower().split())
+    block = compact.split("special_sales as (", 1)[1].split("), floors as", 1)[0]
+
+    assert "from enriched_sales" in block
+    assert "where floor_code = '16'" in block
+    assert "brand_code" in block
+    assert "brand_name" in block
+    assert "group_code as dimension_code" in block
+    assert "group_name as dimension_name" in block
+    assert "group by" in block
+    assert "left join codebrand cb" in compact
+    assert "s.sglppcode" in compact
+    assert "cb.cbid" in compact
+    assert "cb.cbcname" in compact
+    assert "union all select * from special_sales" in compact
 
 
 def test_normalize_rows_keeps_same_department_separate_by_store_and_builds_metrics():
@@ -497,6 +599,42 @@ def test_normalize_rows_reports_unmatched_area_and_floor_counts():
     }
 
 
+def test_normalize_rows_preserves_special_sale_brand_name_and_metrics():
+    rows = [
+        {
+            "dimension_type": "special_sales",
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030102",
+            "department_name": "新世纪二部",
+            "dimension_code": "6030102999",
+            "dimension_name": "女装特卖",
+            "brand_code": "00310",
+            "brand_name": "Christian dior迪奥",
+            "sales_current": 100,
+            "profit_current": 20,
+            "sales_prior": 80,
+            "profit_prior": 12,
+        }
+    ]
+
+    dimensions, _ = normalize_rows(rows)
+
+    assert dimensions["special_sales"] == [
+        {
+            "store_code": "603",
+            "store_name": "商城",
+            "department_code": "6030102",
+            "department_name": "新世纪二部",
+            "dimension_code": "6030102999",
+            "dimension_name": "女装特卖",
+            "brand_code": "00310",
+            "brand_name": "Christian dior迪奥",
+            "metrics": metric_triplet(100, 20, 80, 12),
+        }
+    ]
+
+
 @pytest.mark.skipif(
     not os.getenv("OD0002_TEST_DATABASE_URL"),
     reason="OD0002_TEST_DATABASE_URL is not configured",
@@ -507,7 +645,7 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
         connection.execute(text("""
             CREATE TEMP TABLE salegoodslist (
               sglmarket integer, sglmfid text, sglhsrq date, sglxssr numeric,
-              sgln2 numeric, sglwmid text
+              sgln2 numeric, sglwmid text, sglppcode text, sglbillno numeric
             ) ON COMMIT DROP;
             CREATE TEMP TABLE manaframe (
               mfcode text, mfcname text, mfpcode text, mfchr1 text, mflc text
@@ -516,17 +654,21 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
               area_code text, area_name text, category_code text, category_name text
             ) ON COMMIT DROP;
             CREATE TEMP TABLE stores (store_code text, store_name text) ON COMMIT DROP;
+            CREATE TEMP TABLE codebrand (cbid text PRIMARY KEY, cbcname text) ON COMMIT DROP;
         """))
         connection.execute(text("""
             INSERT INTO stores VALUES ('601', '一店'), ('602', '二店');
             INSERT INTO manaframe VALUES
               ('D1', '部门一', '0', NULL, NULL), ('D2', '部门二', '0', NULL, NULL),
-              ('G1', '柜组一', 'D1', 'C1', '02'), ('G2', '柜组二', 'D2', 'C1', '02');
+              ('G1', '柜组一', 'D1', 'C1', '02'), ('G2', '柜组二', 'D2', 'C1', '02'),
+              ('G3', '特卖柜组', 'D1', 'C1', '16');
             INSERT INTO area_category VALUES
               ('A1', 'Z区域', 'C1', 'Z品类'), ('A9', 'A区域', ' C1 ', 'A品类');
+            INSERT INTO codebrand VALUES ('B1', '品牌一'), ('B2', '品牌二'), ('B3', '特卖品牌');
             INSERT INTO salegoodslist VALUES
-              (601, 'G1', DATE '2026-01-10', 100, 20, '1'),
-              (602, 'G2', DATE '2026-01-10', 200, 40, '1');
+              (601, 'G1', DATE '2026-01-10', 100, 20, '1', 'B1', 1001),
+              (602, 'G2', DATE '2026-01-10', 200, 40, '1', 'B2', 2001),
+              (601, 'G3', DATE '2026-01-10', 50, 8, '1', 'B3', 1002);
         """))
         sql, params = build_report_query(
             date(2026, 1, 1), date(2026, 1, 31),
@@ -537,7 +679,7 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
         rows = connection.execute(text(sql), params).mappings().all()
 
     dimensions, _ = normalize_rows(rows)
-    expected = {"601": 100.0, "602": 200.0}
+    expected = {"601": 150.0, "602": 200.0}
     for dimension_type in ("stores", "departments", "areas", "categories", "groups", "floors"):
         totals = {}
         for row in dimensions[dimension_type]:
@@ -551,6 +693,16 @@ def test_postgresql_query_deduplicates_dictionary_and_preserves_store_totals():
         (row["dimension_code"], row["dimension_name"])
         for row in dimensions["categories"]
     } == {("C1", "Z品类")}
+    assert [
+        (
+            row["store_code"],
+            row["dimension_code"],
+            row["brand_code"],
+            row["brand_name"],
+            row["metrics"]["sales_current"],
+        )
+        for row in dimensions["special_sales"]
+    ] == [("601", "G3", "B3", "特卖品牌", 50.0)]
 
 
 class FakeMapping:
@@ -591,10 +743,14 @@ def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
     rows = [
         {"dimension_type": "stores", "store_code": "601", "store_name": "一店",
          "dimension_code": "601", "dimension_name": "一店", "sales_current": 100,
-         "profit_current": 10, "sales_prior": 80, "profit_prior": 8},
+         "profit_current": 10, "sales_prior": 80, "profit_prior": 8,
+         "ticket_count_current": 2, "ticket_count_prior": 1},
         {"dimension_type": "stores", "store_code": "602", "store_name": "二店",
          "dimension_code": "602", "dimension_name": "二店", "sales_current": 300,
-         "profit_current": 60, "sales_prior": 120, "profit_prior": 12},
+         "profit_current": 60, "sales_prior": 120, "profit_prior": 12,
+         "ticket_count_current": 2, "ticket_count_prior": 2},
+        {"dimension_type": "dimension_totals", "dimension_code": "stores",
+         "ticket_count_current": 3, "ticket_count_prior": 2},
     ]
     db = FakeDb(rows)
 
@@ -629,10 +785,12 @@ def test_load_od0002_report_executes_bound_query_and_builds_weighted_totals():
             "areas",
             "categories",
             "groups",
+            "special_sales",
             "floors",
         )
     )
-    assert payload["totals"]["stores"] == metric_triplet(400, 70, 200, 20)
+    assert payload["totals"]["stores"] == metric_triplet(400, 70, 200, 20, 3, 2)
+    assert payload["totals"]["stores"]["average_ticket_current"] == pytest.approx(400 / 3)
     assert all(row["total"] == payload["totals"]["stores"] for row in payload["dimensions"]["stores"])
     assert payload["selected_store"] is None
     assert payload["quality"]["unmatched_floor_group_count"] == 0
@@ -691,6 +849,8 @@ def test_normalize_rows_builds_category_area_and_department_rows_in_order():
             "profit_current": 5,
             "sales_prior": 40,
             "profit_prior": 4,
+            "ticket_count_current": 2,
+            "ticket_count_prior": 2,
         },
         {
             "dimension_type": "department_categories",
@@ -708,6 +868,29 @@ def test_normalize_rows_builds_category_area_and_department_rows_in_order():
             "profit_current": 3,
             "sales_prior": 20,
             "profit_prior": 2,
+            "ticket_count_current": 2,
+            "ticket_count_prior": 1,
+        },
+        {
+            "dimension_type": "hierarchy_area_totals",
+            "store_code": "603",
+            "department_code": "6030102",
+            "area_code": "A1",
+            "ticket_count_current": 3,
+            "ticket_count_prior": 2,
+        },
+        {
+            "dimension_type": "departments",
+            "store_code": "603",
+            "store_name": "商城",
+            "dimension_code": "6030102",
+            "dimension_name": "新世纪二部",
+            "sales_current": 80,
+            "profit_current": 8,
+            "sales_prior": 60,
+            "profit_prior": 6,
+            "ticket_count_current": 3,
+            "ticket_count_prior": 2,
         },
     ]
 
@@ -723,6 +906,9 @@ def test_normalize_rows_builds_category_area_and_department_rows_in_order():
     assert [row["category_code"] for row in hierarchy[:2]] == ["C1", "C2"]
     assert hierarchy[2]["metrics"]["sales_current"] == 80
     assert hierarchy[3]["metrics"]["sales_current"] == 80
+    assert hierarchy[2]["metrics"]["ticket_count_current"] == 3
+    assert hierarchy[3]["metrics"]["ticket_count_current"] == 3
+    assert hierarchy[2]["metrics"]["average_ticket_current"] == pytest.approx(80 / 3)
 
 
 def test_load_report_total_counts_only_department_category_detail_rows():
@@ -771,11 +957,12 @@ def test_department_category_reuses_base_permission_and_department_filter():
         selected_department="6030102",
     )
     compact = " ".join(sql.split())
-    base = compact.split("base AS", 1)[1].split("), stores AS", 1)[0]
+    filtered_sales = compact.split("filtered_sales AS", 1)[1].split("), area_category_dedup AS", 1)[0]
+    enriched_sales = compact.split("enriched_sales AS", 1)[1].split("), base AS", 1)[0]
 
-    assert scope in base
-    assert "s.sglmarket::text = :selected_store" in base
-    assert "= UPPER(:selected_department)" in base
+    assert scope in enriched_sales
+    assert "s.sglmarket = :selected_store" in filtered_sales
+    assert "= UPPER(:selected_department)" in enriched_sales
     assert params["scope_allow_store"] == ["603"]
     assert params["selected_department"] == "6030102"
 
@@ -813,6 +1000,68 @@ def test_od0002_route_rejects_end_before_start_with_422():
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(sales.od0002_report(date(2026, 2, 1), date(2026, 1, 31), None, object(), object()))
+    assert exc.value.status_code == 422
+
+
+def test_od0002_route_uses_manually_selected_prior_period(monkeypatch):
+    from python_app.routers import sales
+    from python_app.routers.authz import DataScope
+
+    monkeypatch.setattr(sales, "require_permission", lambda *args: None)
+    monkeypatch.setattr(
+        sales,
+        "load_business_scope",
+        lambda *args, **kwargs: DataScope(all_access=True),
+    )
+    monkeypatch.setattr(sales, "_business_scope_filter_sql", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        sales,
+        "load_od0002_report",
+        lambda *args, **kwargs: kwargs,
+    )
+
+    result = asyncio.run(
+        sales.od0002_report(
+            date(2026, 7, 1),
+            date(2026, 7, 25),
+            None,
+            object(),
+            object(),
+            prior_start_date=date(2025, 6, 29),
+            prior_end_date=date(2025, 7, 23),
+        )
+    )
+
+    assert result["prior_start_date"] == date(2025, 6, 29)
+    assert result["prior_end_date"] == date(2025, 7, 23)
+
+
+@pytest.mark.parametrize(
+    ("prior_start", "prior_end"),
+    [
+        (date(2025, 7, 1), None),
+        (None, date(2025, 7, 25)),
+        (date(2025, 7, 25), date(2025, 7, 1)),
+    ],
+)
+def test_od0002_route_rejects_incomplete_or_reversed_prior_period(
+    prior_start, prior_end
+):
+    from fastapi import HTTPException
+    from python_app.routers import sales
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            sales.od0002_report(
+                date(2026, 7, 1),
+                date(2026, 7, 25),
+                None,
+                object(),
+                object(),
+                prior_start_date=prior_start,
+                prior_end_date=prior_end,
+            )
+        )
     assert exc.value.status_code == 422
 
 

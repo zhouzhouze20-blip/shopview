@@ -49,6 +49,15 @@ export interface ContractUnitBindingInput {
   remark?: string | null;
 }
 
+export interface ReplaceContractUnitBindingsResponse {
+  message: string;
+  contract_id: string;
+  unit_codes: string[];
+  created: number;
+  reactivated: number;
+  disabled: number;
+}
+
 export function useContractUnitBindings(params?: {
   keyword?: string;
   contractId?: string;
@@ -56,9 +65,11 @@ export function useContractUnitBindings(params?: {
   status?: string;
   skip?: number;
   limit?: number;
+  enabled?: boolean;
 }) {
   return useQuery({
     queryKey: ["contract-unit-bindings", params ?? {}],
+    enabled: params?.enabled ?? true,
     queryFn: () => {
       const searchParams = new URLSearchParams();
       const keyword = params?.keyword?.trim();
@@ -83,6 +94,7 @@ export function useCreateContractUnitBinding() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contract-unit-bindings"] });
       qc.invalidateQueries({ queryKey: ["unit-contracts"] });
+      qc.invalidateQueries({ queryKey: ["contracts-list"] });
     },
   });
 }
@@ -95,6 +107,7 @@ export function useUpdateContractUnitBinding() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contract-unit-bindings"] });
       qc.invalidateQueries({ queryKey: ["unit-contracts"] });
+      qc.invalidateQueries({ queryKey: ["contracts-list"] });
     },
   });
 }
@@ -106,6 +119,23 @@ export function useDisableContractUnitBinding() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contract-unit-bindings"] });
       qc.invalidateQueries({ queryKey: ["unit-contracts"] });
+      qc.invalidateQueries({ queryKey: ["contracts-list"] });
+    },
+  });
+}
+
+export function useReplaceContractUnitBindings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ contractId, shopUnitIds }: { contractId: string; shopUnitIds: number[] }) =>
+      apiPut<ReplaceContractUnitBindingsResponse>(
+        `/api/contract-unit-bindings/by-contract/${encodeURIComponent(contractId)}`,
+        { shop_unit_ids: shopUnitIds },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contract-unit-bindings"] });
+      qc.invalidateQueries({ queryKey: ["unit-contracts"] });
+      qc.invalidateQueries({ queryKey: ["contracts-list"] });
     },
   });
 }

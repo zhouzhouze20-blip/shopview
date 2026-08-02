@@ -73,8 +73,8 @@ export default function SettledGrossProfitRankingPage() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   const storesQuery = useQuery<AuthorizedStore[]>({
-    queryKey: ["/api/sales/reports/od0002/stores"],
-    queryFn: () => apiGet("/api/sales/reports/od0002/stores"),
+    queryKey: ["/api/sales/reports/settled-gross-profit/stores"],
+    queryFn: () => apiGet("/api/sales/reports/settled-gross-profit/stores"),
   });
   const globalStoreCode = selectedStoreId === null
     ? null
@@ -93,8 +93,8 @@ export default function SettledGrossProfitRankingPage() {
     ? ""
     : `?store_id=${encodeURIComponent(draft.storeId)}`;
   const departmentsQuery = useQuery<AuthorizedDepartment[]>({
-    queryKey: ["/api/sales/reports/od0002/departments", draft.storeId],
-    queryFn: () => apiGet(`/api/sales/reports/od0002/departments${departmentStoreParam}`),
+    queryKey: ["/api/sales/reports/settled-gross-profit/departments", draft.storeId],
+    queryFn: () => apiGet(`/api/sales/reports/settled-gross-profit/departments${departmentStoreParam}`),
   });
 
   const queryString = submitted

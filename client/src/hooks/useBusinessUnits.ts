@@ -33,7 +33,13 @@ export interface UpdateBusinessUnitInput {
   parent_unit_id?: number | null;
 }
 
-export function useBusinessUnits(params?: { storeId?: number | null; floorId?: number; status?: string; keyword?: string }) {
+export function useBusinessUnits(params?: {
+  storeId?: number | null;
+  floorId?: number;
+  status?: string;
+  keyword?: string;
+  enabled?: boolean;
+}) {
   return useQuery({
     queryKey: [
       "business-units",
@@ -42,6 +48,7 @@ export function useBusinessUnits(params?: { storeId?: number | null; floorId?: n
       params?.status ?? "all",
       params?.keyword ?? "",
     ],
+    enabled: params?.enabled ?? true,
     queryFn: () => {
       const q = new URLSearchParams();
       if (params?.storeId != null) q.set("store_id", String(params.storeId));

@@ -6,8 +6,11 @@ import { readFile } from "node:fs/promises";
 
 import {
   buildOd0002Params,
+  changeOd0002CurrentDate,
   contentDispositionFilename,
+  formatCount,
   formatMoneyWan,
+  formatMoneyYuan,
   formatPercent,
   getOd0002QueryMessage,
   OD0002_TABS,
@@ -66,6 +69,37 @@ test("buildOd0002Params trims a selected store", () => {
   );
 });
 
+test("OD0002 current dates automatically refresh their matching prior dates", () => {
+  const draft = {
+    start: "2026-07-01",
+    end: "2026-07-25",
+    priorStart: "2025-06-30",
+    priorEnd: "2025-07-24",
+    storeId: "603",
+  };
+  assert.deepEqual(
+    changeOd0002CurrentDate(draft, "start", "2026-08-01"),
+    { ...draft, start: "2026-08-01", priorStart: "2025-08-01" },
+  );
+  assert.deepEqual(
+    changeOd0002CurrentDate(draft, "end", "2026-08-25"),
+    { ...draft, end: "2026-08-25", priorEnd: "2025-08-25" },
+  );
+});
+
+test("buildOd0002Params sends manually adjusted prior dates", () => {
+  const params = buildOd0002Params(
+    "2026-07-01",
+    "2026-07-25",
+    "603",
+    "all",
+    "2025-06-29",
+    "2025-07-23",
+  );
+  assert.equal(params.get("prior_start_date"), "2025-06-29");
+  assert.equal(params.get("prior_end_date"), "2025-07-23");
+});
+
 test("department filter defaults to all and is reset when store changes", async () => {
   const module = await import("./od0002-report.ts");
   assert.equal(module.OD0002_ALL_DEPARTMENTS, "all");
@@ -86,9 +120,10 @@ test("buildOd0002Params sends one selected department", () => {
 test("OD0002 exposes department with categories after department", () => {
   assert.deepEqual(
     OD0002_TABS.map((tab) => tab.label),
-    ["分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "楼层"],
+    ["分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "特卖", "楼层"],
   );
   assert.equal(OD0002_TABS[2].key, "department_categories");
+  assert.equal(OD0002_TABS[6].key, "special_sales");
 });
 
 test("department category rows expose four hierarchy identifiers", async () => {
@@ -102,6 +137,13 @@ test("formatMoneyWan converts yuan to ten-thousand yuan and preserves negative v
   assert.equal(formatMoneyWan(123456.78), "12.35");
   assert.equal(formatMoneyWan(-12345), "-1.23");
   assert.equal(formatMoneyWan(null), "—");
+});
+
+test("OD0002 formats ticket counts as integers and average tickets in yuan", () => {
+  assert.equal(formatCount(1234), "1,234");
+  assert.equal(formatCount(null), "—");
+  assert.equal(formatMoneyYuan(1246.020396), "1,246.02");
+  assert.equal(formatMoneyYuan(null), "—");
 });
 
 test("formatPercent renders ratios with two decimal places and null as dash", () => {
@@ -205,10 +247,19 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /数据质量提示/);
   assert.match(source, /response\.ok/);
   assert.match(source, /scheduleObjectUrlRevoke\(/);
+  assert.match(source, /同期开始（自动，可修改）/);
+  assert.match(source, /同期结束（自动，可修改）/);
+  assert.match(source, /id="od0002-prior-start" type="date"[^>]*onChange/);
+  assert.match(source, /id="od0002-prior-end" type="date"[^>]*onChange/);
+  assert.doesNotMatch(source, /id="od0002-prior-(?:start|end)"[^>]*readOnly/);
   assert.match(source, /reportQuery\.data\?\.totals\[activeTab\]/);
   assert.match(source, /<TableFooter>/);
   assert.match(source, />合计</);
   assert.match(source, /metricCells\(activeTotal\)/);
+  assert.match(source, />来客数</);
+  assert.match(source, />客单</);
+  assert.match(source, /formatCount\(metrics\.ticket_count_current\)/);
+  assert.match(source, /formatMoneyYuan\(metrics\.average_ticket_current\)/);
 });
 
 test("OD0002 table uses Chinese financial yoy colors and compact data rows", async () => {
@@ -245,10 +296,22 @@ test("OD0002 hierarchy values do not wrap and groups render department and group
 
   assert.match(source, /function HierarchyValue[\s\S]*whitespace-nowrap/);
   assert.match(source, /activeTab === "groups"[\s\S]*>部门</);
-  assert.match(source, /activeTab === "groups" \? "柜组" : "维度"/);
+  assert.match(source, /activeTab === "groups" \|\| activeTab === "special_sales" \? "柜组" : "维度"/);
   assert.match(source, /name=\{row\.department_name\}[\s\S]*code=\{row\.department_code\}/);
   assert.match(source, /name=\{row\.dimension_name\}[\s\S]*code=\{row\.dimension_code\}/);
   assert.match(source, /visible\.includes\("store"\)[\s\S]*HierarchyValue/);
+});
+
+test("OD0002 page renders special-sale group and brand columns", async () => {
+  const source = await readFile(
+    new URL("../pages/sales-reports/od0002-sales-gross-profit.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /activeTab === "special_sales"/);
+  assert.match(source, />品牌</);
+  assert.match(source, /name=\{row\.brand_name\}[\s\S]*code=\{row\.brand_code\}/);
+  assert.match(source, /activeTab === "groups" \|\| activeTab === "special_sales"/);
 });
 
 test("frontend model accepts the complete backend response contract", async () => {

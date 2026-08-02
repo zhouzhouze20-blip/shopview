@@ -12,6 +12,7 @@ from python_app.services.inventory_detail_report import (
     historical_inventory_base_sql,
     inventory_movement_base_sql,
     inventory_base_sql,
+    load_inventory_movement_filter_options,
 )
 
 
@@ -116,8 +117,11 @@ def test_inventory_movement_sql_preserves_original_debit_credit_and_adjustment_f
         {
             "start_date": "2026-07-19",
             "end_date": "2026-07-19",
-            "supplier": "00070",
-            "barcode": "2000020395276",
+            "supplier": "蓝",
+            "group": "迪奥",
+            "goods_code": "395",
+            "goods_name": "防晒",
+            "barcode": "039527",
             "subinventory": "1",
         },
         params,
@@ -126,9 +130,17 @@ def test_inventory_movement_sql_preserves_original_debit_credit_and_adjustment_f
 
     assert params["start_date"] == "2026-07-19"
     assert params["end_date"] == "2026-07-19"
-    assert params["supplier_like"] == "%00070%"
-    assert params["barcode_like"] == "%2000020395276%"
+    assert params["supplier_like"] == "%蓝%"
+    assert params["group_like"] == "%迪奥%"
+    assert params["goods_code_like"] == "%395%"
+    assert params["goods_name_like"] == "%防晒%"
+    assert params["barcode_like"] == "%039527%"
     assert params["subinventory"] == "1"
+    assert "j.jglsupid" in sql and "sb.sbcname" in sql
+    assert "j.jglmfid" in sql and "mf.mfcname" in sql
+    assert "j.jglgdid" in sql
+    assert "gb.gbcname" in sql
+    assert "gb.gbbarcode" in sql
     assert "j.jglfsdate >= cast(:start_date as date)" in sql
     assert "j.jglfsdate < cast(:end_date as date) + interval '1 day'" in sql
     assert "case when j.jgldac = 'd' then j.jglsl else 0 end as increase_quantity" in sql
@@ -139,6 +151,61 @@ def test_inventory_movement_sql_preserves_original_debit_credit_and_adjustment_f
     assert "j.jglqmbhscbje as balance_cost_tax_excluded" in sql
     assert "when 'e' then '销售'" in sql
     assert "join goodsbase gb on gb.gbid = j.jglgdid" in sql
+
+
+def test_inventory_movement_filter_options_use_dates_scope_and_fuzzy_keyword():
+    class FakeMappings:
+        def all(self):
+            return [
+                {
+                    "value": "20630",
+                    "label": "[20630] 浙江蓝雪食品有限公司",
+                    "code": "20630",
+                    "name": "浙江蓝雪食品有限公司",
+                }
+            ]
+
+    class FakeResult:
+        def mappings(self):
+            return FakeMappings()
+
+    class FakeSession:
+        def __init__(self):
+            self.sql = ""
+            self.params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return FakeResult()
+
+    db = FakeSession()
+    options = load_inventory_movement_filter_options(
+        db,
+        field="supplier",
+        query="蓝雪",
+        filters={"start_date": "2026-07-21", "end_date": "2026-07-21"},
+        scope_sql=" AND j.jglmarket = :scope_market",
+        scope_params={"scope_market": "601"},
+        limit=20,
+    )
+
+    normalized = " ".join(db.sql.split()).lower()
+    assert db.params["start_date"] == "2026-07-21"
+    assert db.params["end_date"] == "2026-07-21"
+    assert db.params["supplier_like"] == "%蓝雪%"
+    assert db.params["scope_market"] == "601"
+    assert db.params["option_limit"] == 20
+    assert "with movements as" in normalized
+    assert "sb.sbcname" in normalized
+    assert options == [
+        {
+            "value": "20630",
+            "label": "[20630] 浙江蓝雪食品有限公司",
+            "code": "20630",
+            "name": "浙江蓝雪食品有限公司",
+        }
+    ]
 
 
 def test_inventory_excel_export_keeps_codes_as_text_and_writes_totals():

@@ -85,18 +85,44 @@ def metric_triplet(
     profit_current: Any,
     sales_prior: Any,
     profit_prior: Any,
+    ticket_count_current: Any = 0,
+    ticket_count_prior: Any = 0,
 ) -> dict[str, float | None]:
-    sc, pc, sp, pp = map(
-        _number, (sales_current, profit_current, sales_prior, profit_prior)
+    sc, pc, sp, pp, tc, tp = map(
+        _number,
+        (
+            sales_current,
+            profit_current,
+            sales_prior,
+            profit_prior,
+            ticket_count_current,
+            ticket_count_prior,
+        ),
     )
     margin_current = _ratio(pc, sc)
     margin_prior = _ratio(pp, sp)
+    average_ticket_current = _ratio(sc, tc)
+    average_ticket_prior = _ratio(sp, tp)
+    average_ticket_yoy = (
+        _ratio(
+            average_ticket_current - average_ticket_prior,
+            average_ticket_prior,
+        )
+        if average_ticket_current is not None and average_ticket_prior is not None
+        else None
+    )
     margin_change = (
         round(margin_current - margin_prior, 12)
         if margin_current is not None and margin_prior is not None
         else None
     )
     return {
+        "ticket_count_current": int(tc),
+        "ticket_count_prior": int(tp),
+        "ticket_count_yoy": _ratio(tc - tp, tp),
+        "average_ticket_current": average_ticket_current,
+        "average_ticket_prior": average_ticket_prior,
+        "average_ticket_yoy": average_ticket_yoy,
         "sales_current": sc,
         "sales_prior": sp,
         "sales_yoy": _ratio(sc - sp, sp),
@@ -116,6 +142,7 @@ DIMENSION_TYPES = (
     "areas",
     "categories",
     "groups",
+    "special_sales",
     "floors",
 )
 
@@ -265,10 +292,10 @@ def build_report_query(
             "excluded_department_codes": sorted(EXCLUDED_DEPARTMENT_CODES),
         }
     )
-    selected_store_sql = ""
+    selected_store_sales_sql = ""
     if selected_store is not None:
         params["selected_store"] = selected_store
-        selected_store_sql = " AND s.sglmarket::text = :selected_store"
+        selected_store_sales_sql = " AND s.sglmarket = :selected_store"
     selected_department_sql = ""
     if selected_department and selected_department.strip():
         params["selected_department"] = selected_department.strip()
@@ -282,14 +309,33 @@ def build_report_query(
     )
     sql = f"""
 WITH filtered_sales AS (
-  -- Apply the selective date predicate before normalized ERP dimension joins.
-  SELECT s.*
+  -- Collapse raw tickets before normalized ERP dimension joins. The normalized
+  -- joins cannot use the source indexes, so their input must stay bounded.
+  SELECT
+    s.sglmarket,
+    s.sglmfid,
+    s.sglppcode,
+    s.sglbillno,
+    MAX(CASE WHEN s.sglhsrq BETWEEN :start_date AND :end_date
+             THEN s.sglbillno END) AS ticket_current,
+    MAX(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
+             THEN s.sglbillno END) AS ticket_prior,
+    SUM(CASE WHEN s.sglhsrq BETWEEN :start_date AND :end_date
+             THEN COALESCE(s.sglxssr, 0) ELSE 0 END) AS sales_current,
+    SUM(CASE WHEN s.sglhsrq BETWEEN :start_date AND :end_date
+             THEN COALESCE(s.sgln2, 0) ELSE 0 END) AS profit_current,
+    SUM(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
+             THEN COALESCE(s.sglxssr, 0) ELSE 0 END) AS sales_prior,
+    SUM(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
+             THEN COALESCE(s.sgln2, 0) ELSE 0 END) AS profit_prior
   FROM salegoodslist s
   WHERE (
        s.sglhsrq BETWEEN :start_date AND :end_date
        OR s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
   )
     AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
+    {selected_store_sales_sql}
+  GROUP BY s.sglmarket, s.sglmfid, s.sglppcode, s.sglbillno
 ),
 area_category_dedup AS (
   SELECT DISTINCT ON (UPPER(TRIM(BOTH FROM category_code)))
@@ -301,7 +347,7 @@ area_category_dedup AS (
   FROM area_category
   ORDER BY UPPER(TRIM(BOTH FROM category_code)), area_code, area_name, category_name
 ),
-base AS (
+enriched_sales AS (
   SELECT
     s.sglmarket::text AS store_code,
     st.store_name AS store_name,
@@ -318,14 +364,14 @@ base AS (
       {floor_cases}
       ELSE '未匹配'
     END AS floor_name,
-    SUM(CASE WHEN s.sglhsrq BETWEEN :start_date AND :end_date
-             THEN COALESCE(s.sglxssr, 0) ELSE 0 END) AS sales_current,
-    SUM(CASE WHEN s.sglhsrq BETWEEN :start_date AND :end_date
-             THEN COALESCE(s.sgln2, 0) ELSE 0 END) AS profit_current,
-    SUM(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
-             THEN COALESCE(s.sglxssr, 0) ELSE 0 END) AS sales_prior,
-    SUM(CASE WHEN s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
-             THEN COALESCE(s.sgln2, 0) ELSE 0 END) AS profit_prior
+    TRIM(BOTH FROM COALESCE(s.sglppcode, '')) AS brand_code,
+    COALESCE(NULLIF(TRIM(BOTH FROM cb.cbcname), ''), '未匹配') AS brand_name,
+    s.ticket_current,
+    s.ticket_prior,
+    s.sales_current,
+    s.profit_current,
+    s.sales_prior,
+    s.profit_prior
   FROM filtered_sales s
   JOIN manaframe mf
     ON UPPER(TRIM(COALESCE(s.sglmfid, ''))) = UPPER(TRIM(COALESCE(mf.mfcode, '')))
@@ -333,15 +379,38 @@ base AS (
     ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
   LEFT JOIN area_category_dedup ac
     ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = ac.normalized_category_code
+  LEFT JOIN codebrand cb
+    ON UPPER(TRIM(COALESCE(s.sglppcode, ''))) = UPPER(TRIM(COALESCE(cb.cbid, '')))
   LEFT JOIN stores st
     ON TRIM(BOTH FROM COALESCE(st.store_code, '')) = s.sglmarket::text
   WHERE TRIM(BOTH FROM COALESCE(mf.mflc, '')) <> '00'
     AND TRIM(BOTH FROM COALESCE(dept.mfcode, '')) <> ALL(:excluded_department_codes)
     AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
     {scope_sql}
-    {selected_store_sql}
     {selected_department_sql}
-  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+),
+base AS (
+  SELECT
+    store_code,
+    store_name,
+    department_code,
+    department_name,
+    area_code,
+    area_name,
+    category_code,
+    category_name,
+    group_code,
+    group_name,
+    floor_code,
+    floor_name,
+    ticket_current,
+    ticket_prior,
+    SUM(sales_current) AS sales_current,
+    SUM(profit_current) AS profit_current,
+    SUM(sales_prior) AS sales_prior,
+    SUM(profit_prior) AS profit_prior
+  FROM enriched_sales
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
 ),
 stores AS (
   SELECT 'stores' AS dimension_type, store_code, store_name,
@@ -349,8 +418,11 @@ stores AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base GROUP BY store_code, store_name
 ),
 departments AS (
@@ -359,8 +431,11 @@ departments AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base GROUP BY store_code, store_name, department_code, department_name
 ),
 department_categories AS (
@@ -368,8 +443,11 @@ department_categories AS (
          category_code AS dimension_code, category_name AS dimension_name,
          department_code, department_name, area_code, area_name,
          category_code, category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base
   GROUP BY store_code, store_name, department_code, department_name,
            area_code, area_name, category_code, category_name
@@ -380,8 +458,11 @@ areas AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base GROUP BY store_code, store_name, area_code, area_name
 ),
 categories AS (
@@ -390,21 +471,52 @@ categories AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base GROUP BY store_code, store_name, category_code, category_name
 ),
 groups AS (
   SELECT 'groups' AS dimension_type, store_code, store_name,
          group_code AS dimension_code, group_name AS dimension_name,
          department_code, department_name,
-         NULL::text AS area_code, NULL::text AS area_name,
-         NULL::text AS category_code, NULL::text AS category_name,
+         area_code, area_name,
+         category_code, category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base
   GROUP BY store_code, store_name, department_code, department_name,
+           area_code, area_name, category_code, category_name,
            group_code, group_name
+),
+special_sales AS (
+  SELECT 'special_sales' AS dimension_type,
+         store_code,
+         store_name,
+         group_code AS dimension_code,
+         group_name AS dimension_name,
+         department_code,
+         department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
+         brand_code,
+         brand_name,
+         SUM(sales_current) AS sales_current,
+         SUM(profit_current) AS profit_current,
+         SUM(sales_prior) AS sales_prior,
+         SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
+  FROM enriched_sales
+  WHERE floor_code = '16'
+  GROUP BY
+    store_code, store_name, group_code, group_name,
+    department_code, department_name, brand_code, brand_name
 ),
 floors AS (
   SELECT 'floors' AS dimension_type, store_code, store_name,
@@ -412,9 +524,76 @@ floors AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          SUM(sales_current) AS sales_current, SUM(profit_current) AS profit_current,
-         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior
+         SUM(sales_prior) AS sales_prior, SUM(profit_prior) AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
   FROM base GROUP BY store_code, store_name, floor_code, floor_name
+),
+hierarchy_area_totals AS (
+  SELECT 'hierarchy_area_totals' AS dimension_type, store_code, store_name,
+         area_code AS dimension_code, area_name AS dimension_name,
+         department_code, department_name, area_code, area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
+         0::numeric AS sales_current, 0::numeric AS profit_current,
+         0::numeric AS sales_prior, 0::numeric AS profit_prior,
+         COUNT(DISTINCT ticket_current) AS ticket_count_current,
+         COUNT(DISTINCT ticket_prior) AS ticket_count_prior
+  FROM base
+  GROUP BY store_code, store_name, department_code, department_name,
+           area_code, area_name
+),
+overall_ticket_totals AS (
+  SELECT
+    COUNT(DISTINCT (store_code, ticket_current))
+      FILTER (WHERE ticket_current IS NOT NULL) AS ticket_count_current,
+    COUNT(DISTINCT (store_code, ticket_prior))
+      FILTER (WHERE ticket_prior IS NOT NULL) AS ticket_count_prior
+  FROM base
+),
+special_ticket_totals AS (
+  SELECT
+    COUNT(DISTINCT (store_code, ticket_current))
+      FILTER (WHERE ticket_current IS NOT NULL) AS ticket_count_current,
+    COUNT(DISTINCT (store_code, ticket_prior))
+      FILTER (WHERE ticket_prior IS NOT NULL) AS ticket_count_prior
+  FROM enriched_sales
+  WHERE floor_code = '16'
+),
+dimension_totals AS (
+  SELECT 'dimension_totals' AS dimension_type,
+         NULL::text AS store_code, NULL::text AS store_name,
+         target.dimension_key AS dimension_code,
+         '来客数合计'::text AS dimension_name,
+         NULL::text AS department_code, NULL::text AS department_name,
+         NULL::text AS area_code, NULL::text AS area_name,
+         NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
+         0::numeric AS sales_current, 0::numeric AS profit_current,
+         0::numeric AS sales_prior, 0::numeric AS profit_prior,
+         totals.ticket_count_current,
+         totals.ticket_count_prior
+  FROM overall_ticket_totals totals
+  CROSS JOIN (
+    VALUES
+      ('stores'::text),
+      ('departments'::text),
+      ('department_categories'::text),
+      ('areas'::text),
+      ('categories'::text),
+      ('groups'::text),
+      ('floors'::text)
+  ) AS target(dimension_key)
+  UNION ALL
+  SELECT 'dimension_totals', NULL::text, NULL::text,
+         'special_sales', '来客数合计',
+         NULL::text, NULL::text, NULL::text, NULL::text,
+         NULL::text, NULL::text, NULL::text, NULL::text,
+         0::numeric, 0::numeric, 0::numeric, 0::numeric,
+         ticket_count_current, ticket_count_prior
+  FROM special_ticket_totals
 ),
 quality AS (
   SELECT 'quality' AS dimension_type, NULL::text AS store_code, NULL::text AS store_name,
@@ -423,19 +602,24 @@ quality AS (
          NULL::text AS department_code, NULL::text AS department_name,
          NULL::text AS area_code, NULL::text AS area_name,
          NULL::text AS category_code, NULL::text AS category_name,
+         NULL::text AS brand_code, NULL::text AS brand_name,
          COALESCE(SUM(sales_current), 0) AS sales_current,
          COUNT(DISTINCT (store_code, group_code))::numeric AS profit_current,
          COALESCE(SUM(sales_prior), 0) AS sales_prior,
-         0::numeric AS profit_prior
+         0::numeric AS profit_prior,
+         0::bigint AS ticket_count_current,
+         0::bigint AS ticket_count_prior
   FROM base
   WHERE category_code IS NULL
   UNION ALL
   SELECT 'quality', NULL::text, NULL::text,
          'unmatched_floor', '未匹配楼层',
          NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
+         NULL::text, NULL::text,
          COALESCE(SUM(sales_current), 0),
          COUNT(DISTINCT (store_code, group_code))::numeric,
-         COALESCE(SUM(sales_prior), 0), 0::numeric
+         COALESCE(SUM(sales_prior), 0), 0::numeric,
+         0::bigint, 0::bigint
   FROM base
   WHERE floor_name = '未匹配'
 )
@@ -445,9 +629,12 @@ UNION ALL SELECT * FROM department_categories
 UNION ALL SELECT * FROM areas
 UNION ALL SELECT * FROM categories
 UNION ALL SELECT * FROM groups
+UNION ALL SELECT * FROM special_sales
 UNION ALL SELECT * FROM floors
+UNION ALL SELECT * FROM hierarchy_area_totals
+UNION ALL SELECT * FROM dimension_totals
 UNION ALL SELECT * FROM quality
-ORDER BY dimension_type, store_code, dimension_code
+ORDER BY dimension_type, store_code, dimension_code, brand_code
 """
     return sql, params
 
@@ -458,13 +645,30 @@ def _row_dict(row: Mapping[str, Any] | Any) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
-def _combined_metrics(rows: Iterable[Mapping[str, Any]]) -> dict[str, float | None]:
+def _combined_metrics(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    ticket_count_current: Any | None = None,
+    ticket_count_prior: Any | None = None,
+) -> dict[str, float | None]:
     items = list(rows)
+    current_tickets = (
+        sum(_number(row["metrics"].get("ticket_count_current")) for row in items)
+        if ticket_count_current is None
+        else ticket_count_current
+    )
+    prior_tickets = (
+        sum(_number(row["metrics"].get("ticket_count_prior")) for row in items)
+        if ticket_count_prior is None
+        else ticket_count_prior
+    )
     return metric_triplet(
         sum(_number(row["metrics"].get("sales_current")) for row in items),
         sum(_number(row["metrics"].get("profit_current")) for row in items),
         sum(_number(row["metrics"].get("sales_prior")) for row in items),
         sum(_number(row["metrics"].get("profit_prior")) for row in items),
+        current_tickets,
+        prior_tickets,
     )
 
 
@@ -487,9 +691,14 @@ def _department_category_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
 
 def _build_department_category_hierarchy(
     rows: Iterable[Mapping[str, Any]],
+    *,
+    area_ticket_counts: Mapping[tuple[Any, ...], tuple[int, int]] | None = None,
+    department_ticket_counts: Mapping[tuple[Any, ...], tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     detail_rows = [dict(row) for row in sorted(rows, key=_department_category_sort_key)]
     result: list[dict[str, Any]] = []
+    area_counts = area_ticket_counts or {}
+    department_counts = department_ticket_counts or {}
 
     def department_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         return (
@@ -510,6 +719,13 @@ def _build_department_category_hierarchy(
                 row["row_type"] = "category"
                 result.append(row)
             area_first = area_rows[0]
+            area_count = area_counts.get(
+                (
+                    area_first.get("store_code"),
+                    area_first.get("department_code"),
+                    area_first.get("area_code"),
+                )
+            )
             result.append(
                 {
                     "store_code": area_first.get("store_code"),
@@ -523,10 +739,20 @@ def _build_department_category_hierarchy(
                     "dimension_code": area_first.get("area_code"),
                     "dimension_name": f"{area_first.get('area_name') or '未匹配'}小计",
                     "row_type": "area_subtotal",
-                    "metrics": _combined_metrics(area_rows),
+                    "metrics": _combined_metrics(
+                        area_rows,
+                        ticket_count_current=area_count[0] if area_count else None,
+                        ticket_count_prior=area_count[1] if area_count else None,
+                    ),
                 }
             )
         department_first = department_rows[0]
+        department_count = department_counts.get(
+            (
+                department_first.get("store_code"),
+                department_first.get("department_code"),
+            )
+        )
         result.append(
             {
                 "store_code": department_first.get("store_code"),
@@ -540,7 +766,15 @@ def _build_department_category_hierarchy(
                 "dimension_code": department_first.get("department_code"),
                 "dimension_name": f"{department_first.get('department_name') or '未匹配'}小计",
                 "row_type": "department_subtotal",
-                "metrics": _combined_metrics(department_rows),
+                "metrics": _combined_metrics(
+                    department_rows,
+                    ticket_count_current=(
+                        department_count[0] if department_count else None
+                    ),
+                    ticket_count_prior=(
+                        department_count[1] if department_count else None
+                    ),
+                ),
             }
         )
     return result
@@ -559,9 +793,24 @@ def normalize_rows(
         "unmatched_area_category_sales_current": 0.0,
         "unmatched_floor_sales_current": 0.0,
     }
+    area_ticket_counts: dict[tuple[Any, ...], tuple[int, int]] = {}
     for source_row in rows:
         row = _row_dict(source_row)
         dimension_type = str(row["dimension_type"])
+        if dimension_type == "hierarchy_area_totals":
+            area_ticket_counts[
+                (
+                    row.get("store_code"),
+                    row.get("department_code"),
+                    row.get("area_code"),
+                )
+            ] = (
+                int(_number(row.get("ticket_count_current"))),
+                int(_number(row.get("ticket_count_prior"))),
+            )
+            continue
+        if dimension_type == "dimension_totals":
+            continue
         if dimension_type == "quality":
             code = row.get("dimension_code")
             if code == "unmatched_area_category":
@@ -591,22 +840,31 @@ def normalize_rows(
                 row.get("profit_current"),
                 row.get("sales_prior"),
                 row.get("profit_prior"),
+                row.get("ticket_count_current"),
+                row.get("ticket_count_prior"),
             ),
         }
-        if dimension_type in ("department_categories", "groups"):
+        if dimension_type in ("department_categories", "groups", "special_sales"):
             normalized.update(
                 {
                     "department_code": row.get("department_code"),
                     "department_name": row.get("department_name"),
                 }
             )
-        if dimension_type == "department_categories":
+        if dimension_type in ("department_categories", "groups"):
             normalized.update(
                 {
                     "area_code": row.get("area_code"),
                     "area_name": row.get("area_name"),
                     "category_code": row.get("category_code"),
                     "category_name": row.get("category_name"),
+                }
+            )
+        if dimension_type == "special_sales":
+            normalized.update(
+                {
+                    "brand_code": row.get("brand_code"),
+                    "brand_name": row.get("brand_name"),
                 }
             )
         dimensions[dimension_type].append(normalized)
@@ -621,8 +879,30 @@ def normalize_rows(
             ),
         )
     )
+    department_ticket_counts = {
+        (row.get("store_code"), row.get("dimension_code")): (
+            int(_number(row["metrics"].get("ticket_count_current"))),
+            int(_number(row["metrics"].get("ticket_count_prior"))),
+        )
+        for row in dimensions["departments"]
+    }
     dimensions["department_categories"] = _build_department_category_hierarchy(
-        dimensions["department_categories"]
+        dimensions["department_categories"],
+        area_ticket_counts=area_ticket_counts,
+        department_ticket_counts=department_ticket_counts,
+    )
+    dimensions["special_sales"].sort(
+        key=lambda row: (
+            str(row.get("store_code") or ""),
+            department_display_sort_key(
+                {
+                    "department_code": row.get("department_code"),
+                    "department_name": row.get("department_name"),
+                }
+            ),
+            str(row.get("dimension_code") or ""),
+            str(row.get("brand_code") or ""),
+        )
     )
     return dimensions, quality
 
@@ -676,7 +956,15 @@ def load_od0002_report(
         text(f"SET LOCAL statement_timeout = '{OD0002_QUERY_TIMEOUT_SECONDS}s'"),
         {},
     )
-    rows = db.execute(text(sql), params).mappings().all()
+    rows = list(db.execute(text(sql), params).mappings().all())
+    dimension_ticket_totals = {
+        str(row.get("dimension_code")): (
+            int(_number(row.get("ticket_count_current"))),
+            int(_number(row.get("ticket_count_prior"))),
+        )
+        for row in rows
+        if str(row.get("dimension_type")) == "dimension_totals"
+    }
     dimensions, quality = normalize_rows(rows)
     totals: dict[str, dict[str, float | None]] = {}
     for dimension_type, dimension_rows in dimensions.items():
@@ -689,7 +977,24 @@ def load_od0002_report(
         profit_current = sum(row["metrics"]["profit_current"] for row in total_rows)
         sales_prior = sum(row["metrics"]["sales_prior"] for row in total_rows)
         profit_prior = sum(row["metrics"]["profit_prior"] for row in total_rows)
-        total = metric_triplet(sales_current, profit_current, sales_prior, profit_prior)
+        fallback_ticket_current = sum(
+            _number(row["metrics"].get("ticket_count_current")) for row in total_rows
+        )
+        fallback_ticket_prior = sum(
+            _number(row["metrics"].get("ticket_count_prior")) for row in total_rows
+        )
+        ticket_total = dimension_ticket_totals.get(
+            dimension_type,
+            (int(fallback_ticket_current), int(fallback_ticket_prior)),
+        )
+        total = metric_triplet(
+            sales_current,
+            profit_current,
+            sales_prior,
+            profit_prior,
+            ticket_total[0],
+            ticket_total[1],
+        )
         totals[dimension_type] = total
         for row in dimension_rows:
             row["total"] = total

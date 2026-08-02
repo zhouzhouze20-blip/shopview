@@ -49,7 +49,11 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     id: "contract-management",
     name: "合同管理",
     children: [
-      { id: "contracts", name: "合同台账", moduleCodes: ["contract"] },
+      {
+        id: "contracts",
+        name: "合同台账",
+        permissionCodes: ["contract.view", "contract.unit_binding.edit"],
+      },
       { id: "contract-unit-bindings", name: "合同柜位绑定", permissionCodes: ["contract.view", "contract.edit"] },
     ],
   },
@@ -58,6 +62,11 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     name: "销售管理",
     children: [
       { id: "sales-dashboard", name: "销售看板", permissionCodes: ["sales.view"] },
+      {
+        id: "category-performance",
+        name: "品类主管绩效",
+        permissionCodes: ["sales.category_performance.view", "sales.category_performance.manage"],
+      },
       {
         id: "activity-analysis-group",
         name: "活动分析",
@@ -82,11 +91,50 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
         id: "sales-reports",
         name: "报表",
         children: [
-          { id: "commodity-sales-detail", name: "商品销售明细", permissionCodes: ["sales.view"] },
+          {
+            id: "commodity-sales-detail",
+            name: "商品销售明细",
+            permissionCodes: ["sales.commodity_detail.view"],
+          },
+          {
+            id: "settled-gross-profit-ranking",
+            name: "结算后销售毛利排行表",
+            permissionCodes: ["sales.settled_gross_profit.view"],
+          },
+          {
+            id: "daily-sales-followup",
+            name: "OD0001 销售逐日跟进表",
+            permissionCodes: ["sales.od0001.view"],
+          },
           {
             id: "od0002-sales-gross-profit",
             name: "OD0002 门店销售毛利汇总表",
             permissionCodes: ["sales.od0002.view"],
+          },
+          {
+            id: "od0003-center-sales-followup",
+            name: "OD0003 中心销售跟进表",
+            permissionCodes: ["sales.od0003.view"],
+          },
+          {
+            id: "od0004-monthly-followup",
+            name: "OD0004 销售逐月跟进表",
+            permissionCodes: ["sales.od0004.view"],
+          },
+          {
+            id: "od0005-micro-mall-brand-sales",
+            name: "OD0005 微商城品牌销售统计",
+            permissionCodes: ["sales.od0005.view"],
+          },
+          {
+            id: "hy0001-key-brand-member",
+            name: "HY0001 重点品牌会员消费情况",
+            permissionCodes: ["sales.hy0001.view"],
+          },
+          {
+            id: "non-rental-monthly-revenue",
+            name: "非租赁品牌月度收益表",
+            permissionCodes: ["sales.non_rental_monthly_revenue.view"],
           },
           {
             id: "hdyy01-group-operation-analysis",
@@ -115,11 +163,55 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     ],
   },
   {
+    id: "mobile-workbench",
+    name: "手机端",
+    children: [
+      {
+        id: "mobile-sales-dashboard",
+        name: "销售看板",
+        permissionCodes: ["mobile.sales.view"],
+      },
+      {
+        id: "mobile-contracts",
+        name: "合同台账",
+        permissionCodes: ["mobile.contracts.view"],
+      },
+      {
+        id: "mobile-inventory",
+        name: "实时库存查询",
+        permissionCodes: ["mobile.inventory.view"],
+      },
+      {
+        id: "mobile-revenue-dashboard",
+        name: "收益看板",
+        permissionCodes: ["mobile.revenue_dashboard.view"],
+      },
+    ],
+  },
+  {
     id: "financial-management",
     name: "财务管理",
     children: [
       { id: "merchant-planning", name: "招商规划", moduleCodes: ["merchant_planning"] },
-      { id: "revenue-map", name: "收益地图", moduleCodes: ["revenue"] },
+      {
+        id: "revenue-management",
+        name: "收益管理",
+        children: [
+          {
+            id: "revenue-map",
+            name: "收益地图",
+            permissionCodes: [
+              "revenue.view",
+              "revenue.recalculate",
+              "revenue.extra.create",
+              "revenue.extra.edit",
+              "revenue.extra.confirm",
+              "revenue.extra.void",
+            ],
+          },
+          { id: "revenue-dashboard", name: "收益看板", permissionCodes: ["revenue.dashboard.view"] },
+        ],
+      },
       { id: "joint-renewal-revenue", name: "联营续签收益分析", permissionCodes: ["revenue.view"] },
       { id: "joint-settlement", name: "联营结算单管理", moduleCodes: ["settlement"] },
       {

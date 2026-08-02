@@ -11,6 +11,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BackofficeRevenueUnitCard } from "@/components/backoffice-revenue-unit-card";
+import { MultiBusinessUnitCard } from "@/components/multi-business-unit-card";
+import { MobileSpecialSaleMarker } from "@/components/mobile-special-sale-marker";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,11 +23,25 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBaseMapsList, useFloorDictList } from "@/hooks/useBaseMaps";
 import { BusinessUnitStatus, useBusinessUnits } from "@/hooks/useBusinessUnits";
-import { useContractDepartments, useContractDetail, useContractsList, useUnitContracts, type ContractListItem } from "@/hooks/useContracts";
+import {
+  getContractDisplayEndDate,
+  useContractDepartments,
+  useContractDetail,
+  useContractsList,
+  useUnitContracts,
+  type ContractListItem,
+} from "@/hooks/useContracts";
+import { useContractUnitBindings, useReplaceContractUnitBindings } from "@/hooks/useContractUnitBindings";
 import { useGeoElements } from "@/hooks/useGeoElements";
+import { useToast } from "@/hooks/use-toast";
 import { useAlignTransform, useUnitMapVersions } from "@/hooks/useUnitMapVersions";
+import { useAuth } from "@/contexts/AuthContext";
 import { useStore } from "@/contexts/StoreContext";
 import { resolveApiAssetUrl } from "@/lib/api";
+import { BACKOFFICE_REVENUE_UNIT_CODE, isBackofficeRevenueUnit } from "@/lib/backoffice-revenue-unit";
+import { isAdminUser } from "@/lib/module-permissions";
+import { isMobileSpecialSaleUnit } from "@/lib/mobile-special-sale";
+import { MULTI_BUSINESS_UNIT_CODE, isMultiBusinessUnit } from "@/lib/multi-business-unit";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
 import { formatOperationMethod } from "@/lib/operation-method";
 import { deriveSvgViewBox, extractSvgMetadataFromText } from "@/lib/svg-metadata";
@@ -37,9 +55,12 @@ import {
   MapPin,
   Maximize2,
   Minus,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
+  Trash2,
 } from "lucide-react";
 
 function normalizeUnitCode(value?: string | null) {
@@ -312,6 +333,8 @@ export default function ContractsPage({
   openContractNoOnMount,
   onOpenContractNoConsumed,
 }: ContractsPageProps = {}) {
+  const { toast } = useToast();
+  const { menuUser } = useAuth();
   const { selectedStoreId, stores, isLoading: storesLoading } = useStore();
   const floorsQuery = useFloorDictList();
   const floorOptions = useMemo(() => floorsQuery.data ?? [], [floorsQuery.data]);
@@ -339,6 +362,10 @@ export default function ContractsPage({
   const [mapLandscapeOpen, setMapLandscapeOpen] = useState(false);
   const [mapZoom, setMapZoom] = useState(1);
   const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
+  const [bindingEditorContract, setBindingEditorContract] = useState<ContractListItem | null>(null);
+  const [bindingUnitKeyword, setBindingUnitKeyword] = useState("");
+  const [selectedBindingUnits, setSelectedBindingUnits] = useState<Map<number, string>>(new Map());
+  const [bindingEditorSeeded, setBindingEditorSeeded] = useState(false);
   const mapPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const mapGestureRef = useRef<{
     startDistance: number;
@@ -357,6 +384,22 @@ export default function ContractsPage({
   });
 
   const unitsQuery = useBusinessUnits({ floorId });
+  const selectedStoreIdValue =
+    storeFilter && Number.isFinite(Number(storeFilter)) ? Number(storeFilter) : null;
+  const selectedContractStoreCode = useMemo(() => {
+    const selectedStore = stores.find((store) => String(store.storeId) === storeFilter);
+    return selectedStore?.storeCode?.trim() || storeFilter.trim();
+  }, [storeFilter, stores]);
+  const storeBackofficeUnitsQuery = useBusinessUnits({
+    storeId: selectedStoreIdValue,
+    keyword: BACKOFFICE_REVENUE_UNIT_CODE,
+    enabled: selectedStoreIdValue != null,
+  });
+  const storeMultiBusinessUnitsQuery = useBusinessUnits({
+    storeId: selectedStoreIdValue,
+    keyword: MULTI_BUSINESS_UNIT_CODE,
+    enabled: selectedStoreIdValue != null,
+  });
   const baseMapsQuery = useBaseMapsList(floorId);
   const versionsQuery = useUnitMapVersions(floorId, baseMapId);
   const geoQuery = useGeoElements(versionId);
@@ -365,17 +408,96 @@ export default function ContractsPage({
   const contractsListQuery = useContractsList({
     keyword: listKeyword,
     status: listStatus,
+    storeCode: selectedContractStoreCode,
     departmentCode: listDepartmentCode,
     skip: listPage * listPageSize,
     limit: listPageSize,
+    enabled: Boolean(selectedContractStoreCode),
   });
   const contractDepartmentsQuery = useContractDepartments();
   const contractDetailQuery = useContractDetail(selectedContractNo);
+  const bindingRowsQuery = useContractUnitBindings({
+    contractId: bindingEditorContract?.cmcontno,
+    status: "ACTIVE",
+    limit: 500,
+    enabled: Boolean(bindingEditorContract?.cmcontno),
+  });
+  const bindingEditorContractStoreId = Number(bindingEditorContract?.cmjsmkt);
+  const bindingUnitOptionsQuery = useBusinessUnits({
+    storeId:
+      bindingEditorContract?.cmjsmkt?.trim() && Number.isFinite(bindingEditorContractStoreId)
+        ? bindingEditorContractStoreId
+        : null,
+    keyword: bindingUnitKeyword.trim() || undefined,
+    enabled: Boolean(
+      bindingEditorContract?.cmjsmkt?.trim() && Number.isFinite(bindingEditorContractStoreId),
+    ),
+  });
+  const replaceBindingsMutation = useReplaceContractUnitBindings();
+  const canEditContractUnitBinding =
+    isAdminUser(menuUser) || Boolean(menuUser?.permission_codes?.includes("contract.unit_binding.edit"));
 
   const unitRows = useMemo(() => unitsQuery.data ?? [], [unitsQuery.data]);
+  const mobileSpecialSaleUnit = useMemo(
+    () => unitRows.find((unit) => isMobileSpecialSaleUnit(unit.unit_code)) ?? null,
+    [unitRows],
+  );
+  const storeLogicalFloorIds = useMemo(
+    () =>
+      new Set(
+        floorOptions
+          .filter(
+            (floor) =>
+              floor.floor_code?.trim() === "BO" &&
+              floor.name?.trim() === "后台部门",
+          )
+          .map((floor) => floor.id),
+      ),
+    [floorOptions],
+  );
+  const backofficeRevenueUnit = useMemo(
+    () =>
+      unitRows.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isBackofficeRevenueUnit(unit.unit_code),
+      ) ??
+      storeBackofficeUnitsQuery.data?.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isBackofficeRevenueUnit(unit.unit_code),
+      ) ??
+      null,
+    [storeBackofficeUnitsQuery.data, storeLogicalFloorIds, unitRows],
+  );
+  const multiBusinessUnit = useMemo(
+    () =>
+      unitRows.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isMultiBusinessUnit(unit.unit_code),
+      ) ??
+      storeMultiBusinessUnitsQuery.data?.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isMultiBusinessUnit(unit.unit_code),
+      ) ??
+      null,
+    [storeLogicalFloorIds, storeMultiBusinessUnitsQuery.data, unitRows],
+  );
   const baseMapOptions = useMemo(() => baseMapsQuery.data ?? [], [baseMapsQuery.data]);
   const versionOptions = useMemo(() => versionsQuery.data ?? [], [versionsQuery.data]);
   const geoRows = useMemo(() => geoQuery.data ?? [], [geoQuery.data]);
+  const bindingFloorLabels = useMemo(
+    () =>
+      new Map(
+        floorOptions.map((floor) => {
+          const floorCode = [floor.building_code, floor.floor_code].filter(Boolean).join("-");
+          return [floor.id, [floorCode, floor.name].filter(Boolean).join(" ") || `楼层 ID ${floor.id}`];
+        }),
+      ),
+    [floorOptions],
+  );
   const storeOptions = useMemo(() => {
     const options = stores.map((store) => ({
       value: String(store.storeId),
@@ -545,7 +667,26 @@ export default function ContractsPage({
     return geoRows.find((g) => (normalizedUnitCodeMap.get(g.unit_id) || "") === normalizedCounterKeyword);
   }, [geoRows, normalizedCounterKeyword, normalizedUnitCodeMap]);
 
-  const highlightedCount = highlightedGeoIds.size;
+  const mobileSpecialSaleHighlighted = Boolean(
+    normalizedCounterKeyword &&
+      mobileSpecialSaleUnit &&
+      normalizeUnitCode(mobileSpecialSaleUnit.unit_code).includes(normalizedCounterKeyword),
+  );
+  const backofficeRevenueHighlighted = Boolean(
+    normalizedCounterKeyword &&
+      backofficeRevenueUnit &&
+      normalizeUnitCode(backofficeRevenueUnit.unit_code).includes(normalizedCounterKeyword),
+  );
+  const multiBusinessHighlighted = Boolean(
+    normalizedCounterKeyword &&
+      multiBusinessUnit &&
+      normalizeUnitCode(multiBusinessUnit.unit_code).includes(normalizedCounterKeyword),
+  );
+  const highlightedCount =
+    highlightedGeoIds.size +
+    (mobileSpecialSaleHighlighted ? 1 : 0) +
+    (backofficeRevenueHighlighted ? 1 : 0) +
+    (multiBusinessHighlighted ? 1 : 0);
 
   useEffect(() => {
     if (storeFilter || !storeOptions.length) return;
@@ -593,7 +734,18 @@ export default function ContractsPage({
 
   useEffect(() => {
     setListPage(0);
-  }, [listKeyword, listStatus, listDepartmentCode, listPageSize]);
+  }, [storeFilter, listKeyword, listStatus, listDepartmentCode, listPageSize]);
+
+  useEffect(() => {
+    if (!bindingEditorContract || bindingEditorSeeded || bindingRowsQuery.isLoading || bindingRowsQuery.error) return;
+    const selected = new Map<number, string>();
+    (bindingRowsQuery.data?.items ?? []).forEach((item) => {
+      if (!item.shop_unit_id || item.status !== "ACTIVE") return;
+      selected.set(item.shop_unit_id, item.unit_code || `ID ${item.shop_unit_id}`);
+    });
+    setSelectedBindingUnits(selected);
+    setBindingEditorSeeded(true);
+  }, [bindingEditorContract, bindingEditorSeeded, bindingRowsQuery.data?.items, bindingRowsQuery.error, bindingRowsQuery.isLoading]);
 
   useEffect(() => {
     if (!baseMapOptions.length) {
@@ -617,6 +769,15 @@ export default function ContractsPage({
 
   const selectGeo = (geoId: number, unitId: number) => {
     setSelectedGeoId(geoId);
+    setSelectedUnitId(unitId);
+    setDetailOpen(true);
+    if (detailOpen && selectedUnitId === unitId) {
+      contractsQuery.refetch();
+    }
+  };
+
+  const selectLogicalUnit = (unitId: number) => {
+    setSelectedGeoId(undefined);
     setSelectedUnitId(unitId);
     setDetailOpen(true);
     if (detailOpen && selectedUnitId === unitId) {
@@ -682,6 +843,72 @@ export default function ContractsPage({
       setDetailOpen(false);
     }
     setContractDetailOpen(true);
+  };
+
+  const openBindingEditor = (item: ContractListItem) => {
+    setBindingEditorContract(item);
+    setBindingUnitKeyword("");
+    setSelectedBindingUnits(new Map());
+    setBindingEditorSeeded(false);
+  };
+
+  const toggleBindingUnit = (unitId: number, unitCode: string, checked: boolean) => {
+    setSelectedBindingUnits((current) => {
+      if (checked) return new Map([[unitId, unitCode]]);
+      if (!current.has(unitId)) return current;
+      return new Map();
+    });
+  };
+
+  const saveBindingEditor = async () => {
+    if (!bindingEditorContract || !bindingEditorSeeded) return;
+    if (!selectedBindingUnits.size && !window.confirm("确定清空该合同的全部柜位号吗？原绑定会停用并保留审计记录。")) return;
+    try {
+      const result = await replaceBindingsMutation.mutateAsync({
+        contractId: bindingEditorContract.cmcontno,
+        shopUnitIds: Array.from(selectedBindingUnits.keys()),
+      });
+      toast({
+        title: result.message,
+        description: result.unit_codes.length ? `当前柜位：${result.unit_codes.join(" / ")}` : "当前合同未绑定柜位",
+      });
+      setBindingEditorContract(null);
+    } catch (error) {
+      toast({
+        title: "柜位号更新失败",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const deleteContractUnitBinding = async (item: ContractListItem) => {
+    const unitCodes = String(item.unit_codes || "").trim();
+    if (!unitCodes) return;
+    if (
+      !window.confirm(
+        `确定删除合同 ${item.cmcontno} 的柜位 ${unitCodes} 吗？\n\n只会解除当前柜位绑定，合同和历史记录都会保留。`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await replaceBindingsMutation.mutateAsync({
+        contractId: item.cmcontno,
+        shopUnitIds: [],
+      });
+      toast({
+        title: "柜位已删除",
+        description: `合同 ${item.cmcontno} 已解除柜位 ${unitCodes} 的当前绑定`,
+      });
+    } catch (error) {
+      toast({
+        title: "柜位删除失败",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    }
   };
 
   useEffect(() => {
@@ -795,6 +1022,30 @@ export default function ContractsPage({
 
   const renderMapCanvas = (isFullscreen = false, mode: "default" | "landscape" = "default") => {
     if (!selectedBaseMapUrl) {
+      if (backofficeRevenueUnit || multiBusinessUnit) {
+        return (
+          <div className="flex min-h-[360px] items-center justify-center rounded-lg border bg-slate-50 p-6">
+            <div className="flex flex-col gap-3">
+              {backofficeRevenueUnit ? (
+                <BackofficeRevenueUnitCard
+                  unitCode={backofficeRevenueUnit.unit_code}
+                  selected={selectedUnitId === backofficeRevenueUnit.id}
+                  highlighted={backofficeRevenueHighlighted}
+                  onSelect={() => selectLogicalUnit(backofficeRevenueUnit.id)}
+                />
+              ) : null}
+              {multiBusinessUnit ? (
+                <MultiBusinessUnitCard
+                  unitCode={multiBusinessUnit.unit_code}
+                  selected={selectedUnitId === multiBusinessUnit.id}
+                  highlighted={multiBusinessHighlighted}
+                  onSelect={() => selectLogicalUnit(multiBusinessUnit.id)}
+                />
+              ) : null}
+            </div>
+          </div>
+        );
+      }
       return <div className="text-sm text-muted-foreground">当前楼层没有可用底图</div>;
     }
     if (!vb) {
@@ -806,7 +1057,7 @@ export default function ContractsPage({
       <div className={cn("overflow-hidden bg-white", isLandscape ? "flex h-full flex-col rounded-none border-0" : "rounded-lg border")}>
         <div className="flex flex-col gap-2 border-b px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>柜位数量：{geoRows.length}</span>
+            <span>柜位数量：{geoRows.length + (mobileSpecialSaleUnit ? 1 : 0)}</span>
             <span>{mapStatusText}</span>
             <span>缩放：{Math.round(mapZoom * 100)}%</span>
           </div>
@@ -924,6 +1175,40 @@ export default function ContractsPage({
               })}
             </g>
           </svg>
+          {mobileSpecialSaleUnit || backofficeRevenueUnit || multiBusinessUnit ? (
+            <div
+              data-testid="logical-revenue-unit-dock"
+              className="absolute left-4 top-4 z-20 flex w-64 origin-top-left scale-50 flex-col gap-2"
+            >
+              {backofficeRevenueUnit ? (
+                <BackofficeRevenueUnitCard
+                  unitCode={backofficeRevenueUnit.unit_code}
+                  selected={selectedUnitId === backofficeRevenueUnit.id}
+                  highlighted={backofficeRevenueHighlighted}
+                  className="w-full bg-violet-50/95 p-3 backdrop-blur-sm"
+                  onSelect={() => selectLogicalUnit(backofficeRevenueUnit.id)}
+                />
+              ) : null}
+              {multiBusinessUnit ? (
+                <MultiBusinessUnitCard
+                  unitCode={multiBusinessUnit.unit_code}
+                  selected={selectedUnitId === multiBusinessUnit.id}
+                  highlighted={multiBusinessHighlighted}
+                  className="w-full bg-sky-50/95 p-3 backdrop-blur-sm"
+                  onSelect={() => selectLogicalUnit(multiBusinessUnit.id)}
+                />
+              ) : null}
+              {mobileSpecialSaleUnit ? (
+                <MobileSpecialSaleMarker
+                  unitCode={mobileSpecialSaleUnit.unit_code}
+                  selected={selectedUnitId === mobileSpecialSaleUnit.id}
+                  highlighted={mobileSpecialSaleHighlighted}
+                  className="static w-full"
+                  onSelect={() => selectLogicalUnit(mobileSpecialSaleUnit.id)}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -1120,7 +1405,7 @@ export default function ContractsPage({
                       </TableRow>
                     ) : contractListRows.length ? (
                       contractListRows.map((item) => (
-                        <TableRow key={item.cmcontno} className={cn(isPastDate(item.cmlapdate) && "text-red-600")}>
+                        <TableRow key={item.cmcontno} className={cn(isPastDate(getContractDisplayEndDate(item)) && "text-red-600")}>
                           <TableCell>{renderGroupInfo(item.department_codes, item.department_names)}</TableCell>
                           <TableCell className="font-medium">
                             <Button
@@ -1132,10 +1417,41 @@ export default function ContractsPage({
                             </Button>
                           </TableCell>
                           <TableCell className="whitespace-nowrap">{fmtDate(item.cmeffdate)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{fmtDate(item.cmlapdate)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{fmtDate(getContractDisplayEndDate(item))}</TableCell>
                           <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
                           <TableCell>{formatOperationMethod(item.cmwmid)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{fmtValue(item.unit_codes)}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <span>{fmtValue(item.unit_codes)}</span>
+                              {canEditContractUnitBinding ? (
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                                    onClick={() => openBindingEditor(item)}
+                                    title={`编辑合同 ${item.cmcontno} 的柜位号`}
+                                  >
+                                    <Pencil className="mr-1 h-3.5 w-3.5" />
+                                    编辑
+                                  </Button>
+                                  {String(item.unit_codes || "").trim() ? (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 px-2 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                      onClick={() => deleteContractUnitBinding(item)}
+                                      disabled={replaceBindingsMutation.isPending}
+                                      title={`删除合同 ${item.cmcontno} 的柜位 ${item.unit_codes}`}
+                                    >
+                                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                      删除
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          </TableCell>
                           <TableCell>{renderGroupInfo(item.group_codes, item.group_names)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(item.cmmoney)}</TableCell>
                           <TableCell>{fmtValue(item.cmpaycode)}</TableCell>
@@ -1236,6 +1552,144 @@ export default function ContractsPage({
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={Boolean(bindingEditorContract)}
+        onOpenChange={(open) => {
+          if (!open && !replaceBindingsMutation.isPending) setBindingEditorContract(null);
+        }}
+      >
+        <DialogContent className="max-h-[86vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>编辑合同柜位号</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm sm:grid-cols-3">
+              <div>
+                <div className="text-xs text-muted-foreground">合同编号</div>
+                <div className="font-semibold">{bindingEditorContract?.cmcontno || "-"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">供应商</div>
+                <div className="font-semibold">
+                  {bindingEditorContract?.supplier_name || bindingEditorContract?.cmsupid || "-"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">合同门店</div>
+                <div className="font-semibold">{bindingEditorContract?.cmjsmkt || "-"}</div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>当前柜位（单选）</Label>
+              {bindingRowsQuery.error ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                  {bindingRowsQuery.error instanceof Error ? bindingRowsQuery.error.message : "现有柜位读取失败"}
+                </div>
+              ) : bindingRowsQuery.isLoading || !bindingEditorSeeded ? (
+                <div className="rounded-md border px-3 py-6 text-center text-sm text-muted-foreground">正在读取现有柜位...</div>
+              ) : selectedBindingUnits.size ? (
+                <div className="space-y-2">
+                  {selectedBindingUnits.size > 1 ? (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      发现历史遗留的多个当前柜位，请在下方重新选择一个柜位后保存。
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2 rounded-md border p-3">
+                    {Array.from(selectedBindingUnits.entries()).map(([unitId, unitCode]) => (
+                      <Badge key={unitId} variant="secondary" className="gap-1 py-1.5 pl-2.5 pr-1.5">
+                        {unitCode}
+                        <button
+                          type="button"
+                          className="ml-1 rounded px-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900"
+                          onClick={() => toggleBindingUnit(unitId, unitCode, false)}
+                          aria-label={`移除柜位 ${unitCode}`}
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  暂未选择柜位；保存空值会停用该合同现有绑定。
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contract-binding-unit-search">
+                搜索并选择柜位
+                {bindingEditorContract?.cmjsmkt ? `（仅门店 ${bindingEditorContract.cmjsmkt}）` : ""}
+              </Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="contract-binding-unit-search"
+                  className="pl-9"
+                  value={bindingUnitKeyword}
+                  onChange={(event) => setBindingUnitKeyword(event.target.value)}
+                  placeholder="输入柜位号，如 C505、A002"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                {bindingUnitOptionsQuery.isLoading ? (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">正在查询柜位...</div>
+                ) : bindingUnitOptionsQuery.error ? (
+                  <div className="px-3 py-8 text-center text-sm text-red-600">柜位查询失败</div>
+                ) : (bindingUnitOptionsQuery.data ?? []).length ? (
+                  (bindingUnitOptionsQuery.data ?? []).map((unit) => {
+                    const checked = selectedBindingUnits.has(unit.id);
+                    return (
+                      <label
+                        key={unit.id}
+                        className="flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-slate-50"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(value) => toggleBindingUnit(unit.id, unit.unit_code, value === true)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium">{unit.unit_code}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            经营单元 ID {unit.id} · 楼层 {bindingFloorLabels.get(unit.floor_id) || "未知楼层"} · {unit.status}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">没有匹配的柜位</div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                一个合同只能选择一个当前柜位；保存后合同台账、图纸合同和原“合同柜位绑定”页面会读取同一关系。
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setBindingEditorContract(null)} disabled={replaceBindingsMutation.isPending}>
+                取消
+              </Button>
+              <Button
+                onClick={saveBindingEditor}
+                disabled={
+                  !bindingEditorSeeded ||
+                  Boolean(bindingRowsQuery.error) ||
+                  selectedBindingUnits.size > 1 ||
+                  replaceBindingsMutation.isPending
+                }
+              >
+                {replaceBindingsMutation.isPending ? "保存中..." : "保存柜位号"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={mapFullscreenOpen} onOpenChange={setMapFullscreenOpen}>
         <DialogContent className="h-[96vh] max-h-[96vh] w-[96vw] max-w-[96vw] overflow-hidden p-3 sm:p-5">
@@ -1347,7 +1801,7 @@ export default function ContractsPage({
                       </div>
                       <div>
                         <div className="text-muted-foreground">结束日期</div>
-                        <div className="font-semibold">{fmtDate(activeContract.cmlapdate)}</div>
+                        <div className="font-semibold">{fmtDate(getContractDisplayEndDate(activeContract))}</div>
                       </div>
                       <div>
                         <div className="text-muted-foreground">供应商</div>
@@ -1421,7 +1875,7 @@ export default function ContractsPage({
                       contractRows.map((item) => {
                         const contractNo = item.cmcontno || item.cmfcontno;
                         return (
-                          <TableRow key={contractNo} className={cn(isPastDate(item.cmlapdate) && "text-red-600")}>
+                          <TableRow key={contractNo} className={cn(isPastDate(getContractDisplayEndDate(item)) && "text-red-600")}>
                             <TableCell>{renderGroupInfo(item.department_codes, item.department_names)}</TableCell>
                             <TableCell className="font-medium">
                               <Button
@@ -1433,7 +1887,7 @@ export default function ContractsPage({
                               </Button>
                             </TableCell>
                             <TableCell className="whitespace-nowrap">{fmtDate(item.cmeffdate)}</TableCell>
-                            <TableCell className="whitespace-nowrap">{fmtDate(item.cmlapdate)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{fmtDate(getContractDisplayEndDate(item))}</TableCell>
                             <TableCell>{renderSupplierInfo(item.cmsupid, item.supplier_name)}</TableCell>
                             <TableCell>{formatOperationMethod(item.cmwmid)}</TableCell>
                             <TableCell className="whitespace-nowrap">{fmtValue(item.unit_codes || detail.unit.unit_code)}</TableCell>
@@ -1534,7 +1988,7 @@ export default function ContractsPage({
                 <div className="rounded border p-3">
                   <div className="text-xs text-muted-foreground">合同有效期</div>
                   <div className="text-sm font-semibold">
-                    {fmtDate(contractMain?.cmeffdate)} 至 {fmtDate(contractMain?.cmlapdate)}
+                    {fmtDate(contractMain?.cmeffdate)} 至 {fmtDate(getContractDisplayEndDate(contractMain))}
                   </div>
                 </div>
               </div>

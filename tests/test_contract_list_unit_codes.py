@@ -90,6 +90,23 @@ class ContractListUnitCodesTest(unittest.TestCase):
         self.assertIn("unit_codes", sql)
         self.assertEqual(items[0]["unit_codes"], "A118,B6-4A")
 
+    def test_contract_list_selects_actual_withdrawal_date_for_display(self):
+        db = _FakeDb()
+        scope = SimpleNamespace(all_access=True, allow={}, deny={})
+
+        with patch.object(contracts_router, "_table_exists", return_value=True):
+            contracts_router._load_contract_list_items(db, scope, limit=100)
+
+        sql = "\n".join(db.sql).lower()
+        self.assertIn("cm.sjcgdate", sql)
+
+    def test_contract_type_join_keeps_case_distinct_codes_separate(self):
+        join_sql = contracts_router._contract_type_join_sql(True)
+
+        self.assertIn("trim(COALESCE(cm.cmtype, ''))", join_sql)
+        self.assertIn("trim(COALESCE(cmt.cmtypecode, ''))", join_sql)
+        self.assertNotIn("upper(", join_sql.lower())
+
     def test_contract_list_filters_by_department_code(self):
         db = _FakeDb()
         scope = SimpleNamespace(all_access=True, allow={}, deny={})

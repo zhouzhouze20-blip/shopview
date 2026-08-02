@@ -6,7 +6,9 @@ from unittest.mock import patch
 import python_app.routers.sales as sales_router
 from python_app.routers.sales import (
     _date_filter_sql,
+    _department_detail_filter_sql,
     _group_level_sales_rows,
+    _sales_rental_exclusion_sql,
     _sales_department_exclusion_sql,
     _ticket_product_filter_sql,
     group_tickets,
@@ -37,6 +39,66 @@ class SalesTicketFilterTests(unittest.TestCase):
 
     def test_department_exclusion_is_disabled_for_excel_aligned_sales(self):
         self.assertEqual(_sales_department_exclusion_sql("cg"), "")
+
+    def test_optional_sales_exclusions_use_rental_code_and_exact_department_names(self):
+        rental_sql = _sales_rental_exclusion_sql("s", enabled=True)
+        department_sql = _sales_department_exclusion_sql("cg", enabled=True)
+
+        self.assertIn("COALESCE(s.sglwmid, '')", rental_sql)
+        self.assertIn("<> '5'", rental_sql)
+        self.assertIn("cg.department_name", department_sql)
+        self.assertIn("'中心营运部'", department_sql)
+        self.assertIn("'大楼信息'", department_sql)
+        self.assertIn("'书店物业部'", department_sql)
+        self.assertNotIn("半山租赁部", department_sql)
+
+    def test_group_summary_applies_optional_exclusions_at_the_correct_query_layers(self):
+        captured = {}
+
+        def fake_fetch(_db, sql, params):
+            captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
+            return []
+
+        with (
+            patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
+            patch.object(sales_router, "_table_exists", lambda _db, table: table in {"manaframe", "stores"}),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch),
+        ):
+            _group_level_sales_rows(
+                object(),
+                start_date="2026-07-01",
+                end_date="2026-07-10",
+                store_id=None,
+                department_code=None,
+                group_code=None,
+                keyword=None,
+                limit=200,
+                exclude_rental=True,
+                exclude_backoffice_departments=True,
+            )
+
+        sales_agg_end = captured["sql"].index("group by s.sglmarket, s.sglmfid")
+        self.assertIn("coalesce(s.sglwmid, '')", captured["sql"][:sales_agg_end])
+        self.assertIn("cg.department_name", captured["sql"][sales_agg_end:])
+        self.assertIn("'中心营运部'", captured["sql"])
+
+    def test_department_detail_filters_apply_both_optional_exclusions(self):
+        filters = _department_detail_filter_sql(
+            {},
+            store_id=None,
+            department_code=None,
+            unassigned_department=False,
+            has_counter_groups=True,
+            has_stores=True,
+            exclude_rental=True,
+            exclude_backoffice_departments=True,
+        )
+
+        self.assertIn("COALESCE(s.sglwmid, '')", filters)
+        self.assertIn("<> '5'", filters)
+        self.assertIn("cg.department_name", filters)
+        self.assertIn("'大楼物业'", filters)
 
     def test_latest_sales_accounting_date_uses_salegoodslist_hsrq(self):
         captured = {}
@@ -224,7 +286,7 @@ class SalesTicketFilterTests(unittest.TestCase):
             patch.object(
                 sales_router,
                 "_table_exists",
-                lambda _db, table: table in {"order_point", "salehead", "salepay"},
+                lambda _db, table: table in {"manaframe", "order_point", "salehead", "salepay"},
             ),
             patch.object(
                 sales_router,
@@ -241,6 +303,8 @@ class SalesTicketFilterTests(unittest.TestCase):
                 goods_code=None,
                 barcode=None,
                 supplier_code=None,
+                exclude_rental=True,
+                exclude_backoffice_departments=True,
                 limit=100,
                 db=object(),
                 current_user=object(),
@@ -261,6 +325,8 @@ class SalesTicketFilterTests(unittest.TestCase):
         self.assertIn("then -abs(coalesce(lp.lq_amount, 0))", captured["sql"])
         self.assertNotIn("sum(sglgcert)", captured["sql"])
         self.assertIn("'香奈儿活动补发'", captured["sql"])
+        self.assertIn("coalesce(s.sglwmid, '')", captured["sql"])
+        self.assertIn("cg.department_name", captured["sql"])
 
     def test_ticket_detail_falls_back_to_goodsbase_name(self):
         def fake_table_exists(_db, table_name):

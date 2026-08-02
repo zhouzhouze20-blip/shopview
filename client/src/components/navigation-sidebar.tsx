@@ -109,7 +109,7 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
   }
 
   return (
-    <nav className={cn("w-64 bg-slate-900 text-white flex flex-col", className)} data-testid="navigation-sidebar">
+    <nav className={cn("w-72 bg-slate-900 text-white flex flex-col", className)} data-testid="navigation-sidebar">
       <div className="p-6 border-b border-slate-800">
         <div className="flex items-center justify-between">
           <div>
@@ -173,7 +173,7 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
                   <div key={subItem.id}>
                     <button
                       onClick={() => handleItemClick(subItem.id, !!subItem.subItems)}
-                      className={`w-full flex items-center justify-between px-12 py-2 text-left hover:bg-slate-700 transition-colors ${
+                      className={`w-full flex items-center justify-between px-8 py-2 text-left hover:bg-slate-700 transition-colors ${
                         activeModule === subItem.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
                       }`}
                       data-testid={`nav-subitem-${subItem.id}`}
@@ -198,17 +198,48 @@ export default function NavigationSidebar({ activeModule = "dashboard", onModule
                     {subItem.subItems && expandedItems.includes(subItem.id) && (
                       <div className="bg-slate-700/50">
                         {subItem.subItems.map((leaf) => (
-                          <button
-                            key={leaf.id}
-                            onClick={() => handleItemClick(leaf.id, false)}
-                            className={`w-full flex items-center px-16 py-2 text-left hover:bg-slate-700 transition-colors ${
-                              activeModule === leaf.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
-                            }`}
-                            data-testid={`nav-subitem-${subItem.id}-${leaf.id}`}
-                          >
-                            <leaf.icon className="w-4 h-4 mr-3" />
-                            <span className="text-sm">{leaf.name}</span>
-                          </button>
+                          <div key={leaf.id}>
+                            <button
+                              onClick={() => handleItemClick(leaf.id, !!leaf.subItems)}
+                              className={`w-full flex items-center justify-between px-10 py-2 text-left hover:bg-slate-700 transition-colors ${
+                                activeModule === leaf.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
+                              }`}
+                              data-testid={`nav-subitem-${subItem.id}-${leaf.id}`}
+                            >
+                              <div className="flex items-center">
+                                <leaf.icon className="w-4 h-4 mr-3" />
+                                <span className="whitespace-nowrap text-[13px]">{leaf.name}</span>
+                              </div>
+                              {leaf.subItems && (
+                                <svg
+                                  className={`w-3 h-3 transition-transform ${
+                                    expandedItems.includes(leaf.id) ? "rotate-90" : ""
+                                  }`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              )}
+                            </button>
+                            {leaf.subItems && expandedItems.includes(leaf.id) && (
+                              <div className="bg-slate-900/20">
+                                {leaf.subItems.map((report) => (
+                                  <button
+                                    key={report.id}
+                                    onClick={() => handleItemClick(report.id, false)}
+                                    className={`w-full flex items-center py-2 pl-[4.75rem] pr-3 text-left hover:bg-slate-700 transition-colors ${
+                                      activeModule === report.id ? "bg-slate-700 border-r-2 border-blue-400" : ""
+                                    }`}
+                                    data-testid={`nav-subitem-${leaf.id}-${report.id}`}
+                                  >
+                                    <span className="whitespace-nowrap text-[13px]">{report.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}

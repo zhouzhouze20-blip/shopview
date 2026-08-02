@@ -1,6 +1,6 @@
 import { useMemo, useState, type MouseEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Building2, ChevronRight, Download, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { BarChart3, Building2, Check, ChevronRight, Download, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import {
   getReceiptProductDisplay,
   getDepartmentDrilldownTab,
   getGroupDrilldownTab,
-  isCenterCosmeticsRetailPriceScope,
+  isCosmeticsRetailPriceScope,
   isSupermarketDepartment,
 } from "@/lib/sales-dashboard-drilldown";
 import {
@@ -514,6 +514,8 @@ export default function SalesDashboardPage() {
   const [departmentProductKeyword, setDepartmentProductKeyword] = useState("");
   const [departmentProductView, setDepartmentProductView] = useState<"goods" | "suppliers" | "groups">("goods");
   const [departmentProductSupplierCode, setDepartmentProductSupplierCode] = useState<string | null>(null);
+  const [excludeRental, setExcludeRental] = useState(false);
+  const [excludeBackofficeDepartments, setExcludeBackofficeDepartments] = useState(false);
   const [selectedStore, setSelectedStore] = useState<StoreSummary | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentSummary | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GroupSummary | null>(null);
@@ -524,7 +526,7 @@ export default function SalesDashboardPage() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   /** 小票列表用本期日期或上年同期日期（与「同期小票数」下钻一致） */
   const [ticketsViewMode, setTicketsViewMode] = useState<"current" | "prior">("current");
-  const showPricedSalesAmount = isCenterCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
+  const showPricedSalesAmount = isCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
 
   const commonParams = useMemo(
     () => ({
@@ -532,8 +534,17 @@ export default function SalesDashboardPage() {
       end_date: currentEndDate,
       prior_start_date: priorStartDate,
       prior_end_date: priorEndDate,
+      exclude_rental: excludeRental,
+      exclude_backoffice_departments: excludeBackofficeDepartments,
     }),
-    [currentStartDate, currentEndDate, priorStartDate, priorEndDate],
+    [
+      currentStartDate,
+      currentEndDate,
+      priorStartDate,
+      priorEndDate,
+      excludeRental,
+      excludeBackofficeDepartments,
+    ],
   );
   const ticketsQueryParams = useMemo(() => {
     if (ticketsViewMode === "prior") {
@@ -661,12 +672,16 @@ export default function SalesDashboardPage() {
       ticketsQueryParams,
       ticketsViewMode,
       selectedProductTicketParams,
+      excludeRental,
+      excludeBackofficeDepartments,
     ],
     queryFn: () =>
       getSalesDashboardData(
         `/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets${buildQuery({
           ...ticketsQueryParams,
           ...selectedProductTicketParams,
+          exclude_rental: excludeRental,
+          exclude_backoffice_departments: excludeBackofficeDepartments,
         })}`,
         apiGet,
       ),
@@ -1300,6 +1315,8 @@ export default function SalesDashboardPage() {
         department_code: groupsUnassigned ? undefined : selectedDepartment?.department_code,
         unassigned_department: groupsUnassigned,
         keyword,
+        exclude_rental: excludeRental,
+        exclude_backoffice_departments: excludeBackofficeDepartments,
         limit: 200,
         include_ai: true,
       });
@@ -1511,13 +1528,37 @@ export default function SalesDashboardPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="stores"><Building2 className="mr-2 h-4 w-4" />门店</TabsTrigger>
-          <TabsTrigger value="departments"><BarChart3 className="mr-2 h-4 w-4" />部门</TabsTrigger>
-          <TabsTrigger value="department-products" disabled={!selectedDepartment}><FileText className="mr-2 h-4 w-4" />商品</TabsTrigger>
-          <TabsTrigger value="groups"><Search className="mr-2 h-4 w-4" />柜组</TabsTrigger>
-          <TabsTrigger value="tickets" disabled={!selectedGroup}><FileText className="mr-2 h-4 w-4" />小票</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <TabsList>
+            <TabsTrigger value="stores"><Building2 className="mr-2 h-4 w-4" />门店</TabsTrigger>
+            <TabsTrigger value="departments"><BarChart3 className="mr-2 h-4 w-4" />部门</TabsTrigger>
+            <TabsTrigger value="department-products" disabled={!selectedDepartment}><FileText className="mr-2 h-4 w-4" />商品</TabsTrigger>
+            <TabsTrigger value="groups"><Search className="mr-2 h-4 w-4" />柜组</TabsTrigger>
+            <TabsTrigger value="tickets" disabled={!selectedGroup}><FileText className="mr-2 h-4 w-4" />小票</TabsTrigger>
+          </TabsList>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={excludeRental ? "default" : "outline"}
+              aria-pressed={excludeRental}
+              onClick={() => setExcludeRental((value) => !value)}
+            >
+              {excludeRental && <Check className="mr-2 h-4 w-4" />}
+              排除租赁销售
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={excludeBackofficeDepartments ? "default" : "outline"}
+              aria-pressed={excludeBackofficeDepartments}
+              onClick={() => setExcludeBackofficeDepartments((value) => !value)}
+            >
+              {excludeBackofficeDepartments && <Check className="mr-2 h-4 w-4" />}
+              排除后台部门销售
+            </Button>
+          </div>
+        </div>
 
         <TabsContent value="stores">
           <Card>

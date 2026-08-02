@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <title>ShopView 手机收益看板预览</title>
+  </head>
+  <body class="bg-slate-100">
+    <main class="min-h-[100dvh] bg-slate-100 pb-6 text-slate-900">
+      <header class="sticky top-0 z-20 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950 px-3 pb-3 pt-3 text-white shadow-md">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex min-w-0 items-center gap-2">
+            <button id="back-button" class="grid h-8 w-8 shrink-0 place-items-center rounded-full text-lg hover:bg-white/10" aria-label="返回">←</button>
+            <div class="min-w-0">
+              <div class="text-[9px] font-medium tracking-[0.14em] text-amber-200">SHOPVIEW</div>
+              <h1 class="truncate text-base font-semibold">收益看板</h1>
+            </div>
+          </div>
+          <button class="grid h-8 w-8 place-items-center rounded-full hover:bg-white/10" aria-label="刷新">↻</button>
+        </div>
+        <button id="date-toggle" class="mt-3 flex w-full items-center justify-between rounded-xl bg-white/10 px-3 py-2 text-left">
+          <div>
+            <div id="context-title" class="text-[10px] text-amber-100">本财务月 · 全部可见范围</div>
+            <div id="date-range" class="mt-0.5 text-xs font-medium">2026-06-29 至 2026-07-28</div>
+          </div>
+          <span class="text-amber-200">▣</span>
+        </button>
+      </header>
+
+      <div class="mx-auto max-w-xl space-y-3 px-3 pt-3">
+        <div class="rounded-xl bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+          视觉预览 · 示例数据，不代表当前生产金额
+        </div>
+
+        <section id="date-panel" class="hidden rounded-2xl bg-white p-3 shadow-sm">
+          <div class="grid grid-cols-2 gap-2">
+            <label class="text-[10px] text-slate-500">开始日期<input id="date-start" type="date" value="2026-06-29" class="mt-1 h-9 w-full rounded-md border px-2 text-xs" /></label>
+            <label class="text-[10px] text-slate-500">结束日期<input id="date-end" type="date" value="2026-07-28" class="mt-1 h-9 w-full rounded-md border px-2 text-xs" /></label>
+          </div>
+          <div class="mt-3 flex gap-2">
+            <button data-preset="本财务月" data-start="2026-06-29" data-end="2026-07-28" class="rounded-full bg-slate-900 px-3 py-1.5 text-xs text-white">本财务月</button>
+            <button data-preset="上个财务月" data-start="2026-05-29" data-end="2026-06-28" class="rounded-full border px-3 py-1.5 text-xs">上个财务月</button>
+            <button data-preset="本年" data-start="2026-01-01" data-end="2026-07-28" class="rounded-full border px-3 py-1.5 text-xs">本年</button>
+            <button id="date-query" class="ml-auto rounded-full bg-slate-900 px-3 py-1.5 text-xs text-white">查询</button>
+          </div>
+        </section>
+
+        <section class="overflow-hidden rounded-3xl bg-gradient-to-br from-amber-600 to-orange-700 text-white shadow-md">
+          <div class="p-4">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="text-xs text-amber-100">总收益（不含税口径）</div>
+                <div id="total-revenue" class="mt-1 text-3xl font-bold tracking-tight tabular-nums">¥8,721,317</div>
+              </div>
+              <div class="grid h-11 w-11 place-items-center rounded-2xl bg-white/15 text-2xl">¥</div>
+            </div>
+            <div class="mt-4 grid grid-cols-3 gap-2 border-t border-white/15 pt-3 text-center">
+              <div><div class="text-[10px] text-amber-100">销售毛利</div><div id="total-sales" class="mt-0.5 truncate text-xs font-semibold">¥5,344,061</div></div>
+              <div><div class="text-[10px] text-amber-100">费用收益</div><div id="total-fee" class="mt-0.5 truncate text-xs font-semibold">¥3,377,257</div></div>
+              <div><div class="text-[10px] text-amber-100">其他收益</div><div id="total-extra" class="mt-0.5 truncate text-xs font-semibold">¥0</div></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm">
+            <div class="grid h-9 w-9 place-items-center rounded-xl bg-blue-50 text-blue-700">▦</div>
+            <div><div class="text-[10px] text-slate-400">可见柜位</div><div id="cabinet-count" class="text-lg font-semibold">570</div></div>
+          </div>
+          <div class="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm">
+            <div class="grid h-9 w-9 place-items-center rounded-xl bg-amber-50 text-amber-700">▤</div>
+            <div><div id="level-label" class="text-[10px] text-slate-400">门店收益</div><div id="row-count" class="text-lg font-semibold">3</div></div>
+          </div>
+        </div>
+
+        <section class="space-y-2">
+          <div class="flex items-center justify-between px-1">
+            <div><h2 id="section-title" class="text-sm font-semibold">门店收益</h2><div class="text-[10px] text-slate-400">按总收益从高到低排列</div></div>
+            <button id="home-button" class="hidden rounded-lg px-2 py-1 text-xs text-slate-500">⌂ 门店</button>
+          </div>
+          <div id="revenue-list" class="space-y-2"></div>
+        </section>
+
+        <div class="flex items-center justify-center gap-2 py-2 text-xs text-slate-400">◇ 数据范围与电脑端收益看板一致</div>
+      </div>
+    </main>
+
+    <div id="sheet-backdrop" class="fixed inset-0 z-40 hidden bg-slate-950/40"></div>
+    <aside id="detail-sheet" class="fixed inset-x-0 bottom-0 z-50 hidden h-[76dvh] rounded-t-3xl bg-white shadow-2xl">
+      <header class="flex items-start justify-between border-b px-5 py-4">
+        <div><h2 id="sheet-title" class="font-semibold">DJI大疆厅 · 费用明细</h2><p id="sheet-period" class="mt-1 text-xs text-slate-500">柜位 6010101223 · 2026-06-29 至 2026-07-28</p></div>
+        <button id="sheet-close" class="grid h-8 w-8 place-items-center rounded-full bg-slate-100">×</button>
+      </header>
+      <div id="sheet-content" class="h-[calc(76dvh-5rem)] space-y-3 overflow-y-auto p-4"></div>
+    </aside>
+
+    <script>
+      const levels = {
+        stores: [
+          { label: "常州购物中心", code: "601", count: "16 个部门", cabinets: 285, sales: 4162526, fee: 1268137, extra: 0, total: 5430662 },
+          { label: "常州新世纪商城", code: "603", count: "16 个部门", cabinets: 227, sales: 1070320, fee: 1555430, extra: 0, total: 2625750 },
+          { label: "常州百货大楼", code: "602", count: "3 个部门", cabinets: 58, sales: 111215, fee: 553690, extra: 0, total: 664905 },
+        ],
+        departments: [
+          { label: "国际化妆品部", code: "60101", count: "27 个柜位", cabinets: 27, sales: 1286360, fee: 368000, extra: 0, total: 1654360 },
+          { label: "国际精品部", code: "60102", count: "19 个柜位", cabinets: 19, sales: 975820, fee: 242600, extra: 0, total: 1218420 },
+          { label: "运动休闲部", code: "60106", count: "31 个柜位", cabinets: 31, sales: 648500, fee: 181300, extra: 0, total: 829800 },
+        ],
+        groups: [
+          { label: "Rolex劳力士厅", code: "6010101008", units: "C018", sales: 371580, fee: 65860, extra: 0, total: 437440 },
+          { label: "DJI大疆厅", code: "6010101223", units: "C027", sales: -153, fee: 83000, extra: 0, total: 82847 },
+          { label: "MAX MARA麦克斯·马勒厅", code: "6010101035", units: "C036", sales: 56820, fee: 17800, extra: 0, total: 74620 },
+        ],
+      };
+
+      const fmt = (value) => new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", maximumFractionDigits: 0 }).format(value);
+      let level = "stores";
+      let activeDateLabel = "本财务月";
+      const list = document.querySelector("#revenue-list");
+
+      const breakdown = (row) => `
+        <div class="mt-3 grid grid-cols-3 gap-1.5 text-center">
+          <div class="rounded-xl bg-blue-50 px-1.5 py-2"><div class="text-[9px] text-blue-500">销售毛利</div><div class="mt-0.5 truncate text-[11px] font-semibold text-blue-950">${fmt(row.sales)}</div></div>
+          <div class="rounded-xl bg-amber-50 px-1.5 py-2"><div class="text-[9px] text-amber-600">费用收益</div><div class="mt-0.5 truncate text-[11px] font-semibold text-amber-950">${fmt(row.fee)}</div></div>
+          <div class="rounded-xl bg-slate-100 px-1.5 py-2"><div class="text-[9px] text-slate-500">其他收益</div><div class="mt-0.5 truncate text-[11px] font-semibold text-slate-900">${fmt(row.extra)}</div></div>
+        </div>`;
+
+      function render() {
+        const rows = levels[level];
+        const labels = { stores: "门店收益", departments: "部门收益", groups: "柜位收益" };
+        const contexts = { stores: "全部可见范围", departments: "常州购物中心", groups: "国际化妆品部" };
+        document.querySelector("#section-title").textContent = labels[level];
+        document.querySelector("#level-label").textContent = labels[level];
+        document.querySelector("#context-title").textContent = `${activeDateLabel} · ${contexts[level]}`;
+        document.querySelector("#row-count").textContent = rows.length;
+        document.querySelector("#cabinet-count").textContent = rows.reduce((sum, row) => sum + (row.cabinets || 1), 0);
+        document.querySelector("#home-button").classList.toggle("hidden", level === "stores");
+        const totals = rows.reduce((sum, row) => ({ sales: sum.sales + row.sales, fee: sum.fee + row.fee, extra: sum.extra + row.extra, total: sum.total + row.total }), { sales: 0, fee: 0, extra: 0, total: 0 });
+        document.querySelector("#total-revenue").textContent = fmt(totals.total);
+        document.querySelector("#total-sales").textContent = fmt(totals.sales);
+        document.querySelector("#total-fee").textContent = fmt(totals.fee);
+        document.querySelector("#total-extra").textContent = fmt(totals.extra);
+        list.innerHTML = rows.map((row, index) => `
+          <article class="overflow-hidden rounded-2xl bg-white shadow-sm">
+            <button data-index="${index}" class="w-full p-3 text-left">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0"><div class="truncate text-sm font-semibold">${row.label}</div><div class="mt-0.5 truncate text-[10px] text-slate-400">${row.code}${level === "groups" ? ` · 经营单元 ${row.units}` : ` · ${row.count}`}</div></div>
+                <div class="flex shrink-0 items-center gap-1"><div class="text-right"><div class="text-[9px] text-slate-400">总收益</div><div class="text-sm font-bold text-amber-700">${fmt(row.total)}</div></div>${level === "groups" ? "" : '<span class="text-slate-300">›</span>'}</div>
+              </div>
+              ${breakdown(row)}
+            </button>
+            ${level === "groups" ? `<div class="grid grid-cols-2 gap-2 px-3 pb-3"><button data-mode="gross" data-index="${index}" class="h-8 rounded-xl border text-xs">▥ 毛利明细</button><button data-mode="fees" data-index="${index}" class="h-8 rounded-xl border text-xs">¥ 费用明细</button></div>` : ""}
+          </article>
+        `).join("");
+        list.querySelectorAll("article > button").forEach((button) => button.addEventListener("click", () => {
+          if (level === "stores") level = "departments";
+          else if (level === "departments") level = "groups";
+          render();
+        }));
+        list.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openSheet(rows[Number(button.dataset.index)], button.dataset.mode);
+        }));
+      }
+
+      function openSheet(row, mode) {
+        document.querySelector("#sheet-backdrop").classList.remove("hidden");
+        document.querySelector("#detail-sheet").classList.remove("hidden");
+        document.querySelector("#sheet-title").textContent = `${row.label} · ${mode === "fees" ? "费用明细" : "每日毛利"}`;
+        const content = document.querySelector("#sheet-content");
+        if (mode === "fees") {
+          content.innerHTML = `
+            <div class="grid grid-cols-3 gap-2 text-center"><div class="rounded-2xl bg-amber-50 p-2"><div class="text-[9px] text-amber-600">柜位汇总</div><div class="mt-1 text-xs font-semibold">${fmt(row.fee)}</div></div><div class="rounded-2xl bg-slate-100 p-2"><div class="text-[9px] text-slate-500">明细合计</div><div class="mt-1 text-xs font-semibold">${fmt(row.fee)}</div></div><div class="rounded-2xl bg-slate-100 p-2"><div class="text-[9px] text-slate-500">费用笔数</div><div class="mt-1 text-xs font-semibold">2</div></div></div>
+            ${[["保证金", "PB20260709018", "JS20260709006", 80000], ["服务费", "PB20260709018", "—", 3000]].map(([name, payment, settlement, amount]) => `<article class="rounded-2xl border p-3"><div class="flex justify-between"><div><div class="text-sm font-semibold">${name}</div><div class="mt-1 text-[10px] text-slate-400">2026-07-09</div></div><div class="text-right"><div class="text-[9px] text-slate-400">不含税</div><div class="font-semibold text-amber-700">${fmt(amount)}</div></div></div><div class="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-600">付款单号：${payment}<br />结算单号：${settlement}<br />合同：CT6010101223<br />含税金额：${fmt(amount)}</div></article>`).join("")}
+          `;
+        } else {
+          content.innerHTML = `
+            <div class="grid grid-cols-2 gap-2"><div class="rounded-2xl bg-blue-50 p-3"><div class="text-[10px] text-blue-500">柜位汇总</div><div class="mt-1 font-semibold">${fmt(row.sales)}</div></div><div class="rounded-2xl bg-slate-100 p-3"><div class="text-[10px] text-slate-500">每日明细合计</div><div class="mt-1 font-semibold">${fmt(row.sales)}</div></div></div>
+            ${[["2026-07-09", 12, row.sales * .6], ["2026-07-10", 8, row.sales * .4]].map(([date, count, amount]) => `<article class="flex items-center justify-between rounded-2xl border p-3"><div><div class="text-sm font-medium">${date}</div><div class="mt-1 text-[10px] text-slate-400">${count} 笔来源</div></div><div class="font-semibold text-blue-800">${fmt(amount)}</div></article>`).join("")}
+          `;
+        }
+      }
+
+      const closeSheet = () => {
+        document.querySelector("#sheet-backdrop").classList.add("hidden");
+        document.querySelector("#detail-sheet").classList.add("hidden");
+      };
+      const applyPreviewDate = (label, start, end) => {
+        activeDateLabel = label;
+        document.querySelector("#date-start").value = start;
+        document.querySelector("#date-end").value = end;
+        document.querySelector("#date-range").textContent = `${start} 至 ${end}`;
+        document.querySelector("#sheet-period").textContent = `柜位 6010101223 · ${start} 至 ${end}`;
+        document.querySelectorAll("[data-preset]").forEach((button) => {
+          const active = button.dataset.preset === label;
+          button.classList.toggle("bg-slate-900", active);
+          button.classList.toggle("text-white", active);
+          button.classList.toggle("border", !active);
+        });
+        document.querySelector("#date-panel").classList.add("hidden");
+        render();
+      };
+      document.querySelector("#date-toggle").addEventListener("click", () => document.querySelector("#date-panel").classList.toggle("hidden"));
+      document.querySelectorAll("[data-preset]").forEach((button) => button.addEventListener("click", () => {
+        applyPreviewDate(button.dataset.preset, button.dataset.start, button.dataset.end);
+      }));
+      document.querySelector("#date-query").addEventListener("click", () => {
+        applyPreviewDate("自定义", document.querySelector("#date-start").value, document.querySelector("#date-end").value);
+      });
+      document.querySelector("#home-button").addEventListener("click", () => { level = "stores"; render(); });
+      document.querySelector("#back-button").addEventListener("click", () => { if (level === "groups") level = "departments"; else if (level === "departments") level = "stores"; render(); });
+      document.querySelector("#sheet-close").addEventListener("click", closeSheet);
+      document.querySelector("#sheet-backdrop").addEventListener("click", closeSheet);
+      render();
+    </script>
+  </body>
+</html>

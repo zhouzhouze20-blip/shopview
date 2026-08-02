@@ -8,6 +8,12 @@ from openpyxl import load_workbook
 
 def sample_report(*, empty=False):
     metrics = {
+        "ticket_count_current": 100,
+        "ticket_count_prior": 80,
+        "ticket_count_yoy": 0.25,
+        "average_ticket_current": 1200.0,
+        "average_ticket_prior": 1250.0,
+        "average_ticket_yoy": -0.04,
         "sales_current": 120000.0,
         "sales_prior": 100000.0,
         "sales_yoy": 0.2,
@@ -76,9 +82,25 @@ def sample_report(*, empty=False):
         dimensions["groups"][0].update({
             "department_code": "6010101",
             "department_name": "一店一部(化妆)",
+            "area_code": "A01",
+            "area_name": "化妆品区域",
+            "category_code": "C01",
+            "category_name": "国际化妆品",
             "dimension_code": "6010101005",
             "dimension_name": "L'oreal欧莱雅厅",
         })
+    dimensions["special_sales"] = [] if empty else [{
+        "store_code": "601",
+        "store_name": "一店",
+        "department_code": "6010101",
+        "department_name": "一店一部(化妆)",
+        "dimension_code": "6010101999",
+        "dimension_name": "一楼特卖厅",
+        "brand_code": "00310",
+        "brand_name": "Christian dior迪奥",
+        "metrics": dict(metrics),
+    }]
+    totals["special_sales"] = dict(metrics)
     if not empty:
         dimensions["departments"].append({
             "store_code": "602", "store_name": "二店",
@@ -105,7 +127,7 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     assert isinstance(payload, bytes)
     workbook = load_workbook(BytesIO(payload))
     assert workbook.sheetnames == [
-        "分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "楼层", "报表说明"
+        "分店", "部门", "部门（含品类）", "区域", "品类", "柜组", "特卖", "楼层", "报表说明"
     ]
 
     sheet = workbook["部门"]
@@ -115,16 +137,36 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     assert sheet.freeze_panes == "A8"
     assert sheet["A5"].fill.fgColor.rgb.endswith("4472C4")
     assert sheet["A5"].font.color.type == "rgb" and sheet["A5"].font.color.rgb.endswith("FFFFFF")
-    assert sheet["E8"].value == 12
-    assert sheet["E8"].number_format == "0.00"
+    assert sheet["E5"].value == "来客数"
+    assert sheet["H5"].value == "客单"
+    assert sheet["E8"].value == 100
+    assert sheet["E8"].number_format == "#,##0"
     assert sheet["G8"].number_format == "0.00%"
+    assert sheet["H8"].value == 1200
+    assert sheet["H8"].number_format == "0.00"
+    assert sheet["K8"].value == 12
     assert sheet["A10"].value == "合计"
-    assert sheet["E10"].value == 12
-    assert sheet["G10"].value == 0.2
+    assert sheet["E10"].value == 100
+    assert sheet["G10"].value == 0.25
+    assert sheet["K10"].value == 12
     assert sheet["A10"].border.bottom.style is not None
 
     notes = workbook["报表说明"]["B2"].value
-    for text in ("sglhsrq", "sglxssr", "sgln2", "sglwmid=5", "楼层00", "16部门", "当前用户权限范围", "大类暂不提供"):
+    for text in (
+        "sglhsrq",
+        "sglxssr",
+        "sgln2",
+        "sglbillno",
+        "客单=销售收入（元）/来客数",
+        "sglwmid=5",
+        "楼层00",
+        "16部门",
+        "当前用户权限范围",
+        "manaframe.mflc=16",
+        "salegoodslist.sglppcode",
+        "codebrand.cbcname",
+        "大类暂不提供",
+    ):
         assert text in notes
     sorted_codes = sorted(EXCLUDED_DEPARTMENT_CODES)
     assert sorted_codes[0] in notes and sorted_codes[-1] in notes
@@ -147,9 +189,9 @@ def test_department_category_sheet_has_hierarchy_subtotals_and_total():
     assert sheet["C10"].value.startswith("女装区小计")
     assert sheet["B11"].value.startswith("新世纪二部小计")
     assert sheet["A12"].value == "合计"
-    assert sheet["E12"].value == 24
+    assert sheet["K12"].value == 24
     assert sheet.freeze_panes == "A8"
-    assert sheet.max_column == 13
+    assert sheet.max_column == 19
     assert sheet["B11"].font.bold is True
     assert sheet["B11"].fill.fgColor.rgb.endswith("D9EAF7")
 
@@ -165,51 +207,139 @@ def test_empty_department_category_sheet_keeps_headers_and_total():
     assert sheet["A8"].value == "合计"
 
 
-def test_group_sheet_has_department_before_group_and_fifteen_columns():
+def test_group_sheet_has_department_area_category_before_group_and_twenty_five_columns():
     from python_app.services.od0002_excel import build_od0002_workbook
 
     workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
     sheet = workbook["柜组"]
 
     assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（柜组）"
-    assert "A1:O1" in {str(item) for item in sheet.merged_cells.ranges}
-    assert [sheet.cell(6, column).value for column in range(1, 7)] == [
-        "门店编码", "门店名称", "部门编码", "部门名称", "柜组编码", "柜组名称",
+    assert "A1:Y1" in {str(item) for item in sheet.merged_cells.ranges}
+    assert [sheet.cell(6, column).value for column in range(1, 11)] == [
+        "门店编码",
+        "门店名称",
+        "部门编码",
+        "部门名称",
+        "区域编码",
+        "区域名称",
+        "品类编码",
+        "品类名称",
+        "柜组编码",
+        "柜组名称",
     ]
-    assert [sheet.cell(8, column).value for column in range(1, 7)] == [
-        "601", "一店", "6010101", "一店一部(化妆)", "6010101005", "L'oreal欧莱雅厅",
+    assert [sheet.cell(8, column).value for column in range(1, 11)] == [
+        "601",
+        "一店",
+        "6010101",
+        "一店一部(化妆)",
+        "A01",
+        "化妆品区域",
+        "C01",
+        "国际化妆品",
+        "6010101005",
+        "L'oreal欧莱雅厅",
     ]
-    assert sheet["G8"].value == 12
-    assert sheet["I8"].number_format == "0.00%"
-    assert sheet.max_column == 15
+    assert sheet["K8"].value == 100
+    assert sheet["M8"].number_format == "0.00%"
+    assert sheet["Q8"].value == 12
+    assert sheet.max_column == 25
     assert sheet.freeze_panes == "A8"
 
 
-def test_empty_group_sheet_keeps_fifteen_columns_and_total():
+def test_empty_group_sheet_keeps_twenty_five_columns_and_total():
     from python_app.services.od0002_excel import build_od0002_workbook
 
     workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report(empty=True))))
     sheet = workbook["柜组"]
 
-    assert sheet["F6"].value == "柜组名称"
+    assert sheet["J6"].value == "柜组名称"
     assert sheet["A8"].value == "合计"
-    assert sheet.max_column == 15
+    assert sheet.max_column == 25
 
 
-def test_group_sheet_escapes_formula_like_department_and_group_text():
+def test_special_sale_sheet_has_group_brand_detail_and_twenty_three_columns():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report())))
+    sheet = workbook["特卖"]
+
+    assert sheet["A1"].value == "OD0002 门店销售毛利汇总表（特卖）"
+    assert "A1:W1" in {str(item) for item in sheet.merged_cells.ranges}
+    assert [sheet.cell(6, column).value for column in range(1, 9)] == [
+        "门店编码",
+        "门店名称",
+        "部门编码",
+        "部门名称",
+        "柜组编码",
+        "柜组名称",
+        "品牌编码",
+        "品牌名称",
+    ]
+    assert [sheet.cell(8, column).value for column in range(1, 9)] == [
+        "601",
+        "一店",
+        "6010101",
+        "一店一部(化妆)",
+        "6010101999",
+        "一楼特卖厅",
+        "00310",
+        "Christian dior迪奥",
+    ]
+    assert sheet["I8"].value == 100
+    assert sheet["K8"].number_format == "0.00%"
+    assert sheet["O8"].value == 12
+    assert sheet.max_column == 23
+    assert sheet.freeze_panes == "A8"
+
+
+def test_empty_special_sale_sheet_keeps_headers_and_total():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    workbook = load_workbook(BytesIO(build_od0002_workbook(sample_report(empty=True))))
+    sheet = workbook["特卖"]
+
+    assert sheet["H6"].value == "品牌名称"
+    assert sheet["A8"].value == "合计"
+    assert sheet.max_column == 23
+
+
+def test_special_sale_sheet_escapes_formula_like_brand_and_group_text():
+    from python_app.services.od0002_excel import build_od0002_workbook
+
+    report = sample_report()
+    report["dimensions"]["special_sales"][0].update({
+        "dimension_code": "=1+1",
+        "dimension_name": "+SUM(A1:A2)",
+        "brand_code": "-2+3",
+        "brand_name": "@cmd",
+    })
+    workbook = load_workbook(BytesIO(build_od0002_workbook(report)), data_only=False)
+    sheet = workbook["特卖"]
+
+    for column in range(5, 9):
+        cell = sheet.cell(8, column)
+        assert cell.data_type == "s"
+        assert cell.value.startswith("'")
+
+
+def test_group_sheet_escapes_formula_like_department_area_category_and_group_text():
     from python_app.services.od0002_excel import build_od0002_workbook
 
     report = sample_report()
     report["dimensions"]["groups"][0].update({
         "department_code": "=1+1",
         "department_name": "+SUM(A1:A2)",
+        "area_code": "-A01",
+        "area_name": "@区域",
+        "category_code": "=C01",
+        "category_name": "+品类",
         "dimension_code": "-2+3",
         "dimension_name": "@cmd",
     })
     workbook = load_workbook(BytesIO(build_od0002_workbook(report)), data_only=False)
     sheet = workbook["柜组"]
 
-    for column in range(3, 7):
+    for column in range(3, 11):
         cell = sheet.cell(8, column)
         assert cell.data_type == "s"
         assert cell.value.startswith("'")
@@ -277,6 +407,8 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
         calls["load"] += 1
         calls["selected_store"] = kwargs["selected_store"]
         calls["selected_department"] = kwargs["selected_department"]
+        calls["prior_start_date"] = kwargs["prior_start_date"]
+        calls["prior_end_date"] = kwargs["prior_end_date"]
         return sample_report()
     monkeypatch.setattr(sales, "load_od0002_report", fake_load)
     export_file = SpooledTemporaryFile()
@@ -290,12 +422,21 @@ def test_export_route_reuses_permission_scope_loader_and_sets_disposition(monkey
     monkeypatch.setattr(sales, "run_in_threadpool", fake_threadpool)
 
     response = asyncio.run(sales.od0002_export(
-        date(2026, 1, 1), date(2026, 1, 31), " 601 ", object(), object(), " 6030117 "
+        date(2026, 1, 1),
+        date(2026, 1, 31),
+        " 601 ",
+        object(),
+        object(),
+        " 6030117 ",
+        date(2024, 12, 29),
+        date(2025, 1, 28),
     ))
 
     assert calls == {
         "load": 1,
         "permission": "sales.od0002.view",
+        "prior_end_date": date(2025, 1, 28),
+        "prior_start_date": date(2024, 12, 29),
         "selected_store": "601",
         "selected_department": "6030117",
     }

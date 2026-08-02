@@ -13,13 +13,20 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Activity, FileText, Plus, RefreshCw, Shield, Users, Building2, Filter, Search } from "lucide-react";
+import { Activity, ArrowRight, FileText, Plus, RefreshCw, Route, Shield, Users, Building2, Filter, Search } from "lucide-react";
 import {
   buildRolePermissionTree,
   collectPermissionTreeIds,
   getPermissionTreeNodeState,
   type RolePermissionTreeNode,
 } from "@/lib/role-permission-tree";
+import { getDefaultMobileRolePermissionIds } from "@/lib/module-permissions";
+import {
+  getSystemConfigQueryScope,
+  type SystemConfigTab,
+} from "@/lib/system-config-query-scope";
+import { formatOperationQueryConditions } from "@/lib/operation-log-detail";
+import { buildSalesBrowseJourneys } from "@/lib/sales-browse-journey";
 
 interface StoreOption {
   storeId: number;
@@ -190,7 +197,7 @@ interface ContractPermissionUser {
   is_active: boolean;
   role_names: string[];
   has_contract_view: boolean;
-  /** 本页「开通」状态：部门经理角色或企业微信业务范围（勿与 has_contract_view 混用） */
+  /** 本页「开通」状态：部门经理角色或有效业务范围（勿与 has_contract_view 混用） */
   scope_tab_active?: boolean;
   wecom_scope_mode?: "ALL" | "CUSTOM";
   wecom_store_values?: string[];
@@ -201,9 +208,9 @@ interface ContractPermissionUser {
   department_values: string[];
   group_values: string[];
   wecom_scope_count: number;
+  manual_scope_count: number;
+  scope_policy_count: number;
 }
-
-type SystemConfigTab = "users" | "roles" | "departments" | "contract-permissions" | "wecom-rules" | "policies" | "audit-logs";
 
 interface SystemConfigPageProps {
   initialTab?: SystemConfigTab;
@@ -294,8 +301,8 @@ const emptyPolicyForm = {
   effect: "ALLOW",
   priority: "100",
   is_active: true,
-  source_type: "WECOM",
-  source_system: "wecom",
+  source_type: "MANUAL",
+  source_system: "shopview",
   external_scope_id: "",
   external_scope_name: "",
   store_values: "",
@@ -515,7 +522,6 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const [auditStartDate, setAuditStartDate] = useState("");
   const [auditEndDate, setAuditEndDate] = useState("");
   const [loginResultFilter, setLoginResultFilter] = useState("ALL");
-  const [operationResourceFilter, setOperationResourceFilter] = useState("ALL");
   const [operationActionFilter, setOperationActionFilter] = useState("ALL");
   const [activeScopeDepartmentKey, setActiveScopeDepartmentKey] = useState<string | null>(null);
 
@@ -526,6 +532,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
     setTab(initialTab);
   }, [initialTab]);
 
+  const queryScope = useMemo(() => getSystemConfigQueryScope(tab), [tab]);
+
   const { data: stores = [] } = useQuery<StoreOption[]>({
     queryKey: ["/api/stores", { is_active: true }],
     queryFn: async () => {
@@ -535,56 +543,68 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
         storeName: store.store_name ?? store.storeName,
       }));
     },
+    enabled: queryScope.stores,
   });
 
-  const { data: permissions = [] } = useQuery<PermissionItem[]>({
+  const permissionsQuery = useQuery<PermissionItem[]>({
     queryKey: ["/api/system/permissions"],
     queryFn: () => apiGet<PermissionItem[]>("/api/system/permissions"),
+    enabled: queryScope.permissions,
   });
+  const permissions = permissionsQuery.data ?? [];
 
   const { data: posts = [] } = useQuery<PostItem[]>({
     queryKey: ["/api/system/posts"],
     queryFn: () => apiGet<PostItem[]>("/api/system/posts"),
+    enabled: queryScope.posts,
   });
 
-  const { data: roles = [] } = useQuery<RoleItem[]>({
+  const { data: roles = [], isFetched: rolesFetched } = useQuery<RoleItem[]>({
     queryKey: ["/api/system/roles"],
     queryFn: () => apiGet<RoleItem[]>("/api/system/roles"),
+    enabled: queryScope.roles,
   });
 
-  const { data: departments = [] } = useQuery<DepartmentItem[]>({
+  const { data: departments = [], isFetched: departmentsFetched } = useQuery<DepartmentItem[]>({
     queryKey: ["/api/system/departments"],
     queryFn: () => apiGet<DepartmentItem[]>("/api/system/departments"),
+    enabled: queryScope.departments,
   });
 
-  const { data: users = [] } = useQuery<UserItem[]>({
+  const { data: users = [], isFetched: usersFetched } = useQuery<UserItem[]>({
     queryKey: ["/api/system/users"],
     queryFn: () => apiGet<UserItem[]>("/api/system/users"),
+    enabled: queryScope.users,
   });
 
-  const { data: policies = [] } = useQuery<DataPolicy[]>({
+  const { data: policies = [], isFetched: policiesFetched } = useQuery<DataPolicy[]>({
     queryKey: ["/api/system/data-policies"],
     queryFn: () => apiGet<DataPolicy[]>("/api/system/data-policies"),
+    enabled: queryScope.policies,
   });
 
-  const { data: wecomRules = [] } = useQuery<WeComRoleScopeRule[]>({
+  const { data: wecomRules = [], isFetched: wecomRulesFetched } = useQuery<WeComRoleScopeRule[]>({
     queryKey: ["/api/system/wecom-role-scope-rules"],
     queryFn: () => apiGet<WeComRoleScopeRule[]>("/api/system/wecom-role-scope-rules"),
+    enabled: queryScope.wecomRules,
   });
 
   const { data: meta } = useQuery<SystemMeta>({
     queryKey: ["/api/system/meta"],
     queryFn: () => apiGet<SystemMeta>("/api/system/meta"),
+    enabled: queryScope.meta,
   });
 
   const { data: contractPermissionOptions = { stores: [], departments: [], groups: [], scope_matrix: [] } } = useQuery<ContractPermissionOptions>({
     queryKey: ["/api/system/contract-permissions/options"],
     queryFn: () => apiGet<ContractPermissionOptions>("/api/system/contract-permissions/options"),
+    enabled: queryScope.contractPermissionOptions,
   });
 
-  const { data: contractPermissions = [] } = useQuery<ContractPermissionUser[]>({
+  const { data: contractPermissions = [], isFetched: contractPermissionsFetched } = useQuery<ContractPermissionUser[]>({
     queryKey: ["/api/system/contract-permissions"],
     queryFn: () => apiGet<ContractPermissionUser[]>("/api/system/contract-permissions"),
+    enabled: queryScope.contractPermissions,
   });
 
   const loginLogsQueryString = buildQueryString({
@@ -596,11 +616,18 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   });
   const operationLogsQueryString = buildQueryString({
     keyword: auditKeyword.trim(),
-    resource_code: operationResourceFilter,
     action_code: operationActionFilter,
     start_date: auditStartDate,
     end_date: auditEndDate,
     page_size: 80,
+  });
+  const salesJourneyLogsQueryString = buildQueryString({
+    keyword: auditKeyword.trim(),
+    resource_code: "mobile-sales-dashboard",
+    action_code: "query",
+    start_date: auditStartDate,
+    end_date: auditEndDate,
+    page_size: 200,
   });
 
   const { data: loginLogs = { items: [], total: 0, page: 1, page_size: 80 }, isFetching: loginLogsFetching } = useQuery<PagedResponse<LoginLogItem>>({
@@ -614,6 +641,17 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
     queryFn: () => apiGet<PagedResponse<OperationLogItem>>(`/api/system/operation-logs${operationLogsQueryString}`),
     enabled: tab === "audit-logs" && auditLogType === "operation",
   });
+
+  const { data: salesJourneyLogs = { items: [], total: 0, page: 1, page_size: 200 }, isFetching: salesJourneyLogsFetching } = useQuery<PagedResponse<OperationLogItem>>({
+    queryKey: ["/api/system/operation-logs", "sales-browse-journey", salesJourneyLogsQueryString],
+    queryFn: () => apiGet<PagedResponse<OperationLogItem>>(`/api/system/operation-logs${salesJourneyLogsQueryString}`),
+    enabled: tab === "audit-logs" && auditLogType === "operation",
+  });
+
+  const salesBrowseJourneys = useMemo(
+    () => buildSalesBrowseJourneys(salesJourneyLogs.items),
+    [salesJourneyLogs.items],
+  );
 
   const permissionTree = useMemo(() => buildRolePermissionTree(permissions), [permissions]);
   const selectedRolePermissionIds = useMemo(() => new Set(roleForm.permission_ids), [roleForm.permission_ids]);
@@ -651,11 +689,6 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
         .some((value) => String(value).toLowerCase().includes(normalizedUserSearchText)),
     );
   }, [contractPermissions, normalizedUserSearchText]);
-
-  const operationResourceOptions = useMemo(() => {
-    const values = new Set(operationLogs.items.map((item) => item.resource_code).filter(Boolean));
-    return Array.from(values).sort();
-  }, [operationLogs.items]);
 
   /** scope_matrix 为空时（旧接口或未 JOIN 出数据）用 groups+stores 拼装，避免右侧整表空白 */
   const contractScopeMatrixEffective = useMemo((): ContractScopeMatrixRow[] => {
@@ -863,8 +896,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
         effect: policyForm.effect,
         priority: Number(policyForm.priority || 100),
         is_active: policyForm.is_active,
-        source_type: "WECOM",
-        source_system: "wecom",
+        source_type: "MANUAL",
+        source_system: "shopview",
         external_scope_id: policyForm.external_scope_id || null,
         external_scope_name: policyForm.external_scope_name || null,
         items: buildPolicyItems(policyForm),
@@ -992,7 +1025,10 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
 
   const openCreateRole = () => {
     setEditingRole(null);
-    setRoleForm(emptyRoleForm);
+    setRoleForm({
+      ...emptyRoleForm,
+      permission_ids: getDefaultMobileRolePermissionIds(permissions),
+    });
     setRoleDialogOpen(true);
   };
 
@@ -1054,8 +1090,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
       supplier_values: itemsByType("supplier"),
       brand_values: itemsByType("brand"),
       category_values: itemsByType("category"),
-      source_type: "WECOM",
-      source_system: "wecom",
+      source_type: policy.source_type || "MANUAL",
+      source_system: policy.source_system || "shopview",
       external_scope_id: policy.external_scope_id || "",
       external_scope_name: policy.external_scope_name || "",
     });
@@ -1065,10 +1101,10 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const openEditContractPermission = (user: ContractPermissionUser) => {
     setEditingContractPermission(user);
     const tabOn = user.scope_tab_active ?? user.has_contract_view;
-    const mode = user.wecom_scope_mode ?? user.scope_mode ?? "CUSTOM";
-    const storeValues = uniqueByNorm((user.wecom_store_values ?? []).map(normStoreIdForScope).filter(Boolean), normStoreIdForScope);
-    const deptValues = uniqueByNorm(user.wecom_department_values ?? []);
-    const groupValues = uniqueByNorm(user.wecom_group_values ?? []);
+    const mode = user.scope_mode ?? "CUSTOM";
+    const storeValues = uniqueByNorm(user.store_values.map(normStoreIdForScope).filter(Boolean), normStoreIdForScope);
+    const deptValues = uniqueByNorm(user.department_values);
+    const groupValues = uniqueByNorm(user.group_values);
     const filterStores = new Set(storeValues);
     for (const row of contractScopeMatrixEffective) {
       const storeId = normStoreIdForScope(row.store_id);
@@ -1301,7 +1337,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">用户数</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{users.length}</span>
+            <span className="text-2xl font-bold">{usersFetched ? users.length : "—"}</span>
             <Users className="h-5 w-5 text-blue-600" />
           </CardContent>
         </Card>
@@ -1310,7 +1346,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">角色数</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{roles.length}</span>
+            <span className="text-2xl font-bold">{rolesFetched ? roles.length : "—"}</span>
             <Shield className="h-5 w-5 text-emerald-600" />
           </CardContent>
         </Card>
@@ -1319,7 +1355,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">部门数</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{departments.length}</span>
+            <span className="text-2xl font-bold">{departmentsFetched ? departments.length : "—"}</span>
             <Building2 className="h-5 w-5 text-amber-600" />
           </CardContent>
         </Card>
@@ -1328,7 +1364,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">策略数</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{policies.length}</span>
+            <span className="text-2xl font-bold">{policiesFetched ? policies.length : "—"}</span>
             <Filter className="h-5 w-5 text-purple-600" />
           </CardContent>
         </Card>
@@ -1337,7 +1373,9 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">业务范围授权</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{contractPermissions.filter((item) => item.has_contract_view).length}</span>
+            <span className="text-2xl font-bold">
+              {contractPermissionsFetched ? contractPermissions.filter((item) => item.has_contract_view).length : "—"}
+            </span>
             <FileText className="h-5 w-5 text-sky-600" />
           </CardContent>
         </Card>
@@ -1346,7 +1384,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             <CardTitle className="text-sm font-medium">企微规则</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-between">
-            <span className="text-2xl font-bold">{wecomRules.length}</span>
+            <span className="text-2xl font-bold">{wecomRulesFetched ? wecomRules.length : "—"}</span>
             <Shield className="h-5 w-5 text-teal-600" />
           </CardContent>
         </Card>
@@ -1530,7 +1568,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1 text-xs">
-                          <Badge variant="outline">企业微信 {user.wecom_scope_count}</Badge>
+                          <Badge variant="outline">企业微信 {user.wecom_scope_count ?? 0}</Badge>
+                          <Badge variant="outline">手工追加 {user.manual_scope_count ?? 0}</Badge>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1645,14 +1684,18 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       <TableCell>{policy.action_code}</TableCell>
                       <TableCell>
                         <div className="space-y-1 text-xs">
-                          <Badge variant="outline">WECOM</Badge>
-                          <div className="text-muted-foreground">{policy.external_scope_name || policy.source_system || "wecom"}</div>
+                          <Badge variant="outline">{policy.source_type || "MANUAL"}</Badge>
+                          <div className="text-muted-foreground">{policy.external_scope_name || policy.source_system || "shopview"}</div>
                         </div>
                       </TableCell>
                       <TableCell>{policy.scope_mode}</TableCell>
                       <TableCell>{policy.items.map((item) => `${item.dimension_type}:${item.dimension_value}`).join("，") || "-"}</TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => openEditPolicy(policy)}>编辑</Button>
+                        {policy.source_type === "WECOM" ? (
+                          <span className="text-xs text-muted-foreground">企微自动维护</span>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={() => openEditPolicy(policy)}>编辑</Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1711,6 +1754,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                     <SelectContent>
                       <SelectItem value="ALL">全部动作</SelectItem>
                       <SelectItem value="enter">进入模块</SelectItem>
+                      <SelectItem value="query">执行查询</SelectItem>
                       <SelectItem value="create">新增</SelectItem>
                       <SelectItem value="update">修改</SelectItem>
                       <SelectItem value="delete">删除</SelectItem>
@@ -1731,24 +1775,58 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
               </div>
 
               {auditLogType === "operation" ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant={operationResourceFilter === "ALL" ? "default" : "outline"}
-                    onClick={() => setOperationResourceFilter("ALL")}
-                  >
-                    全部模块
-                  </Button>
-                  {operationResourceOptions.map((resource) => (
-                    <Button
-                      key={resource}
-                      size="sm"
-                      variant={operationResourceFilter === resource ? "default" : "outline"}
-                      onClick={() => setOperationResourceFilter(resource)}
-                    >
-                      {resource}
-                    </Button>
-                  ))}
+                <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 font-semibold text-slate-900">
+                        <Route className="h-5 w-5 text-teal-700" />
+                        销售看板浏览轨迹
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">
+                        按用户和时间顺序串联门店、部门、柜组、小票及返回动作；超过 30 分钟自动分成新一段。
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="border-teal-300 bg-white text-teal-800">
+                      最近 {salesBrowseJourneys.length} 段
+                    </Badge>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {salesBrowseJourneys.slice(0, 10).map((journey) => (
+                      <div key={journey.key} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-slate-900">{journey.userName}</span>
+                          <span className="text-xs text-slate-500">
+                            {formatDateTime(journey.startedAt)} 至 {formatDateTime(journey.endedAt)}
+                          </span>
+                        </div>
+                        <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
+                          {journey.steps.map((step, index) => (
+                            <div key={step.logId} className="flex shrink-0 items-center gap-2">
+                              {index > 0 ? <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" /> : null}
+                              <div className={[
+                                "min-w-32 rounded-lg border px-3 py-2",
+                                step.kind === "return"
+                                  ? "border-amber-200 bg-amber-50"
+                                  : step.kind === "ticket"
+                                    ? "border-violet-200 bg-violet-50"
+                                    : "border-slate-200 bg-slate-50",
+                              ].join(" ")}>
+                                <div className="text-[11px] text-slate-500">{formatDateTime(step.time)}</div>
+                                <div className="mt-1 text-xs font-medium text-slate-700">{step.label}</div>
+                                {step.value ? <div className="mt-0.5 max-w-48 truncate text-sm font-semibold text-slate-950" title={step.value}>{step.value}</div> : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {!salesBrowseJourneys.length ? (
+                      <div className="rounded-lg border border-dashed border-teal-200 bg-white/70 py-8 text-center text-sm text-slate-500">
+                        {salesJourneyLogsFetching ? "正在整理浏览轨迹..." : "暂无销售看板浏览轨迹"}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -1800,10 +1878,7 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       <TableHead>用户</TableHead>
                       <TableHead>模块</TableHead>
                       <TableHead>动作</TableHead>
-                      <TableHead>目标</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead>IP</TableHead>
-                      <TableHead>路径</TableHead>
+                      <TableHead>查看内容</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1811,19 +1886,18 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                       <TableRow key={log.id}>
                         <TableCell className="whitespace-nowrap">{formatDateTime(log.created_at)}</TableCell>
                         <TableCell>{log.real_name || log.username || "-"}</TableCell>
-                        <TableCell>{log.resource_code}</TableCell>
-                        <TableCell>{log.action_code === "enter" ? "进入模块" : log.action_code}</TableCell>
-                        <TableCell>{String(log.detail?.module_name || log.target_id || "-")}</TableCell>
-                        <TableCell>{String(log.detail?.status_code ?? "-")}</TableCell>
-                        <TableCell>{log.ip_address || "-"}</TableCell>
-                        <TableCell className="max-w-xs truncate" title={String(log.detail?.path || "")}>
-                          {String(log.detail?.path || "-")}
+                        <TableCell>{String(log.detail?.module_name || log.resource_code)}</TableCell>
+                        <TableCell>{log.action_code === "enter" ? "进入模块" : log.action_code === "query" ? "执行查询" : log.action_code}</TableCell>
+                        <TableCell className="max-w-2xl whitespace-normal text-xs leading-5" title={formatOperationQueryConditions(log.detail)}>
+                          {log.action_code === "enter"
+                            ? `进入${String(log.detail?.module_name || log.resource_code)}`
+                            : formatOperationQueryConditions(log.detail)}
                         </TableCell>
                       </TableRow>
                     ))}
                     {!operationLogs.items.length ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                        <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                           {operationLogsFetching ? "加载中..." : "暂无操作日志"}
                         </TableCell>
                       </TableRow>
@@ -2294,17 +2368,45 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
           <div className="space-y-3">
             <Label>权限分配</Label>
             <div className="max-h-[520px] overflow-y-auto rounded-md border bg-slate-50 p-3">
-              <PermissionTreeRows
-                nodes={permissionTree}
-                selectedPermissionIds={selectedRolePermissionIds}
-                onToggleNode={(node, checked) => toggleRolePermissionIds(collectPermissionTreeIds(node), checked)}
-                onTogglePermission={(permissionId, checked) => toggleRolePermissionIds([permissionId], checked)}
-              />
+              {permissionsQuery.isFetching ? (
+                <div className="flex min-h-20 items-center justify-center text-sm text-slate-500">
+                  正在加载权限列表...
+                </div>
+              ) : permissionsQuery.isError ? (
+                <div className="flex min-h-24 flex-col items-center justify-center gap-3 text-center">
+                  <p className="text-sm text-red-600">权限列表加载失败，可能是数据库连接繁忙。</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void permissionsQuery.refetch()}
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    重新加载
+                  </Button>
+                </div>
+              ) : permissionTree.length ? (
+                <PermissionTreeRows
+                  nodes={permissionTree}
+                  selectedPermissionIds={selectedRolePermissionIds}
+                  onToggleNode={(node, checked) => toggleRolePermissionIds(collectPermissionTreeIds(node), checked)}
+                  onTogglePermission={(permissionId, checked) => toggleRolePermissionIds([permissionId], checked)}
+                />
+              ) : (
+                <div className="flex min-h-20 items-center justify-center text-sm text-slate-500">
+                  暂无可分配权限。
+                </div>
+              )}
             </div>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>取消</Button>
-            <Button onClick={() => roleMutation.mutate()} disabled={roleMutation.isPending}>{roleMutation.isPending ? "保存中..." : "保存"}</Button>
+            <Button
+              onClick={() => roleMutation.mutate()}
+              disabled={roleMutation.isPending || permissionsQuery.isFetching || permissionsQuery.isError}
+            >
+              {roleMutation.isPending ? "保存中..." : "保存"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

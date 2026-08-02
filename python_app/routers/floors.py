@@ -17,6 +17,25 @@ router = APIRouter(
     tags=["floors"],
 )
 
+MOBILE_SPECIAL_SALE_UNIT_CODE = "流动特卖"
+
+
+def _ensure_mobile_special_sale_unit(db: Session, floor_id: int) -> None:
+    """每个楼层保留一个不带几何图形的共享流动特卖逻辑柜位。"""
+    db.execute(
+        text(
+            """
+            INSERT INTO business_units (floor_id, unit_code, status, contract_mode, manual_area, parent_unit_id)
+            VALUES (:floor_id, :unit_code, 'ACTIVE', 'SHARED', NULL, NULL)
+            ON CONFLICT (floor_id, unit_code) DO UPDATE SET
+              status = 'ACTIVE',
+              contract_mode = 'SHARED',
+              updated_at = NOW()
+            """
+        ),
+        {"floor_id": floor_id, "unit_code": MOBILE_SPECIAL_SALE_UNIT_CODE},
+    )
+
 def _get_floors_columns(db: Session) -> set[str]:
     rows = db.execute(
         text(
@@ -155,6 +174,7 @@ async def create_floor(
             """
 
         row = db.execute(text(sql), params).fetchone()
+        _ensure_mobile_special_sale_unit(db, int(row.id))
         db.commit()
         return {
             "id": row.id,

@@ -7,6 +7,8 @@ export interface RevenueMonthlyItem {
   store_id?: number | null;
   floor_id?: number | null;
   unit_status?: string | null;
+  source_group_names?: string | null;
+  source_group_codes?: string | null;
   sales_gross_profit_amount: number;
   fee_amount: number;
   extra_amount: number;
@@ -28,6 +30,47 @@ export interface RevenueMonthlyResponse {
     item_count: number;
     amount: number;
   };
+}
+
+export interface RevenueUnmatchedItem {
+  revenue_date: string;
+  store_code: string;
+  source_group_code: string;
+  source_supplier_code?: string | null;
+  source_operation_mode?: string | null;
+  source_group_name?: string | null;
+  sales_qty: number;
+  sales_amount: number;
+  gross_profit_amount: number;
+  source_count: number;
+  first_bill_no?: string | null;
+  contract_codes: string[];
+  reason_code:
+    | "GROUP_MASTER_NOT_FOUND"
+    | "GROUP_MASTER_INACTIVE"
+    | "NO_EFFECTIVE_CONTRACT"
+    | "NO_UNIT_BINDING"
+    | "MATCHING_RULE_GAP";
+  reason: string;
+}
+
+export interface RevenueUnmatchedResponse {
+  store: {
+    store_id: number;
+    store_code: string;
+    store_name?: string | null;
+  };
+  start_date: string;
+  end_date: string;
+  granularity: string;
+  scope_note: string;
+  total: {
+    item_count: number;
+    amount: number;
+  };
+  returned_count: number;
+  is_truncated: boolean;
+  items: RevenueUnmatchedItem[];
 }
 
 export interface RevenueExtraReceipt {
@@ -74,6 +117,7 @@ export interface RevenueUnitDetail {
     extra_detail_count: number;
   }>;
   sales_details: Array<Record<string, any>>;
+  loss_bearing_details: Array<Record<string, any>>;
   fee_details: Array<Record<string, any>>;
   extra_receipts: RevenueExtraReceipt[];
 }
@@ -100,6 +144,7 @@ export function useRevenueMonthly(params: {
   storeId?: number | null;
   floorId?: number | null;
   metric?: "total" | "sales" | "fee" | "extra";
+  enabled?: boolean;
 }) {
   return useQuery({
     queryKey: [
@@ -111,6 +156,7 @@ export function useRevenueMonthly(params: {
       params.floorId ?? "all",
       params.metric ?? "total",
     ],
+    enabled: params.enabled ?? true,
     queryFn: () => {
       const q = new URLSearchParams();
       if (params.startDate && params.endDate) {
@@ -122,6 +168,40 @@ export function useRevenueMonthly(params: {
       if (params.storeId != null) q.set("store_id", String(params.storeId));
       if (params.floorId != null) q.set("floor_id", String(params.floorId));
       return apiGet<RevenueMonthlyResponse>(`/api/revenue-map/monthly?${q.toString()}`);
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}
+
+export function useRevenueUnmatchedDetails(params: {
+  startDate: string;
+  endDate: string;
+  storeId?: number | null;
+  limit?: number;
+  enabled?: boolean;
+}) {
+  return useQuery({
+    queryKey: [
+      "revenue-unmatched-details",
+      `${params.startDate}:${params.endDate}`,
+      params.storeId ?? "none",
+      params.limit ?? 500,
+    ],
+    enabled: Boolean(
+      (params.enabled ?? true)
+      && params.storeId != null
+      && params.startDate
+      && params.endDate,
+    ),
+    queryFn: () => {
+      const q = new URLSearchParams({
+        start_date: params.startDate,
+        end_date: params.endDate,
+        store_id: String(params.storeId),
+        limit: String(params.limit ?? 500),
+      });
+      return apiGet<RevenueUnmatchedResponse>(`/api/revenue-map/unmatched-details?${q.toString()}`);
     },
     staleTime: 0,
     refetchOnMount: "always",

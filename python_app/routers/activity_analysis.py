@@ -127,7 +127,13 @@ VOUCHER_MATCH_EXCLUDED_FLOW_SEQNOS = ("29042789",)
 def _voucher_match_flow_exclusion_sql(alias: str = "l") -> str:
     prefix = f"{alias}." if alias else ""
     excluded = ", ".join(f"'{seqno}'" for seqno in VOUCHER_MATCH_EXCLUDED_FLOW_SEQNOS)
-    return f"{prefix}tcflseqno::text NOT IN ({excluded})"
+    return f"""{prefix}tcflseqno::text NOT IN ({excluded})
+            AND NOT (
+              {prefix}tcflzy IN ('M', 'N')
+              AND TRIM(BOTH FROM COALESCE({prefix}tcflsource, '')) = '2'
+              AND TRIM(BOTH FROM COALESCE({prefix}tcflsyjid, '')) = '0000'
+              AND NULLIF(TRIM(BOTH FROM COALESCE({prefix}tcflinvno, '')), '') IS NULL
+            )"""
 
 
 class VoucherMatchEntry(BaseModel):
@@ -866,6 +872,151 @@ def front_buy_actual_amount_sql(log_alias: str = "l", sale_alias: str = "front_s
               THEN -({allocated_amount_sql})
               ELSE NULL
             END"""
+
+
+def voucher_business_rows_ctes_sql() -> str:
+    """Aggregate voucher-match business rows after deducting coupon overage."""
+    return f"""
+        use_ticket_rows AS MATERIALIZED (
+          SELECT
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            cashier_id,
+            invoice_no,
+            SUM(use_amount) < 0 AS is_return
+          FROM log_rows
+          WHERE action_code IN ('O', 'U', 'P', 'V')
+            AND invoice_no ~ '^[0-9]+$'
+          GROUP BY
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            cashier_id,
+            invoice_no
+          HAVING ABS(SUM(use_amount)) > 0.005
+        ),
+        use_overage_rows AS MATERIALIZED (
+          SELECT
+            utr.business_date,
+            utr.market_code,
+            utr.voucher_store_code,
+            utr.coupon_type,
+            SUM(
+              CASE
+                WHEN CASE
+                  WHEN ticket_head.billno IS NOT NULL
+                    THEN TRIM(BOTH FROM COALESCE(ticket_head.djlb::text, '')) IN ('2', '4')
+                  ELSE utr.is_return
+                END
+                  THEN -ABS(COALESCE(spg.spgsqyy, 0))
+                ELSE ABS(COALESCE(spg.spgsqyy, 0))
+              END
+            ) AS overage_amount
+          FROM use_ticket_rows utr
+          LEFT JOIN LATERAL (
+            SELECT h.billno, h.djlb
+            FROM salehead h
+            WHERE h.mkt = utr.market_code
+              AND h.syjh = utr.cashier_id
+              AND h.fphm = utr.invoice_no::numeric
+              AND h.rqsj::date = utr.business_date
+            ORDER BY h.billno DESC
+            LIMIT 1
+          ) ticket_head ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT MIN(sgl.sglbillno) AS billno
+            FROM salegoodslist sgl
+            WHERE ticket_head.billno IS NULL
+              AND sgl.sgldate = utr.business_date
+              AND sgl.sglmarket = utr.market_code
+              AND sgl.sglsyjid = utr.cashier_id
+              AND sgl.sglinvno = utr.invoice_no::numeric
+            HAVING COUNT(DISTINCT sgl.sglbillno) = 1
+          ) goods_fallback ON TRUE
+          JOIN sellpaygoods spg
+            ON spg.spgbillno = COALESCE(ticket_head.billno, goods_fallback.billno)
+           AND spg.spgpmtype = '5'
+           AND UPPER(SUBSTRING(COALESCE(spg.spgpayerid, '') FROM 1 FOR 1)) = UPPER(utr.coupon_type)
+          WHERE COALESCE(spg.spgsqyy, 0) <> 0
+          GROUP BY
+            utr.business_date,
+            utr.market_code,
+            utr.voucher_store_code,
+            utr.coupon_type
+        ),
+        use_business_rows AS (
+          SELECT
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            COALESCE(NULLIF(tq.tqname, ''), coupon_type) AS coupon_name,
+            SUM(use_amount) AS gross_business_amount,
+            COUNT(*) FILTER (WHERE use_amount <> 0) AS flow_count,
+            COUNT(DISTINCT NULLIF(member_no, '')) FILTER (WHERE use_amount <> 0) AS member_count
+          FROM log_rows lr
+          LEFT JOIN tktqtype tq ON tq.tqcode = lr.coupon_type
+          WHERE lr.action_code IN ('O', 'U', 'P', 'V')
+            AND NOT (UPPER(lr.coupon_type) = ANY(:exclude_coupon_types))
+          GROUP BY
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            COALESCE(NULLIF(tq.tqname, ''), coupon_type)
+        ),
+        business_rows AS (
+          SELECT
+            ubr.business_date,
+            ubr.market_code,
+            ubr.voucher_store_code,
+            ubr.coupon_type,
+            ubr.coupon_name,
+            'DEBIT_USE' AS match_type,
+            '借方用券' AS match_type_name,
+            ubr.gross_business_amount - COALESCE(uo.overage_amount, 0) AS business_amount,
+            ubr.flow_count,
+            ubr.member_count
+          FROM use_business_rows ubr
+          LEFT JOIN use_overage_rows uo
+            ON uo.business_date = ubr.business_date
+           AND uo.market_code = ubr.market_code
+           AND uo.voucher_store_code = ubr.voucher_store_code
+           AND uo.coupon_type = ubr.coupon_type
+          WHERE ABS(ubr.gross_business_amount - COALESCE(uo.overage_amount, 0)) > 0.005
+
+          UNION ALL
+
+          SELECT
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            COALESCE(NULLIF(tq.tqname, ''), coupon_type) AS coupon_name,
+            'CREDIT_BUY' AS match_type,
+            CASE
+              WHEN BOOL_AND(is_front_buy) FILTER (WHERE buy_amount <> 0)
+              THEN '{CREDIT_BUY_MATCH_TYPE_NAME}'
+              ELSE '贷方买券'
+            END AS match_type_name,
+            SUM(buy_amount) AS business_amount,
+            COUNT(*) FILTER (WHERE buy_amount <> 0) AS flow_count,
+            COUNT(DISTINCT NULLIF(member_no, '')) FILTER (WHERE buy_amount <> 0) AS member_count
+          FROM log_rows lr
+          LEFT JOIN tktqtype tq ON tq.tqcode = lr.coupon_type
+          WHERE lr.buy_amount <> 0
+            AND NOT (UPPER(lr.coupon_type) = ANY(:exclude_coupon_types))
+          GROUP BY
+            business_date,
+            market_code,
+            voucher_store_code,
+            coupon_type,
+            COALESCE(NULLIF(tq.tqname, ''), coupon_type)
+          HAVING ABS(SUM(buy_amount)) > 0.005
+        )"""
 
 
 def confirmed_voucher_match_movement_sql() -> str:
@@ -3844,6 +3995,8 @@ async def voucher_match_candidates(
     _ensure_required_tables(db)
     if not _table_exists(db, "bh_dw_gl_detail_fact2"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="财务凭证明细表 bh_dw_gl_detail_fact2 尚未创建或同步")
+    if not _table_exists(db, "sellpaygoods"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="付款商品分摊表 sellpaygoods 尚未创建或同步")
 
     business_scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     requested_subject_codes = [code.strip() for code in subject_codes if code.strip()] or ["122104"]
@@ -3931,6 +4084,8 @@ async def voucher_match_candidates(
             l.tcflzy AS action_code,
             {coupon_type_sql} AS coupon_type,
             l.tcflvipno AS member_no,
+            l.tcflsyjid AS cashier_id,
+            l.tcflinvno AS invoice_no,
             (l.tcflzy IN ('m', 'n') AND l.tcflsource IN ('2', '5')) AS is_front_buy,
             CASE
               WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
@@ -3951,49 +4106,7 @@ async def voucher_match_candidates(
           WHERE {match_log_filter}
             AND {_voucher_match_flow_exclusion_sql("l")}
         ),
-        business_rows AS (
-          SELECT
-            business_date,
-            market_code,
-            voucher_store_code,
-            coupon_type,
-            COALESCE(NULLIF(tq.tqname, ''), coupon_type) AS coupon_name,
-            'DEBIT_USE' AS match_type,
-            '借方用券' AS match_type_name,
-            SUM(use_amount) AS business_amount,
-            COUNT(*) FILTER (WHERE use_amount <> 0) AS flow_count,
-            COUNT(DISTINCT NULLIF(member_no, '')) FILTER (WHERE use_amount <> 0) AS member_count
-          FROM log_rows lr
-          LEFT JOIN tktqtype tq ON tq.tqcode = lr.coupon_type
-          WHERE lr.action_code IN ('O', 'U', 'P', 'V')
-            AND NOT (UPPER(lr.coupon_type) = ANY(:exclude_coupon_types))
-          GROUP BY business_date, market_code, voucher_store_code, coupon_type, COALESCE(NULLIF(tq.tqname, ''), coupon_type)
-          HAVING ABS(SUM(use_amount)) > 0.005
-
-          UNION ALL
-
-          SELECT
-            business_date,
-            market_code,
-            voucher_store_code,
-            coupon_type,
-            COALESCE(NULLIF(tq.tqname, ''), coupon_type) AS coupon_name,
-            'CREDIT_BUY' AS match_type,
-            CASE
-              WHEN BOOL_AND(is_front_buy) FILTER (WHERE buy_amount <> 0)
-              THEN '{CREDIT_BUY_MATCH_TYPE_NAME}'
-              ELSE '贷方买券'
-            END AS match_type_name,
-            SUM(buy_amount) AS business_amount,
-            COUNT(*) FILTER (WHERE buy_amount <> 0) AS flow_count,
-            COUNT(DISTINCT NULLIF(member_no, '')) FILTER (WHERE buy_amount <> 0) AS member_count
-          FROM log_rows lr
-          LEFT JOIN tktqtype tq ON tq.tqcode = lr.coupon_type
-          WHERE lr.buy_amount <> 0
-            AND NOT (UPPER(lr.coupon_type) = ANY(:exclude_coupon_types))
-          GROUP BY business_date, market_code, voucher_store_code, coupon_type, COALESCE(NULLIF(tq.tqname, ''), coupon_type)
-          HAVING ABS(SUM(buy_amount)) > 0.005
-        ),
+        {voucher_business_rows_ctes_sql()},
         voucher_rows AS MATERIALIZED (
           SELECT
             {VOUCHER_DETAIL_KEY_SQL} AS voucher_detail_id,

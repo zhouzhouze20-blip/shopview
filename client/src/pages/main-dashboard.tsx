@@ -13,6 +13,7 @@ import FloorsPage from "./floors";
 import ContractsPage from "./contracts";
 import ContractUnitBindingsPage from "./contract-unit-bindings";
 import SalesDashboardPage from "./sales-dashboard";
+import CategoryPerformancePage from "./category-performance";
 import ActivityAnalysisPage from "./activity-analysis";
 import VoucherMatchPage from "./activity-analysis/voucher-match";
 import ConfirmedRevenueDailyPage from "./activity-analysis/confirmed-revenue-daily";
@@ -25,9 +26,16 @@ import InventoryDetailReportPage, { HistoricalInventoryDetailReportPage } from "
 import InventoryMovementDetailReportPage from "./sales-reports/inventory-movement-detail";
 import SettledGrossProfitRankingPage from "./sales-reports/settled-gross-profit-ranking";
 import Od0002SalesGrossProfitPage from "./sales-reports/od0002-sales-gross-profit";
+import DailyFollowupReportPage from "./sales-reports/daily-followup";
+import Od0003CenterSalesFollowupPage from "./sales-reports/od0003-center-sales-followup";
+import Od0004MonthlyFollowupPage from "./sales-reports/od0004-monthly-followup";
+import Od0005MicroMallBrandSalesPage from "./sales-reports/od0005-micro-mall-brand-sales";
+import NonRentalMonthlyRevenuePage from "./sales-reports/non-rental-monthly-revenue";
 import Hdyy01GroupOperationAnalysisPage from "./sales-reports/hdyy01-group-operation-analysis";
+import Hy0001KeyBrandMemberPage from "./sales-reports/hy0001-key-brand-member";
 import MerchantPlanningPage from "./merchant-planning";
 import RevenueMapPage from "./revenue-map";
+import RevenueDashboardPage from "./revenue-dashboard";
 import JointRenewalRevenueReportPage from "./joint-renewal-revenue-report";
 import JointSettlementStatementsPage from "./joint-settlement-statements";
 import ManaframePage from "./manaframe";
@@ -45,6 +53,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { getContractDisplayEndDate } from "@/hooks/useContracts";
 import {
   aggregateStoreSummaries,
   useContractDashboardSummary,
@@ -149,6 +158,7 @@ const MODULE_LABELS: Record<string, string> = {
   contracts: "合同台账",
   "contract-unit-bindings": "合同柜位绑定",
   "sales-dashboard": "销售看板",
+  "category-performance": "品类主管绩效",
   "activity-analysis": "活动分析",
   "points-activity-analysis": "中心年中庆活动",
   "voucher-match": "凭证匹配",
@@ -162,9 +172,16 @@ const MODULE_LABELS: Record<string, string> = {
   "inventory-movement-detail": "进销存明细报表",
   "settled-gross-profit-ranking": "结算后销售毛利排行表",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
+  "daily-sales-followup": "OD0001 销售逐日跟进表",
+  "od0003-center-sales-followup": "OD0003 中心销售跟进表",
+  "od0004-monthly-followup": "OD0004 销售逐月跟进表",
+  "od0005-micro-mall-brand-sales": "OD0005 微商城品牌销售统计",
+  "non-rental-monthly-revenue": "非租赁品牌月度收益表",
   "hdyy01-group-operation-analysis": "HDYY01柜组经营分析表",
+  "hy0001-key-brand-member": "HY0001 重点品牌会员消费情况",
   "merchant-planning": "招商规划",
   "revenue-map": "收益地图",
+  "revenue-dashboard": "收益看板",
   "joint-renewal-revenue": "联营续签合同收益影响分析",
   "joint-settlement": "联营结算单管理",
   floors: "楼层定义",
@@ -518,7 +535,7 @@ function SystemOverview({
                     </TableCell>
                     <TableCell className="tabular-nums text-sm">{fmtDashDate(row.cmeffdate)}</TableCell>
                     <TableCell className="tabular-nums text-sm font-medium text-amber-900">
-                      {fmtDashDate(row.cmlapdate)}
+                      {fmtDashDate(getContractDisplayEndDate(row))}
                     </TableCell>
                     <TableCell className="text-sm">
                       <span className="line-clamp-2" title={row.supplier_name ?? row.cmsupid ?? undefined}>
@@ -693,6 +710,8 @@ export default function MainDashboard() {
         return <ContractUnitBindingsPage />;
       case "sales-dashboard":
         return <SalesDashboardPage />;
+      case "category-performance":
+        return <CategoryPerformancePage />;
       case "activity-analysis":
         return <ActivityAnalysisPage />;
       case "points-activity-analysis":
@@ -719,12 +738,26 @@ export default function MainDashboard() {
         return <SettledGrossProfitRankingPage />;
       case "od0002-sales-gross-profit":
         return <Od0002SalesGrossProfitPage />;
+      case "daily-sales-followup":
+        return <DailyFollowupReportPage />;
+      case "od0003-center-sales-followup":
+        return <Od0003CenterSalesFollowupPage />;
+      case "od0004-monthly-followup":
+        return <Od0004MonthlyFollowupPage />;
+      case "od0005-micro-mall-brand-sales":
+        return <Od0005MicroMallBrandSalesPage />;
+      case "non-rental-monthly-revenue":
+        return <NonRentalMonthlyRevenuePage />;
       case "hdyy01-group-operation-analysis":
         return <Hdyy01GroupOperationAnalysisPage />;
+      case "hy0001-key-brand-member":
+        return <Hy0001KeyBrandMemberPage />;
       case "merchant-planning":
         return <MerchantPlanningPage />;
       case "revenue-map":
         return <RevenueMapPage />;
+      case "revenue-dashboard":
+        return <RevenueDashboardPage />;
       case "joint-renewal-revenue":
         return <JointRenewalRevenueReportPage />;
       case "decorations":

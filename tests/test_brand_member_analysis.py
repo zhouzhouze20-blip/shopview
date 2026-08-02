@@ -193,16 +193,22 @@ def test_classification_sql_keeps_indexed_fact_columns_sargable():
     assert "TRIM(BOTH FROM COALESCE(s.sglmarket" not in sql
 
 
-def test_classification_looks_up_only_selected_members_history():
+def test_classification_checks_history_in_priority_order_without_expanding_every_receipt():
     compact = " ".join(_period_classification_ctes().split())
 
-    assert "member_history_heads AS MATERIALIZED" in compact
+    assert "target_history_members AS MATERIALIZED" in compact
+    assert "s.sglmfid = :target_group_code" in compact
+    assert "non_target_members AS MATERIALIZED" in compact
+    assert "department_history_members AS MATERIALIZED" in compact
+    assert "remaining_members AS MATERIALIZED" in compact
+    assert "store_history_members AS MATERIALIZED" in compact
     assert "h.mkt = :store_code" in compact
     assert "= pm.member_no" in compact
     assert "CROSS JOIN LATERAL" in compact
     assert "NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL" in compact
-    assert "OFFSET 0" in compact
-    assert "s.sglbillno = heads.billno" in compact
+    assert "LIMIT 1 OFFSET 0" in compact
+    assert "member_history_heads" not in compact
+    assert "GROUP BY heads.member_no" not in compact
 
 
 def test_classification_counts_only_receipt_level_positive_purchase_tickets():
@@ -410,11 +416,11 @@ def test_old_customer_funnel_scans_period_lines_by_valid_store_groups():
     }
     compact = " ".join(db.sql.split())
     assert "store_groups AS MATERIALIZED" in compact
-    assert "period_lines AS MATERIALIZED" in compact
-    assert "s.sglmfid = groups.group_code" in compact
+    assert "period_goods AS MATERIALIZED" in compact
+    assert "period_receipts AS MATERIALIZED" in compact
+    assert "GROUP BY goods.billno, goods.store_code" in compact
     assert "s.sglhsrq BETWEEN :start_date AND :end_date" in compact
-    assert "CROSS JOIN LATERAL" in compact
-    assert "JOIN period_lines lines ON lines.member_no = old.member_no" in compact
+    assert "JOIN period_receipts receipts ON receipts.billno = h.billno" in compact
     assert db.params == {**params, "store_prefix": "601%"}
 
 
@@ -472,7 +478,8 @@ def test_report_uses_a_scoped_timeout_for_heavy_history_queries(monkeypatch):
         (
             f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'",
             {},
-        )
+        ),
+        ("SET LOCAL enable_bitmapscan = off", {}),
     ]
 
 

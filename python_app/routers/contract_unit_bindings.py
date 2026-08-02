@@ -4,7 +4,7 @@
 用于补维护 ERP 合同未带柜位/经营单元字段时，ShopView 图纸柜位与合同号的关系。
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,9 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models.database import get_db
-from models.models import User
+from models.models import OperationLog, User
 from routers.auth import get_current_user
-from routers.authz import require_permission
+from routers.authz import load_business_scope, require_permission
+from routers.contracts import _load_contract_list_items
 
 
 router = APIRouter(
@@ -88,6 +89,52 @@ def _normalize_contract_no(value: Any) -> str:
     return contract_no
 
 
+def _normalize_shop_unit_ids(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail="shop_unit_ids 必须是数组")
+
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for raw_id in value:
+        try:
+            unit_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"无效的经营单元 ID: {raw_id}")
+        if unit_id <= 0:
+            raise HTTPException(status_code=400, detail=f"无效的经营单元 ID: {raw_id}")
+        if unit_id not in seen:
+            normalized.append(unit_id)
+            seen.add(unit_id)
+    if len(normalized) > 1:
+        raise HTTPException(status_code=400, detail="一个合同只能绑定一个柜位")
+    return normalized
+
+
+def _operation_method_label(value: Any) -> Optional[str]:
+    normalized = str(value or "").strip()
+    return {
+        "1": "经销",
+        "2": "成本代销",
+        "3": "扣率代销",
+        "4": "联营",
+        "5": "租赁",
+    }.get(normalized, normalized or None)
+
+
+def _lock_contract_bindings(db: Session, contract_no: str) -> None:
+    """Serialize current-binding changes for one contract."""
+    db.execute(
+        text(
+            """
+            SELECT pg_advisory_xact_lock(
+              hashtext('contract-unit-binding:' || upper(trim(:contract_id)))
+            )
+            """
+        ),
+        {"contract_id": contract_no},
+    )
+
+
 def _require_business_unit(db: Session, unit_id: Any) -> int:
     try:
         normalized = int(unit_id)
@@ -157,7 +204,7 @@ async def list_contract_unit_bindings(
         cm.cmtitle AS contract_title,
         cm.cmstatus AS contract_status,
         cm.cmeffdate::date AS contract_start_date,
-        cm.cmlapdate::date AS contract_end_date,
+        COALESCE(cm.sjcgdate, cm.cmlapdate)::date AS contract_end_date,
         cm.cmsupid AS supplier_code,
         cm.cmppname AS brand_name,
         """
@@ -274,20 +321,21 @@ async def create_contract_unit_binding(
     if start_date and end_date and start_date > end_date:
         raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
 
+    if status_value == "ACTIVE":
+        _lock_contract_bindings(db, contract_no)
     dup = db.execute(
         text(
             """
             SELECT id FROM business_unit_binding
-            WHERE shop_unit_id = :shop_unit_id
-              AND upper(trim(contract_id)) = upper(trim(:contract_id))
+            WHERE upper(trim(contract_id)) = upper(trim(:contract_id))
               AND upper(trim(COALESCE(status, 'ACTIVE'))) = 'ACTIVE'
             LIMIT 1
             """
         ),
-        {"shop_unit_id": shop_unit_id, "contract_id": contract_no},
+        {"contract_id": contract_no},
     ).fetchone()
     if dup and status_value == "ACTIVE":
-        raise HTTPException(status_code=400, detail="该柜位与合同已有有效绑定")
+        raise HTTPException(status_code=409, detail="该合同已有有效柜位；请编辑原绑定，不要新增第二个柜位")
 
     try:
         row = db.execute(
@@ -353,7 +401,6 @@ async def update_contract_unit_binding(
         raise HTTPException(status_code=400, detail=f"status 非法，允许值: {', '.join(sorted(VALID_STATUS))}")
     start_date = _parse_date(body.get("start_date"), "start_date") if "start_date" in body else None
     end_date = _parse_date(body.get("end_date"), "end_date") if "end_date" in body else None
-    final_shop_unit_id = shop_unit_id if "shop_unit_id" in body else exists["shop_unit_id"]
     final_contract_no = contract_no if "contract_id" in body else exists["contract_id"]
     final_status = status_value if "status" in body else exists["status"]
     final_start_date = start_date if "start_date" in body else exists["start_date"]
@@ -363,12 +410,12 @@ async def update_contract_unit_binding(
         raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
 
     if str(final_status or "ACTIVE").strip().upper() == "ACTIVE":
+        _lock_contract_bindings(db, str(final_contract_no))
         duplicate = db.execute(
             text(
                 """
                 SELECT id FROM business_unit_binding
                 WHERE id <> :id
-                  AND shop_unit_id = :shop_unit_id
                   AND upper(trim(contract_id)) = upper(trim(:contract_id))
                   AND upper(trim(COALESCE(status, 'ACTIVE'))) = 'ACTIVE'
                 LIMIT 1
@@ -376,12 +423,11 @@ async def update_contract_unit_binding(
             ),
             {
                 "id": binding_id,
-                "shop_unit_id": final_shop_unit_id,
                 "contract_id": final_contract_no,
             },
         ).fetchone()
         if duplicate:
-            raise HTTPException(status_code=409, detail="该柜位与合同已有其他有效绑定")
+            raise HTTPException(status_code=409, detail="该合同已有其他有效柜位；一个合同只能保留一个当前绑定")
 
     updates = ["updated_at = NOW()"]
     params: dict[str, Any] = {"id": binding_id}
@@ -428,3 +474,213 @@ async def disable_contract_unit_binding(
         raise HTTPException(status_code=404, detail="绑定记录不存在")
     db.commit()
     return {"message": "绑定已停用", "id": binding_id}
+
+
+@router.put("/by-contract/{contract_id}")
+async def replace_contract_unit_bindings(
+    contract_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """从合同台账原子替换一个合同当前显示的全部柜位绑定。"""
+    require_permission(db, current_user, "contract.view")
+    require_permission(db, current_user, "contract.unit_binding.edit")
+    _require_binding_table(db)
+
+    contract_no = _normalize_contract_no(contract_id)
+    shop_unit_ids = _normalize_shop_unit_ids(body.get("shop_unit_ids"))
+    contract_scope = load_business_scope(db, current_user, fallback_resource_code="contract")
+    visible_contracts = _load_contract_list_items(
+        db,
+        contract_scope,
+        contract_numbers=[contract_no],
+        limit=None,
+    )
+    contract = next(
+        (
+            item
+            for item in visible_contracts
+            if str(item.get("cmcontno") or "").strip().upper() == contract_no.upper()
+        ),
+        None,
+    )
+    if not contract:
+        raise HTTPException(status_code=404, detail="合同不存在或不在当前数据权限范围内")
+
+    unit_rows: list[dict[str, Any]] = []
+    if shop_unit_ids:
+        unit_rows = [
+            dict(row)
+            for row in db.execute(
+                text(
+                    """
+                    SELECT bu.id, bu.unit_code, f.store_code
+                    FROM business_units bu
+                    LEFT JOIN floors f ON f.id = bu.floor_id
+                    WHERE bu.id = ANY(:shop_unit_ids)
+                    """
+                ),
+                {"shop_unit_ids": shop_unit_ids},
+            ).mappings().all()
+        ]
+        found_ids = {int(row["id"]) for row in unit_rows}
+        missing_ids = [unit_id for unit_id in shop_unit_ids if unit_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=400, detail=f"经营单元不存在: {', '.join(map(str, missing_ids))}")
+
+    contract_store_codes = {
+        value.strip().upper()
+        for value in str(contract.get("store_codes") or "").split(",")
+        if value.strip()
+    }
+    if contract_store_codes:
+        cross_store_units = [
+            str(row.get("unit_code") or row["id"])
+            for row in unit_rows
+            if str(row.get("store_code") or "").strip().upper() not in contract_store_codes
+        ]
+        if cross_store_units:
+            raise HTTPException(
+                status_code=400,
+                detail=f"所选柜位不属于合同门店: {', '.join(cross_store_units)}",
+            )
+
+    # 同一合同的整组替换必须串行，避免两个管理员同时保存时互相覆盖。
+    _lock_contract_bindings(db, contract_no)
+    existing_rows = [
+        dict(row)
+        for row in db.execute(
+            text(
+                """
+                SELECT b.id, b.shop_unit_id, b.status, bu.unit_code
+                FROM business_unit_binding b
+                LEFT JOIN business_units bu ON bu.id = b.shop_unit_id
+                WHERE upper(trim(b.contract_id)) = upper(trim(:contract_id))
+                  AND upper(trim(COALESCE(b.status, 'ACTIVE'))) = 'ACTIVE'
+                ORDER BY
+                  b.updated_at DESC NULLS LAST,
+                  b.id DESC
+                """
+            ),
+            {"contract_id": contract_no},
+        ).mappings().all()
+    ]
+    previous_unit_ids = {
+        int(row["shop_unit_id"])
+        for row in existing_rows
+        if row.get("shop_unit_id") is not None
+    }
+    requested_unit_ids = set(shop_unit_ids)
+    unit_by_id = {int(row["id"]): row for row in unit_rows}
+    previous_unit_codes = sorted(
+        {
+            str(row.get("unit_code") or row.get("shop_unit_id") or "").strip()
+            for row in existing_rows
+            if row.get("unit_code") or row.get("shop_unit_id")
+        }
+    )
+    requested_unit_codes = [str(unit_by_id[unit_id]["unit_code"]) for unit_id in shop_unit_ids]
+
+    if previous_unit_ids == requested_unit_ids:
+        return {
+            "message": "柜位号未发生变化",
+            "contract_id": contract_no,
+            "unit_codes": requested_unit_codes,
+            "created": 0,
+            "reactivated": 0,
+            "disabled": 0,
+        }
+
+    existing_by_unit: dict[int, dict[str, Any]] = {}
+    for row in existing_rows:
+        if row.get("shop_unit_id") is None:
+            continue
+        existing_by_unit.setdefault(int(row["shop_unit_id"]), row)
+
+    try:
+        disabled_result = db.execute(
+            text(
+                """
+                UPDATE business_unit_binding
+                SET status = 'INACTIVE', updated_at = NOW()
+                WHERE upper(trim(contract_id)) = upper(trim(:contract_id))
+                  AND upper(trim(COALESCE(status, 'ACTIVE'))) = 'ACTIVE'
+                """
+            ),
+            {"contract_id": contract_no},
+        )
+
+        created = 0
+        reactivated = 0
+        for unit_id in shop_unit_ids:
+            existing = existing_by_unit.get(unit_id)
+            if existing:
+                db.execute(
+                    text(
+                        """
+                        UPDATE business_unit_binding
+                        SET status = 'ACTIVE', is_primary = TRUE, updated_at = NOW()
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": existing["id"]},
+                )
+                reactivated += 1
+                continue
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO business_unit_binding (
+                      shop_unit_id, contract_id, business_type, start_date, end_date,
+                      is_primary, status, remark, created_at, updated_at
+                    )
+                    VALUES (
+                      :shop_unit_id, :contract_id, :business_type, :start_date, :end_date,
+                      TRUE, 'ACTIVE', :remark, NOW(), NOW()
+                    )
+                    """
+                ),
+                {
+                    "shop_unit_id": unit_id,
+                    "contract_id": contract_no,
+                    "business_type": _operation_method_label(contract.get("cmwmid")),
+                    "start_date": contract.get("cmeffdate"),
+                    "end_date": contract.get("sjcgdate") or contract.get("cmlapdate"),
+                    "remark": "合同台账手工维护",
+                },
+            )
+            created += 1
+
+        disabled = max(int(disabled_result.rowcount or 0) - reactivated, 0)
+        db.add(
+            OperationLog(
+                user_id=current_user.user_id,
+                action_code="unit_binding_edit",
+                resource_code="contract",
+                target_id=contract_no,
+                detail={
+                    "source": "contract_ledger",
+                    "before_unit_codes": previous_unit_codes,
+                    "after_unit_codes": requested_unit_codes,
+                    "created": created,
+                    "reactivated": reactivated,
+                    "disabled": disabled,
+                },
+                created_at=datetime.now(),
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "柜位号已更新",
+        "contract_id": contract_no,
+        "unit_codes": requested_unit_codes,
+        "created": created,
+        "reactivated": reactivated,
+        "disabled": disabled,
+    }

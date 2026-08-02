@@ -32,6 +32,12 @@ export default function UnitMapVersionsPage() {
   const baseMapsQuery = useBaseMapsList(floorId);
   const [baseMapId, setBaseMapId] = useState<number | undefined>(undefined);
   const [importingId, setImportingId] = useState<number | null>(null);
+  const [lastImportSummary, setLastImportSummary] = useState<{
+    versionId: number;
+    inherited: number;
+    needsReview: number;
+    sourceVersionCode?: string | null;
+  } | null>(null);
 
   const [versionCode, setVersionCode] = useState("");
   const [changeNote, setChangeNote] = useState("");
@@ -189,8 +195,22 @@ export default function UnitMapVersionsPage() {
         throw new Error(t || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      toast({ title: "导入成功", description: `unit_code=${data.unit_code}` });
+      const inherited = Number(data.paths_inherited ?? 0);
+      const needsReview = Number(data.paths_need_review ?? data.paths_total ?? 0);
+      setLastImportSummary({
+        versionId,
+        inherited,
+        needsReview,
+        sourceVersionCode: data.matched_from_version_code,
+      });
+      toast({
+        title: "导入成功",
+        description: `自动继承 ${inherited} 个柜位号，待人工编辑 ${needsReview} 个 path`,
+      });
       setPreviewVersionId(versionId);
+      if (previewVersionId === versionId) {
+        await geoQuery.refetch();
+      }
     } catch (e) {
       toast({
         title: "导入失败",
@@ -598,7 +618,8 @@ export default function UnitMapVersionsPage() {
               <div className="rounded-lg border bg-white overflow-hidden">
               <div className="px-4 py-2 border-b text-xs text-muted-foreground flex items-center justify-between">
                 <div>
-                  版本ID：{previewVersionId} ｜ 几何数量：{geoQuery.data?.length ?? 0}
+                  版本ID：{previewVersionId} ｜ 几何数量：{geoQuery.data?.length ?? 0} ｜
+                  待人工编辑：{(geoQuery.data ?? []).filter((g) => g.unit_code === g.svg_element_id).length}
                 </div>
                 <Button size="sm" variant="outline" onClick={() => geoQuery.refetch()} disabled={geoQuery.isLoading}>
                   刷新
@@ -614,18 +635,30 @@ export default function UnitMapVersionsPage() {
                   <image href={previewBaseMapUrl} x={vb.x} y={vb.y} width={vb.w} height={vb.h} />
                   {/* 柜位路径 */}
                   <g transform={alignTransformText}>
-                    {(geoQuery.data ?? []).map((g) => (
-                      <path
-                        key={g.id}
-                        d={g.path_data}
-                        fill="rgba(59, 130, 246, 0.18)"
-                        stroke="rgba(37, 99, 235, 0.9)"
-                        strokeWidth={2}
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    ))}
+                    {(geoQuery.data ?? []).map((g) => {
+                      const needsReview = g.unit_code === g.svg_element_id;
+                      return (
+                        <path
+                          key={g.id}
+                          d={g.path_data}
+                          fill={needsReview ? "rgba(245, 158, 11, 0.32)" : "rgba(59, 130, 246, 0.18)"}
+                          stroke={needsReview ? "rgba(217, 119, 6, 0.95)" : "rgba(37, 99, 235, 0.9)"}
+                          strokeWidth={needsReview ? 3 : 2}
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      );
+                    })}
                   </g>
                 </svg>
+              </div>
+              <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
+                <div>蓝色：已继承或已编辑；橙色：坐标发生变化，柜位号仍为 path，需人工编辑。</div>
+                {lastImportSummary?.versionId === previewVersionId && (
+                  <div className="font-medium text-slate-700">
+                    本次导入：继承 {lastImportSummary.inherited} 个，待编辑 {lastImportSummary.needsReview} 个
+                    {lastImportSummary.sourceVersionCode ? `（对比 ${lastImportSummary.sourceVersionCode}）` : "（没有可对比的上一版本）"}。
+                  </div>
+                )}
               </div>
             </div>
             </div>

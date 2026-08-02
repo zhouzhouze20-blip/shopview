@@ -5,6 +5,12 @@ import type {
 } from "./od0002-report.ts";
 
 const metric = {
+  ticket_count_current: 100,
+  ticket_count_prior: 80,
+  ticket_count_yoy: 0.25,
+  average_ticket_current: 1200,
+  average_ticket_prior: 1250,
+  average_ticket_yoy: -0.04,
   sales_current: 120000,
   sales_prior: 100000,
   sales_yoy: 0.2,
@@ -64,6 +70,16 @@ const departmentCategoryRows = [
   },
 ] satisfies Od0002Row[];
 
+const specialSaleRow = {
+  ...row,
+  dimension_code: "6010101999",
+  dimension_name: "一楼特卖厅",
+  department_code: "6010101",
+  department_name: "一店一部(化妆)",
+  brand_code: "00310",
+  brand_name: "Christian dior迪奥",
+} satisfies Od0002Row;
+
 export const od0002ResponseContract = {
   dates: {
     start_date: "2026-01-01",
@@ -79,6 +95,7 @@ export const od0002ResponseContract = {
     areas: [row],
     categories: [row],
     groups: [row],
+    special_sales: [specialSaleRow],
     floors: [row],
   },
   totals: {
@@ -88,6 +105,7 @@ export const od0002ResponseContract = {
     areas: metric,
     categories: metric,
     groups: metric,
+    special_sales: metric,
     floors: metric,
   },
   quality: {

@@ -7,7 +7,7 @@ import {
   getReceiptProductDisplay,
   getDepartmentDrilldownTab,
   getGroupDrilldownTab,
-  isCenterCosmeticsRetailPriceScope,
+  isCosmeticsRetailPriceScope,
   isSupermarketDepartment,
 } from "./sales-dashboard-drilldown.ts";
 
@@ -57,30 +57,37 @@ test("receipt product display keeps goods code and barcode visible", () => {
   );
 });
 
-test("retail price scope matches only Changzhou Shopping Center cosmetics", () => {
+test("retail price scope matches Shopping Center and New Century cosmetics", () => {
   assert.equal(
-    isCenterCosmeticsRetailPriceScope(
+    isCosmeticsRetailPriceScope(
       { store_id: "1", store_name: "常州购物中心" },
       { department_code: "6010101", department_name: "中心一部(化妆)" },
     ),
     true,
   );
   assert.equal(
-    isCenterCosmeticsRetailPriceScope(
+    isCosmeticsRetailPriceScope(
       { store_id: 601, store_name: "常州购物中心" },
       { department_code: "", department_name: "中心一部（化妆）" },
     ),
     true,
   );
   assert.equal(
-    isCenterCosmeticsRetailPriceScope(
+    isCosmeticsRetailPriceScope(
       { store_id: "3", store_name: "常州新世纪" },
       { department_code: "6030101", department_name: "新世纪一部(化妆)" },
     ),
-    false,
+    true,
   );
   assert.equal(
-    isCenterCosmeticsRetailPriceScope(
+    isCosmeticsRetailPriceScope(
+      { store_id: "603", store_name: "常州新世纪商城" },
+      { department_code: "", department_name: "新世纪一部（化妆）" },
+    ),
+    true,
+  );
+  assert.equal(
+    isCosmeticsRetailPriceScope(
       { store_id: "1", store_name: "常州购物中心" },
       { department_code: "6010102", department_name: "中心四部(男装)" },
     ),
@@ -89,13 +96,13 @@ test("retail price scope matches only Changzhou Shopping Center cosmetics", () =
 });
 
 test("retail price scope requires both store and department", () => {
-  assert.equal(isCenterCosmeticsRetailPriceScope(null, { department_code: "6010101" }), false);
-  assert.equal(isCenterCosmeticsRetailPriceScope({ store_id: "1" }, null), false);
+  assert.equal(isCosmeticsRetailPriceScope(null, { department_code: "6010101" }), false);
+  assert.equal(isCosmeticsRetailPriceScope({ store_id: "1" }, null), false);
 });
 
 test("sales dashboard wires the conditional retail price column through page and exports", () => {
   const pageSource = readFileSync(new URL("../pages/sales-dashboard.tsx", import.meta.url), "utf8");
-  assert.match(pageSource, /isCenterCosmeticsRetailPriceScope/);
+  assert.match(pageSource, /isCosmeticsRetailPriceScope/);
   assert.match(pageSource, /priced_sales_amount/);
   assert.match(pageSource, />零售价</);
   assert.match(pageSource, /includePricedSalesAmount/);
@@ -110,4 +117,58 @@ test("sales dashboard wires the conditional retail price column through page and
   assert.match(ticketTabSource, /row\.cash_register_no/);
   assert.doesNotMatch(ticketTabSource, /ticketsTableTotals\.quantity/);
   assert.match(ticketTabSource, /showPricedSalesAmount \? 14 : 13/);
+});
+
+test("desktop sales dashboard sends rental and back-office exclusion switches through every drilldown", () => {
+  const pageSource = readFileSync(new URL("../pages/sales-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(pageSource, /排除租赁销售/);
+  assert.match(pageSource, /排除后台部门销售/);
+  assert.match(pageSource, /aria-pressed=\{excludeRental\}/);
+  assert.match(pageSource, /aria-pressed=\{excludeBackofficeDepartments\}/);
+  assert.match(pageSource, /exclude_rental: excludeRental/);
+  assert.match(pageSource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
+
+  const commonParamsStart = pageSource.indexOf("const commonParams = useMemo");
+  const storesQueryStart = pageSource.indexOf("const storesQuery", commonParamsStart);
+  const commonParamsSource = pageSource.slice(commonParamsStart, storesQueryStart);
+  assert.match(commonParamsSource, /exclude_rental: excludeRental/);
+  assert.match(commonParamsSource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
+
+  const ticketsQueryStart = pageSource.indexOf("const ticketsQuery");
+  const ticketsQueryEnd = pageSource.indexOf("const ticketDetailQuery", ticketsQueryStart);
+  const ticketsQuerySource = pageSource.slice(ticketsQueryStart, ticketsQueryEnd);
+  assert.match(ticketsQuerySource, /exclude_rental: excludeRental/);
+  assert.match(ticketsQuerySource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
+
+  const analysisStart = pageSource.indexOf("const handleAnalyzeGroups");
+  const analysisEnd = pageSource.indexOf("const handleExportTickets", analysisStart);
+  const analysisSource = pageSource.slice(analysisStart, analysisEnd);
+  assert.match(analysisSource, /exclude_rental: excludeRental/);
+  assert.match(analysisSource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
+});
+
+test("mobile sales dashboard shows current retail price without a prior-period retail field", () => {
+  const pageSource = readFileSync(new URL("../pages/mobile-sales-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(pageSource, /isCosmeticsRetailPriceScope/);
+  assert.match(pageSource, /row\.priced_sales_amount/);
+  assert.match(pageSource, />本期零售价</);
+  assert.doesNotMatch(pageSource, /同期零售价/);
+});
+
+test("mobile sales dashboard excludes rental and back-office sales by default and exposes one add button", () => {
+  const pageSource = readFileSync(new URL("../pages/mobile-sales-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(pageSource, /useState\(false\).*includeRentalAndBackofficeSales|includeRentalAndBackofficeSales.*useState\(false\)/s);
+  assert.match(pageSource, /exclude_rental: !includeRentalAndBackofficeSales/);
+  assert.match(pageSource, /exclude_backoffice_departments: !includeRentalAndBackofficeSales/);
+  assert.match(pageSource, /level === "stores"[\s\S]*添加租赁\/后台销售/);
+  assert.match(pageSource, /aria-pressed=\{includeRentalAndBackofficeSales\}/);
+
+  const ticketsQueryStart = pageSource.indexOf("const ticketsQuery");
+  const ticketsQueryEnd = pageSource.indexOf("const ticketDetailQuery", ticketsQueryStart);
+  const ticketsQuerySource = pageSource.slice(ticketsQueryStart, ticketsQueryEnd);
+  assert.match(ticketsQuerySource, /exclude_rental: !includeRentalAndBackofficeSales/);
+  assert.match(ticketsQuerySource, /exclude_backoffice_departments: !includeRentalAndBackofficeSales/);
 });

@@ -112,6 +112,7 @@ export interface ContractListItem {
   cmcatname?: string | null;
   cmeffdate?: string | null;
   cmlapdate?: string | null;
+  sjcgdate?: string | null;
   cmmoney?: number | null;
   cmpaycode?: string | null;
   cmyfkmode?: string | null;
@@ -137,6 +138,21 @@ export interface ContractListItem {
   clear_flags?: string | null;
   bottom_amount?: number | null;
   bottom_profit?: number | null;
+}
+
+export function getContractDisplayEndDate(
+  contract?: {
+    sjcgdate?: string | null;
+    cmlapdate?: string | null;
+    range_end_date?: string | null;
+  } | null,
+) {
+  return (
+    contract?.sjcgdate?.trim() ||
+    contract?.cmlapdate?.trim() ||
+    contract?.range_end_date?.trim() ||
+    null
+  );
 }
 
 export interface ContractListResponse {

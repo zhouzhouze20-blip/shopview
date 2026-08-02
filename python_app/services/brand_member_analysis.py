@@ -438,45 +438,79 @@ def _period_classification_ctes() -> str:
       FROM period_member_rows
       WHERE has_positive_purchase IS TRUE
     ),
-    member_history_heads AS MATERIALIZED (
-      SELECT
-        h.billno,
-        h.store_code,
-        pm.member_no
+    target_history_members AS MATERIALIZED (
+      SELECT DISTINCT pm.member_no
+      FROM salegoodslist s
+      JOIN salehead h
+        ON h.billno = s.sglbillno
+       AND h.mkt = s.sglmarket
+      JOIN purchase_members pm
+        ON pm.member_no = NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '')
+      WHERE s.sglmarket = :store_code
+        AND s.sglmfid = :target_group_code
+        AND s.sglhsrq < :start_date
+        AND COALESCE(s.sglxssr, 0) > 0
+        AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+    ),
+    department_groups AS MATERIALIZED (
+      SELECT mfcode AS group_code
+      FROM manaframe
+      WHERE UPPER(TRIM(BOTH FROM COALESCE(mfpcode, ''))) = :target_department_code
+    ),
+    non_target_members AS MATERIALIZED (
+      SELECT pm.member_no
       FROM purchase_members pm
+      LEFT JOIN target_history_members target USING (member_no)
+      WHERE target.member_no IS NULL
+    ),
+    department_history_members AS MATERIALIZED (
+      SELECT pm.member_no
+      FROM non_target_members pm
       CROSS JOIN LATERAL (
-        SELECT h.billno, h.mkt AS store_code
+        SELECT 1
         FROM salehead h
+        CROSS JOIN LATERAL (
+          SELECT 1
+          FROM salegoodslist s
+          WHERE s.sglbillno = h.billno
+            AND s.sglmarket = h.mkt
+            AND s.sglhsrq < :start_date
+            AND COALESCE(s.sglxssr, 0) > 0
+            AND s.sglmfid IN (SELECT group_code FROM department_groups)
+          LIMIT 1 OFFSET 0
+        ) line
         WHERE h.mkt = :store_code
           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
           AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
-        OFFSET 0
-      ) h
+        LIMIT 1 OFFSET 0
+      ) found
     ),
-    history AS MATERIALIZED (
-      SELECT
-        heads.member_no,
-        BOOL_OR(
-          s.sglmfid = :target_group_code
-          AND COALESCE(s.sglxssr, 0) > 0
-        ) AS had_target_purchase,
-        BOOL_OR(
-          UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) = :target_department_code
-          AND COALESCE(s.sglxssr, 0) > 0
-        ) AS had_same_department_purchase,
-        BOOL_OR(COALESCE(s.sglxssr, 0) > 0) AS had_store_purchase
-      FROM member_history_heads heads
+    remaining_members AS MATERIALIZED (
+      SELECT pm.member_no
+      FROM non_target_members pm
+      LEFT JOIN department_history_members department USING (member_no)
+      WHERE department.member_no IS NULL
+    ),
+    store_history_members AS MATERIALIZED (
+      SELECT pm.member_no
+      FROM remaining_members pm
       CROSS JOIN LATERAL (
-        SELECT s.sglmfid, s.sglxssr
-        FROM salegoodslist s
-        WHERE s.sglbillno = heads.billno
-          AND s.sglmarket = heads.store_code
-          AND s.sglhsrq < :start_date
-        OFFSET 0
-      ) s
-      LEFT JOIN manaframe mf
-        ON mf.mfcode = s.sglmfid
-      GROUP BY heads.member_no
+        SELECT 1
+        FROM salehead h
+        CROSS JOIN LATERAL (
+          SELECT 1
+          FROM salegoodslist s
+          WHERE s.sglbillno = h.billno
+            AND s.sglmarket = h.mkt
+            AND s.sglhsrq < :start_date
+            AND COALESCE(s.sglxssr, 0) > 0
+          LIMIT 1 OFFSET 0
+        ) line
+        WHERE h.mkt = :store_code
+          AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
+          AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        LIMIT 1 OFFSET 0
+      ) found
     ),
     classified AS MATERIALIZED (
       SELECT
@@ -484,13 +518,15 @@ def _period_classification_ctes() -> str:
         pm.sales_revenue,
         pm.ticket_count,
         CASE
-          WHEN COALESCE(history.had_target_purchase, FALSE) THEN 'brand_returning'
-          WHEN COALESCE(history.had_same_department_purchase, FALSE) THEN 'same_department_inflow'
-          WHEN COALESCE(history.had_store_purchase, FALSE) THEN 'cross_department_inflow'
+          WHEN target.member_no IS NOT NULL THEN 'brand_returning'
+          WHEN department.member_no IS NOT NULL THEN 'same_department_inflow'
+          WHEN store.member_no IS NOT NULL THEN 'cross_department_inflow'
           ELSE 'external_new'
         END AS segment_code
       FROM purchase_members pm
-      LEFT JOIN history ON history.member_no = pm.member_no
+      LEFT JOIN target_history_members target USING (member_no)
+      LEFT JOIN department_history_members department USING (member_no)
+      LEFT JOIN store_history_members store USING (member_no)
     )
     """
 
@@ -929,41 +965,46 @@ def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, 
             AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
         ),
         store_groups AS MATERIALIZED (
-          SELECT UPPER(TRIM(BOTH FROM mf.mfcode)) AS group_code
+          SELECT
+            UPPER(TRIM(BOTH FROM mf.mfcode)) AS group_code,
+            UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) AS department_code
           FROM manaframe mf
           WHERE TRIM(BOTH FROM mf.mfcode) LIKE :store_prefix
             AND LENGTH(TRIM(BOTH FROM mf.mfcode)) = 10
         ),
-        period_lines AS MATERIALIZED (
+        period_goods AS MATERIALIZED (
           SELECT
-            NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no,
-            UPPER(TRIM(BOTH FROM COALESCE(mf.mfpcode, ''))) AS department_code,
+            s.sglbillno AS billno,
+            s.sglmarket AS store_code,
             UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))) AS group_code
-          FROM store_groups groups
-          JOIN salegoodslist s
-            ON s.sglmarket = :store_code
-           AND s.sglmfid = groups.group_code
-           AND s.sglhsrq BETWEEN :start_date AND :end_date
-           AND COALESCE(s.sglxssr, 0) > 0
-          CROSS JOIN LATERAL (
-            SELECT h.hykh
-            FROM salehead h
-            WHERE h.billno = s.sglbillno
-              AND h.mkt = s.sglmarket
-            OFFSET 0
-          ) h
-          LEFT JOIN manaframe mf
-            ON mf.mfcode = s.sglmfid
+          FROM salegoodslist s
+          WHERE s.sglmarket = :store_code
+            AND s.sglhsrq BETWEEN :start_date AND :end_date
+            AND COALESCE(s.sglxssr, 0) > 0
+        ),
+        period_receipts AS MATERIALIZED (
+          SELECT
+            goods.billno,
+            goods.store_code,
+            BOOL_OR(groups.department_code = :target_department_code) AS visited_department,
+            BOOL_OR(goods.group_code = :target_group_code) AS repurchased_target
+          FROM period_goods goods
+          JOIN store_groups groups ON groups.group_code = goods.group_code
+          GROUP BY goods.billno, goods.store_code
         ),
         period_activity AS MATERIALIZED (
           SELECT
             old.member_no,
             TRUE AS visited_store,
-            BOOL_OR(lines.department_code = :target_department_code) AS visited_department,
-            BOOL_OR(lines.group_code = :target_group_code) AS repurchased_target
+            BOOL_OR(receipts.visited_department) AS visited_department,
+            BOOL_OR(receipts.repurchased_target) AS repurchased_target
           FROM old_members old
-          JOIN period_lines lines
-            ON lines.member_no = old.member_no
+          JOIN salehead h
+            ON h.mkt = :store_code
+           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = old.member_no
+          JOIN period_receipts receipts
+            ON receipts.billno = h.billno
+           AND receipts.store_code = h.mkt
           GROUP BY old.member_no
         )
         SELECT
@@ -1228,6 +1269,10 @@ def load_brand_member_analysis(
         text(f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'"),
         {},
     )
+    # PostgreSQL substantially overestimates rows for the parameterized member
+    # expression lookup and otherwise builds a large bitmap once per member.
+    # Plain index scans match this report's small, permission-scoped member set.
+    db.execute(text("SET LOCAL enable_bitmapscan = off"), {})
 
     current = _load_period(
         db,

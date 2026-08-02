@@ -9,6 +9,7 @@ import {
   Home,
   Loader2,
   LogOut,
+  Plus,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -21,11 +22,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModuleAccessLog } from "@/hooks/use-module-access-log";
 import { apiGet } from "@/lib/api";
 import { canAccessModule } from "@/lib/module-permissions";
+import { buildMobileSalesDatePresets } from "@/lib/mobile-sales-date-presets";
 import {
   buildProductTicketParams,
   getReceiptProductDisplay,
+  isCosmeticsRetailPriceScope,
   isSupermarketDepartment,
 } from "@/lib/sales-dashboard-drilldown";
 import {
@@ -66,6 +70,7 @@ type GroupSummary = {
   group_code: string;
   group_name?: string | null;
   ticket_count: number;
+  priced_sales_amount: number;
   effective_sales: number;
   net_profit: number;
   ticket_margin: number;
@@ -110,6 +115,7 @@ type TicketSummary = {
   invoice_no?: string | number | null;
   transaction_type?: string | null;
   quantity: number;
+  priced_sales_amount: number;
   effective_sales: number;
   net_profit: number;
   ticket_margin: number;
@@ -131,6 +137,8 @@ const currency = (value?: number | null) =>
 
 const decimal = (value?: number | null) =>
   new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(Number(value || 0));
+
+const tenThousands = (value?: number | null) => `${(Number(value || 0) / 10_000).toFixed(2)}万`;
 
 const percent = (value?: number | null) => `${(Number(value || 0) * 100).toFixed(2)}%`;
 
@@ -166,15 +174,6 @@ function shiftYear(value: string): string {
   return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}`;
 }
 
-function recentRange(days: number): { start: string; end: string } {
-  const end = new Date(`${todayString()}T00:00:00`);
-  const start = new Date(end);
-  start.setDate(start.getDate() - Math.max(0, days - 1));
-  const pad = (part: number) => String(part).padStart(2, "0");
-  const format = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  return { start: format(start), end: format(end) };
-}
-
 function queryString(params: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -194,29 +193,37 @@ function OverviewMetric({
   value,
   priorLabel,
   priorValue,
+  yoyLabel,
+  current,
+  prior,
+  hasError,
 }: {
   label: string;
   value: string;
   priorLabel: string;
   priorValue: string;
+  yoyLabel: string;
+  current: number;
+  prior: number | null;
+  hasError: boolean;
 }) {
+  const yoyUnavailable = hasError || prior == null;
   return (
     <div className="min-w-0 px-3 py-2.5">
       <div className="text-[10px] leading-4 text-slate-500">{label}</div>
-      <div className="truncate text-lg font-semibold leading-6 tabular-nums tracking-tight text-slate-950">{value}</div>
-      <div className="mt-1 flex min-w-0 items-baseline gap-1.5 text-[10px] leading-4 text-slate-400">
-        <span className="shrink-0">{priorLabel}</span>
-        <span className="truncate font-medium tabular-nums text-slate-600">{priorValue}</span>
+      <div className="whitespace-nowrap text-lg font-semibold leading-6 tabular-nums tracking-tight text-slate-950">{value}</div>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        <div className="min-w-0 text-[9px] leading-3 text-slate-400">
+          <div>{priorLabel}</div>
+          <div className="whitespace-nowrap font-medium tabular-nums text-slate-600">{priorValue}</div>
+        </div>
+        <div className="min-w-0 text-right text-[9px] leading-3 text-slate-400">
+          <div>{yoyLabel}</div>
+          <div className={`whitespace-nowrap font-semibold tabular-nums ${yoyUnavailable ? "text-slate-500" : yoyClass(current, prior)}`}>
+            {yoyUnavailable ? "—" : formatYoy(current, prior)}
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function OverviewCount({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 text-[11px]">
-      <span className="truncate text-slate-500">{label}</span>
-      <span className="shrink-0 font-semibold tabular-nums text-slate-900">{value}</span>
     </div>
   );
 }
@@ -250,6 +257,8 @@ function SummaryRow({
   priorProfit,
   margin,
   tickets,
+  pricedSalesAmount,
+  showPricedSalesAmount = false,
   dense = false,
   onClick,
 }: {
@@ -261,6 +270,8 @@ function SummaryRow({
   priorProfit?: number;
   margin: number;
   tickets: number;
+  pricedSalesAmount?: number;
+  showPricedSalesAmount?: boolean;
   dense?: boolean;
   onClick: () => void;
 }) {
@@ -272,37 +283,79 @@ function SummaryRow({
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-baseline gap-2">
-          <div className={`truncate font-semibold text-slate-950 ${dense ? "text-[13px] leading-4" : "text-sm"}`}>{title}</div>
-          {code ? <div className={`shrink-0 tabular-nums text-slate-400 ${dense ? "text-[9px]" : "text-[10px]"}`}>{code}</div> : null}
+          <div className={`truncate font-semibold text-slate-950 ${dense ? "text-sm leading-4" : "text-sm"}`}>{title}</div>
+          {code ? <div className="shrink-0 text-[10px] tabular-nums text-slate-400">{code}</div> : null}
         </div>
         <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
       </div>
       <div className={`grid grid-cols-2 gap-2 ${dense ? "mt-1.5" : "mt-2"}`}>
         <div className="min-w-0 rounded-lg bg-slate-50 px-2 py-1.5">
-          <div className="text-[9px] leading-3 text-slate-400">销售收入</div>
-          <div className={`truncate font-semibold tabular-nums text-slate-950 ${dense ? "text-xs leading-4" : "text-sm leading-5"}`}>{currency(sales)}</div>
-          <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
-            同期销售 <span className="font-medium tabular-nums text-slate-600">{currency(priorSales)}</span>
-          </div>
+          {dense ? (
+            <div>
+              <div className="text-[10px] leading-3 text-slate-400">销售收入</div>
+              <div className="mt-0.5 grid grid-cols-2 gap-2 text-[10px] leading-4 text-slate-400">
+                <div className="min-w-0 whitespace-nowrap">
+                  本期 <span className="text-[11px] font-semibold tabular-nums text-slate-950">{tenThousands(sales)}</span>
+                </div>
+                <div className="min-w-0 whitespace-nowrap text-right">
+                  同期 <span className="text-[11px] font-medium tabular-nums text-slate-600">{tenThousands(priorSales)}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="text-[9px] leading-3 text-slate-400">销售收入</div>
+              <div className="truncate text-sm font-semibold leading-5 tabular-nums text-slate-950">{currency(sales)}</div>
+            </>
+          )}
+          {!dense ? (
+            <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
+              同期销售 <span className="font-medium tabular-nums text-slate-600">{currency(priorSales)}</span>
+            </div>
+          ) : null}
         </div>
         <div className="min-w-0 rounded-lg bg-slate-50 px-2 py-1.5">
-          <div className="text-[9px] leading-3 text-slate-400">净毛利</div>
-          <div className={`truncate font-semibold tabular-nums text-slate-950 ${dense ? "text-xs leading-4" : "text-sm leading-5"}`}>{currency(profit)}</div>
-          <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
-            同期毛利 <span className="font-medium tabular-nums text-slate-600">{currency(priorProfit)}</span>
-          </div>
+          {dense ? (
+            <div>
+              <div className="text-[10px] leading-3 text-slate-400">净毛利</div>
+              <div className="mt-0.5 grid grid-cols-2 gap-2 text-[10px] leading-4 text-slate-400">
+                <div className="min-w-0 whitespace-nowrap">
+                  本期 <span className="text-[11px] font-semibold tabular-nums text-slate-950">{tenThousands(profit)}</span>
+                </div>
+                <div className="min-w-0 whitespace-nowrap text-right">
+                  同期 <span className="text-[11px] font-medium tabular-nums text-slate-600">{tenThousands(priorProfit)}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="text-[9px] leading-3 text-slate-400">净毛利</div>
+              <div className="truncate text-sm font-semibold leading-5 tabular-nums text-slate-950">{currency(profit)}</div>
+            </>
+          )}
+          {!dense ? (
+            <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
+              同期毛利 <span className="font-medium tabular-nums text-slate-600">{currency(priorProfit)}</span>
+            </div>
+          ) : null}
         </div>
       </div>
+      {showPricedSalesAmount ? (
+        <div className={`flex items-center justify-between rounded-lg bg-blue-50 text-blue-900 ${dense ? "mt-1.5 px-2 py-1 text-[10px]" : "mt-2 px-2.5 py-1.5 text-xs"}`}>
+          <span className="text-blue-600">本期零售价</span>
+          <span className="font-semibold tabular-nums">{currency(pricedSalesAmount)}</span>
+        </div>
+      ) : null}
       <div className={`grid grid-cols-3 divide-x divide-slate-100 rounded-lg border border-slate-100 text-center ${dense ? "mt-1.5 py-1" : "mt-2 py-1.5"}`}>
-        <div className="min-w-0 px-1 text-[9px] leading-3 text-slate-400">
+        <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
           <div>销售同比</div>
           <div className={`truncate font-semibold tabular-nums ${yoyClass(sales, priorSales)}`}>{formatYoy(sales, priorSales)}</div>
         </div>
-        <div className="min-w-0 px-1 text-[9px] leading-3 text-slate-400">
+        <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
           <div>毛利率</div>
           <div className="truncate font-medium tabular-nums text-slate-700">{percent(margin)}</div>
         </div>
-        <div className="min-w-0 px-1 text-[9px] leading-3 text-slate-400">
+        <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
           <div>小票数</div>
           <div className="truncate font-medium tabular-nums text-slate-700">{decimal(tickets)}</div>
         </div>
@@ -373,7 +426,9 @@ function valueText(value: unknown): string {
 export default function MobileSalesDashboardPage() {
   const { user, menuUser, logout } = useAuth();
   const [, setLocation] = useLocation();
+  const hasAccess = canAccessModule(menuUser, "mobile-sales-dashboard");
   const today = todayString();
+  const datePresets = buildMobileSalesDatePresets(today);
   const [level, setLevel] = useState<MobileLevel>("stores");
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
@@ -390,6 +445,25 @@ export default function MobileSalesDashboardPage() {
   const [selectedBillno, setSelectedBillno] = useState<string | null>(null);
   const [dateError, setDateError] = useState("");
   const [dateFiltersOpen, setDateFiltersOpen] = useState(false);
+  const [includeRentalAndBackofficeSales, setIncludeRentalAndBackofficeSales] = useState(false);
+  const showPricedSalesAmount = isCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
+
+  const { recordQuery } = useModuleAccessLog({
+    moduleId: "mobile-sales-dashboard",
+    moduleName: "手机端销售看板",
+    clientType: "mobile",
+    enabled: hasAccess,
+    initialQueryConditions: {
+      query_type: "sales",
+      start_date: startDate,
+      end_date: endDate,
+      prior_start_date: shiftYear(startDate),
+      prior_end_date: shiftYear(endDate),
+      query_level: "stores",
+      exclude_rental: true,
+      exclude_backoffice_departments: true,
+    },
+  });
 
   const priorStartDate = shiftYear(startDate);
   const priorEndDate = shiftYear(endDate);
@@ -399,15 +473,17 @@ export default function MobileSalesDashboardPage() {
       end_date: endDate,
       prior_start_date: priorStartDate,
       prior_end_date: priorEndDate,
+      exclude_rental: !includeRentalAndBackofficeSales,
+      exclude_backoffice_departments: !includeRentalAndBackofficeSales,
     }),
-    [endDate, priorEndDate, priorStartDate, startDate],
+    [endDate, includeRentalAndBackofficeSales, priorEndDate, priorStartDate, startDate],
   );
 
   const storesQuery = useQuery<StoreSummary[]>({
     queryKey: ["/api/sales/summary/stores", "mobile", commonParams],
     queryFn: () =>
       getSalesDashboardData(`/api/sales/summary/stores${queryString(commonParams)}`, apiGet),
-    enabled: level === "stores" && canAccessModule(menuUser, "sales-dashboard"),
+    enabled: level === "stores" && hasAccess,
   });
 
   const departmentsQuery = useQuery<DepartmentSummary[]>({
@@ -417,7 +493,7 @@ export default function MobileSalesDashboardPage() {
         `/api/sales/summary/departments${queryString({ ...commonParams, store_id: selectedStore?.store_id })}`,
         apiGet,
       ),
-    enabled: level === "departments" && Boolean(selectedStore) && canAccessModule(menuUser, "sales-dashboard"),
+    enabled: level === "departments" && Boolean(selectedStore) && hasAccess,
   });
 
   const groupsQuery = useQuery<GroupSummary[]>({
@@ -441,7 +517,7 @@ export default function MobileSalesDashboardPage() {
         })}`,
         apiGet,
       ),
-    enabled: level === "groups" && Boolean(selectedDepartment) && canAccessModule(menuUser, "sales-dashboard"),
+    enabled: level === "groups" && Boolean(selectedDepartment) && hasAccess,
   });
 
   const departmentGoodsQuery = useQuery<DepartmentGoodsSummary[]>({
@@ -473,7 +549,7 @@ export default function MobileSalesDashboardPage() {
       level === "department-products" &&
       productView === "goods" &&
       Boolean(selectedDepartment) &&
-      canAccessModule(menuUser, "sales-dashboard"),
+      hasAccess,
   });
 
   const departmentSuppliersQuery = useQuery<DepartmentSupplierSummary[]>({
@@ -501,7 +577,7 @@ export default function MobileSalesDashboardPage() {
       level === "department-products" &&
       productView === "suppliers" &&
       Boolean(selectedDepartment) &&
-      canAccessModule(menuUser, "sales-dashboard"),
+      hasAccess,
   });
 
   const selectedProductTicketParams = useMemo(() => buildProductTicketParams(selectedProduct), [selectedProduct]);
@@ -514,6 +590,7 @@ export default function MobileSalesDashboardPage() {
       startDate,
       endDate,
       selectedProductTicketParams,
+      includeRentalAndBackofficeSales,
     ],
     queryFn: () =>
       getSalesDashboardData(
@@ -521,10 +598,12 @@ export default function MobileSalesDashboardPage() {
           start_date: startDate,
           end_date: endDate,
           ...selectedProductTicketParams,
+          exclude_rental: !includeRentalAndBackofficeSales,
+          exclude_backoffice_departments: !includeRentalAndBackofficeSales,
         })}`,
         apiGet,
       ),
-    enabled: level === "tickets" && Boolean(selectedGroup) && canAccessModule(menuUser, "sales-dashboard"),
+    enabled: level === "tickets" && Boolean(selectedGroup) && hasAccess,
   });
 
   const ticketDetailQuery = useQuery<TicketDetail>({
@@ -644,11 +723,38 @@ export default function MobileSalesDashboardPage() {
 
   const goBack = () => {
     if (level === "tickets") {
-      setLevel(selectedProduct ? "department-products" : "groups");
+      const nextLevel = selectedProduct ? "department-products" : "groups";
+      recordQuery({
+        query_type: "sales",
+        ...commonParams,
+        query_level: nextLevel,
+        navigation_action: "back",
+        from_level: "tickets",
+        to_level: nextLevel,
+        store_id: selectedStore?.store_id,
+        store_name: selectedStore?.store_name,
+        department_code: selectedDepartment?.department_code,
+        department_name: selectedDepartment?.department_name,
+        group_code: selectedGroup?.group_code,
+        group_name: selectedGroup?.group_name,
+      });
+      setLevel(nextLevel);
       setSelectedBillno(null);
       return;
     }
     if (level === "department-products") {
+      recordQuery({
+        query_type: "sales",
+        ...commonParams,
+        query_level: "groups",
+        navigation_action: "back",
+        from_level: "department-products",
+        to_level: "groups",
+        store_id: selectedStore?.store_id,
+        store_name: selectedStore?.store_name,
+        department_code: selectedDepartment?.department_code,
+        department_name: selectedDepartment?.department_name,
+      });
       setLevel("groups");
       setSelectedProduct(null);
       setSupplierCode(null);
@@ -656,11 +762,33 @@ export default function MobileSalesDashboardPage() {
       return;
     }
     if (level === "groups") {
+      recordQuery({
+        query_type: "sales",
+        ...commonParams,
+        query_level: "departments",
+        navigation_action: "back",
+        from_level: "groups",
+        to_level: "departments",
+        store_id: selectedStore?.store_id,
+        store_name: selectedStore?.store_name,
+        department_code: selectedDepartment?.department_code,
+        department_name: selectedDepartment?.department_name,
+      });
       setLevel("departments");
       setSelectedGroup(null);
       return;
     }
     if (level === "departments") {
+      recordQuery({
+        query_type: "sales",
+        ...commonParams,
+        query_level: "stores",
+        navigation_action: "back",
+        from_level: "departments",
+        to_level: "stores",
+        store_id: selectedStore?.store_id,
+        store_name: selectedStore?.store_name,
+      });
       setLevel("stores");
       setSelectedDepartment(null);
       return;
@@ -692,6 +820,27 @@ export default function MobileSalesDashboardPage() {
     setSupplierCode(null);
     setProductView("goods");
     setDateFiltersOpen(false);
+    recordQuery({
+      query_type: "sales",
+      start_date: nextStart,
+      end_date: nextEnd,
+      prior_start_date: shiftYear(nextStart),
+      prior_end_date: shiftYear(nextEnd),
+      query_level: "stores",
+    });
+  };
+
+  const toggleRentalAndBackofficeSales = () => {
+    const nextIncluded = !includeRentalAndBackofficeSales;
+    setIncludeRentalAndBackofficeSales(nextIncluded);
+    recordQuery({
+      query_type: "sales",
+      ...commonParams,
+      query_level: "stores",
+      filter_action: nextIncluded ? "include_rental_and_backoffice_sales" : "exclude_rental_and_backoffice_sales",
+      exclude_rental: !nextIncluded,
+      exclude_backoffice_departments: !nextIncluded,
+    });
   };
 
   const levelLabel = {
@@ -706,7 +855,7 @@ export default function MobileSalesDashboardPage() {
       : `${selectedGroup?.group_name || selectedGroup?.group_code || "柜组"}小票`,
   }[level];
 
-  if (!canAccessModule(menuUser, "sales-dashboard")) {
+  if (!hasAccess) {
     return (
       <main className="min-h-[100dvh] bg-slate-50 p-5">
         <Card className="mx-auto mt-16 max-w-md rounded-3xl">
@@ -714,7 +863,7 @@ export default function MobileSalesDashboardPage() {
             <ShieldCheck className="mx-auto h-10 w-10 text-slate-400" />
             <h1 className="mt-4 text-lg font-semibold">暂无销售看板权限</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              手机端与网页端使用同一套权限。请联系管理员为当前账号开通“查看销售”。
+              请联系管理员为当前账号同时开通“手机端销售看板”和“查看销售”权限。
             </p>
             <div className="mt-5 flex justify-center gap-2">
               <Button variant="outline" onClick={() => setLocation("/mobile")}><Home className="mr-2 h-4 w-4" />返回首页</Button>
@@ -782,7 +931,7 @@ export default function MobileSalesDashboardPage() {
       </header>
 
       <div className="mx-auto max-w-xl space-y-2 px-2.5 pt-2.5">
-        {level !== "departments" || dateFiltersOpen ? <Card className="rounded-2xl border-0 shadow-sm">
+        {dateFiltersOpen ? <Card className="rounded-2xl border-0 shadow-sm">
           <CardContent className="p-2">
             <button
               type="button"
@@ -807,19 +956,16 @@ export default function MobileSalesDashboardPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 overflow-x-auto">
-                  {[1, 7, 30].map((days) => (
+                  {datePresets.map((preset) => (
                     <Button
-                      key={days}
+                      key={preset.label}
                       type="button"
                       variant="outline"
                       size="sm"
                       className="h-8 shrink-0 rounded-full px-3 text-xs"
-                      onClick={() => {
-                        const range = recentRange(days);
-                        applyDates(range.start, range.end);
-                      }}
+                      onClick={() => applyDates(preset.start, preset.end)}
                     >
-                      {days === 1 ? "今日" : `近${days}天`}
+                      {preset.label}
                     </Button>
                   ))}
                   <Button type="button" size="sm" className="ml-auto h-8 shrink-0 rounded-full px-3 text-xs" onClick={() => applyDates()}>
@@ -840,17 +986,21 @@ export default function MobileSalesDashboardPage() {
               value={activeQuery.isError ? "—" : currency(totals.sales)}
               priorLabel="同期销售"
               priorValue={activeQuery.isError || totals.priorSales == null ? "—" : currency(totals.priorSales)}
+              yoyLabel="销售同比"
+              current={totals.sales}
+              prior={totals.priorSales}
+              hasError={activeQuery.isError}
             />
             <OverviewMetric
               label="净毛利"
               value={activeQuery.isError ? "—" : currency(totals.profit)}
               priorLabel="同期毛利"
               priorValue={activeQuery.isError || totals.priorProfit == null ? "—" : currency(totals.priorProfit)}
+              yoyLabel="毛利同比"
+              current={totals.profit}
+              prior={totals.priorProfit}
+              hasError={activeQuery.isError}
             />
-          </div>
-          <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 bg-slate-50/70">
-            <OverviewCount label="小票数" value={activeQuery.isError ? "—" : decimal(totals.tickets)} />
-            <OverviewCount label="柜组数" value={activeQuery.isError ? "—" : decimal(totals.groups)} />
           </div>
         </div>
 
@@ -869,6 +1019,19 @@ export default function MobileSalesDashboardPage() {
               <h2 className="truncate text-sm font-semibold text-slate-950">{levelLabel}</h2>
               <div className="shrink-0 text-[10px] text-slate-400">{rows.length} 项 · 权限范围</div>
             </div>
+            {level === "stores" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant={includeRentalAndBackofficeSales ? "secondary" : "outline"}
+                className="h-7 shrink-0 rounded-full bg-white px-2 text-[10px] text-teal-700 shadow-sm"
+                aria-pressed={includeRentalAndBackofficeSales}
+                onClick={toggleRentalAndBackofficeSales}
+              >
+                {!includeRentalAndBackofficeSales ? <Plus className="mr-1 h-3 w-3" /> : null}
+                {includeRentalAndBackofficeSales ? "去除租赁/后台销售" : "添加租赁/后台销售"}
+              </Button>
+            ) : null}
             {activeQuery.isFetching ? <Loader2 className="h-5 w-5 animate-spin text-blue-600" /> : null}
           </div>
 
@@ -939,7 +1102,15 @@ export default function MobileSalesDashboardPage() {
                   priorProfit={row.same_period_net_profit}
                   margin={row.ticket_margin}
                   tickets={row.ticket_count}
+                  dense
                   onClick={() => {
+                    recordQuery({
+                      query_type: "sales",
+                      ...commonParams,
+                      query_level: "departments",
+                      store_id: row.store_id,
+                      store_name: row.store_name,
+                    });
                     setSelectedStore(row);
                     setSelectedDepartment(null);
                     setSelectedGroup(null);
@@ -963,6 +1134,15 @@ export default function MobileSalesDashboardPage() {
                   tickets={row.ticket_count}
                   dense
                   onClick={() => {
+                    recordQuery({
+                      query_type: "sales",
+                      ...commonParams,
+                      query_level: "groups",
+                      store_id: selectedStore?.store_id,
+                      store_name: selectedStore?.store_name,
+                      department_code: row.department_code,
+                      department_name: row.department_name,
+                    });
                     setSelectedDepartment(row);
                     setSelectedGroup(null);
                     setSelectedProduct(null);
@@ -984,7 +1164,21 @@ export default function MobileSalesDashboardPage() {
                   priorProfit={row.same_period_net_profit}
                   margin={row.ticket_margin ?? row.net_margin}
                   tickets={row.ticket_count}
+                  pricedSalesAmount={row.priced_sales_amount}
+                  showPricedSalesAmount={showPricedSalesAmount}
                   onClick={() => {
+                    const nextLevel = isSupermarketDepartment(selectedDepartment) ? "goods" : "tickets";
+                    recordQuery({
+                      query_type: "sales",
+                      ...commonParams,
+                      query_level: nextLevel,
+                      store_id: selectedStore?.store_id,
+                      store_name: selectedStore?.store_name,
+                      department_code: selectedDepartment?.department_code,
+                      department_name: selectedDepartment?.department_name,
+                      group_code: row.group_code,
+                      group_name: row.group_name,
+                    });
                     setSelectedGroup(row);
                     setSelectedProduct(null);
                     setSupplierCode(null);
@@ -1000,6 +1194,16 @@ export default function MobileSalesDashboardPage() {
                     key={row.supplier_code}
                     row={row}
                     onClick={() => {
+                      recordQuery({
+                        query_type: "sales",
+                        ...commonParams,
+                        query_level: "goods",
+                        store_id: selectedStore?.store_id,
+                        store_name: selectedStore?.store_name,
+                        department_code: selectedDepartment?.department_code,
+                        department_name: selectedDepartment?.department_name,
+                        supplier_code: row.supplier_code,
+                      });
                       setSupplierCode(row.supplier_code);
                       setProductView("goods");
                     }}
@@ -1011,11 +1215,26 @@ export default function MobileSalesDashboardPage() {
                     key={`${row.group_code}:${row.goods_code}:${row.barcode}:${row.supplier_code}`}
                     row={row}
                     onClick={() => {
+                      recordQuery({
+                        query_type: "sales",
+                        ...commonParams,
+                        query_level: "tickets",
+                        store_id: selectedStore?.store_id,
+                        store_name: selectedStore?.store_name,
+                        department_code: selectedDepartment?.department_code,
+                        department_name: selectedDepartment?.department_name,
+                        group_code: row.group_code,
+                        group_name: row.group_name,
+                        goods_code: row.goods_code,
+                        barcode: row.barcode,
+                        supplier_code: row.supplier_code,
+                      });
                       if (row.group_code && row.group_code !== selectedGroup?.group_code) {
                         setSelectedGroup({
                           group_code: row.group_code,
                           group_name: row.group_name,
                           ticket_count: 0,
+                          priced_sales_amount: 0,
                           effective_sales: 0,
                           net_profit: 0,
                           ticket_margin: 0,
@@ -1034,7 +1253,25 @@ export default function MobileSalesDashboardPage() {
                   key={`${row.billno}`}
                   type="button"
                   className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm active:bg-slate-50"
-                  onClick={() => setSelectedBillno(`${row.billno}`)}
+                  onClick={() => {
+                    recordQuery({
+                      query_type: "sales",
+                      start_date: startDate,
+                      end_date: endDate,
+                      query_level: "detail",
+                      store_id: selectedStore?.store_id,
+                      store_name: selectedStore?.store_name,
+                      department_code: selectedDepartment?.department_code,
+                      department_name: selectedDepartment?.department_name,
+                      group_code: selectedGroup?.group_code,
+                      group_name: selectedGroup?.group_name,
+                      goods_code: selectedProduct?.goods_code,
+                      barcode: selectedProduct?.barcode,
+                      ticket_no: `${row.invoice_no || row.billno}`,
+                      bill_no: `${row.billno}`,
+                    });
+                    setSelectedBillno(`${row.billno}`);
+                  }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -1044,6 +1281,12 @@ export default function MobileSalesDashboardPage() {
                     <FileText className="h-5 w-5 text-slate-300" />
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                    {showPricedSalesAmount ? (
+                      <div className="col-span-2 flex items-center justify-between rounded-xl bg-blue-50 px-3 py-2 text-blue-900">
+                        <span className="text-blue-600">本期零售价</span>
+                        <span className="font-semibold tabular-nums">{currency(row.priced_sales_amount)}</span>
+                      </div>
+                    ) : null}
                     <div className="text-slate-500">销售 <span className="font-semibold text-slate-900">{currency(row.effective_sales)}</span></div>
                     <div className="text-slate-500">毛利 <span className="font-semibold text-slate-900">{currency(row.net_profit)}</span></div>
                     <div className="text-slate-500">毛利率 <span className="text-slate-900">{percent(row.ticket_margin)}</span></div>
@@ -1056,7 +1299,7 @@ export default function MobileSalesDashboardPage() {
         </section>
 
         <div className="flex items-center justify-center gap-2 py-2 text-xs text-slate-400">
-          <ShieldCheck className="h-4 w-4" /> 与网页端共享账号权限和数据范围
+          <ShieldCheck className="h-4 w-4" /> 手机端模块权限与业务数据范围共同控制
         </div>
       </div>
 

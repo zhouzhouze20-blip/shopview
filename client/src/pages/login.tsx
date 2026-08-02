@@ -29,6 +29,9 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [wecomSubmitting, setWecomSubmitting] = useState(false);
+  const [mobileAutoLoginBlocked] = useState(
+    () => new URLSearchParams(window.location.search).has("auth_error"),
+  );
   const [mobileAutoLoginFailed, setMobileAutoLoginFailed] = useState(false);
   const [wecomLoginUrl, setWecomLoginUrl] = useState("");
   const [wecomState, setWecomState] = useState("");
@@ -95,10 +98,9 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (!mobileClient || !isWeComClient() || params.has("auth_error")) return;
+    if (!mobileClient || !isWeComClient() || mobileAutoLoginBlocked) return;
     void startMobileWecomLogin();
-  }, [mobileClient, startMobileWecomLogin]);
+  }, [mobileAutoLoginBlocked, mobileClient, startMobileWecomLogin]);
 
   useEffect(() => {
     if (mobileClient || activeTab !== "wecom" || wecomLoginUrl || wecomSubmitting) return;
@@ -137,9 +139,8 @@ export default function LoginPage() {
     void loadWecomLoginUrl();
   };
 
-  const authParams = new URLSearchParams(window.location.search);
   const silentMobileLogin =
-    mobileClient && isWeComClient() && !authParams.has("auth_error") && !mobileAutoLoginFailed;
+    mobileClient && isWeComClient() && !mobileAutoLoginBlocked && !mobileAutoLoginFailed;
 
   if (silentMobileLogin) {
     return <AuthLoadingScreen />;

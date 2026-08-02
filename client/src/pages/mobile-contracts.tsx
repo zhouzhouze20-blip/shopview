@@ -22,7 +22,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModuleAccessLog } from "@/hooks/use-module-access-log";
 import {
+  getContractDisplayEndDate,
   useContractDetail,
   useContractFilterOptions,
   useContractsList,
@@ -109,7 +111,7 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 
 function ContractCard({ item, onClick }: { item: ContractListItem; onClick: () => void }) {
   const title = item.cmtitle || item.cmobject || item.supplier_name || item.cmppname || "未命名合同";
-  const range = [item.cmeffdate || item.range_start_date, item.cmlapdate || item.range_end_date];
+  const range = [item.cmeffdate || item.range_start_date, getContractDisplayEndDate(item)];
   return (
     <button
       type="button"
@@ -160,13 +162,26 @@ function ContractCard({ item, onClick }: { item: ContractListItem; onClick: () =
 export default function MobileContractsPage() {
   const { user, menuUser, logout } = useAuth();
   const [, setLocation] = useLocation();
-  const hasAccess = canAccessModule(menuUser, "contracts");
+  const hasAccess = canAccessModule(menuUser, "mobile-contracts");
   const [draftKeyword, setDraftKeyword] = useState("");
   const [keyword, setKeyword] = useState("");
   const [storeCode, setStoreCode] = useState("ALL");
   const [departmentCode, setDepartmentCode] = useState("ALL");
   const [page, setPage] = useState(0);
   const [selectedContractNo, setSelectedContractNo] = useState<string | undefined>();
+
+  const { recordQuery } = useModuleAccessLog({
+    moduleId: "mobile-contracts",
+    moduleName: "手机端合同台账",
+    clientType: "mobile",
+    enabled: hasAccess,
+    initialQueryConditions: {
+      query_type: "contract",
+      store_code: "全部",
+      department_code: "全部",
+      page: 1,
+    },
+  });
 
   const contractsQuery = useContractsList({
     keyword,
@@ -182,8 +197,16 @@ export default function MobileContractsPage() {
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
+    const nextKeyword = draftKeyword.trim();
     setPage(0);
-    setKeyword(draftKeyword.trim());
+    setKeyword(nextKeyword);
+    recordQuery({
+      query_type: "contract",
+      keyword: nextKeyword,
+      store_code: storeCode === "ALL" ? "全部" : storeCode,
+      department_code: departmentCode === "ALL" ? "全部" : departmentCode,
+      page: 1,
+    });
   };
 
   if (!hasAccess) {
@@ -193,7 +216,7 @@ export default function MobileContractsPage() {
           <CardContent className="p-6 text-center">
             <ShieldCheck className="mx-auto h-10 w-10 text-slate-400" />
             <h1 className="mt-4 text-lg font-semibold">暂无合同查看权限</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">手机端与网页端使用同一套权限，请联系管理员开通“查看合同”。</p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">请联系管理员同时开通“手机端合同台账”和“查看合同”权限。</p>
             <div className="mt-5 flex justify-center gap-2">
               <Button variant="outline" onClick={() => setLocation("/mobile")}><Home className="mr-2 h-4 w-4" />返回首页</Button>
               <Button variant="outline" onClick={() => logout()}>退出登录</Button>
@@ -270,6 +293,13 @@ export default function MobileContractsPage() {
                 <Select
                   value={storeCode}
                   onValueChange={(value) => {
+                    recordQuery({
+                      query_type: "contract",
+                      keyword,
+                      store_code: value === "ALL" ? "全部" : value,
+                      department_code: departmentCode === "ALL" ? "全部" : departmentCode,
+                      page: 1,
+                    });
                     setStoreCode(value);
                     setPage(0);
                   }}
@@ -290,6 +320,13 @@ export default function MobileContractsPage() {
                 <Select
                   value={departmentCode}
                   onValueChange={(value) => {
+                    recordQuery({
+                      query_type: "contract",
+                      keyword,
+                      store_code: storeCode === "ALL" ? "全部" : storeCode,
+                      department_code: value === "ALL" ? "全部" : value,
+                      page: 1,
+                    });
                     setDepartmentCode(value);
                     setPage(0);
                   }}
@@ -386,7 +423,7 @@ export default function MobileContractsPage() {
                   <DetailRow label="合同主题" value={contractDetailQuery.data.contmain?.cmtitle || contractDetailQuery.data.contmain?.cmobject || "-"} />
                   <DetailRow label="合同类型" value={displayText(contractDetailQuery.data.contmain?.contract_type_name, contractDetailQuery.data.contmain?.cmtype)} />
                   <DetailRow label="品牌 / 品类" value={displayText(contractDetailQuery.data.contmain?.cmppname, contractDetailQuery.data.contmain?.cmcatname)} />
-                  <DetailRow label="生效期限" value={`${formatDate(contractDetailQuery.data.contmain?.cmeffdate)} 至 ${formatDate(contractDetailQuery.data.contmain?.cmlapdate)}`} />
+                  <DetailRow label="生效期限" value={`${formatDate(contractDetailQuery.data.contmain?.cmeffdate)} 至 ${formatDate(getContractDisplayEndDate(contractDetailQuery.data.contmain))}`} />
                   <DetailRow label="合同金额" value={formatMoney(contractDetailQuery.data.contmain?.cmmoney)} />
                   <DetailRow label="联系人" value={displayText(contractDetailQuery.data.contmain?.cmcontact, contractDetailQuery.data.contmain?.cmtel)} />
                 </div>

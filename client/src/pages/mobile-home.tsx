@@ -1,13 +1,14 @@
-import { FileText, LayoutGrid, LogOut, PackageSearch, ShieldCheck, TrendingUp } from "lucide-react";
+import { CircleDollarSign, FileText, LayoutGrid, LogOut, PackageSearch, ShieldCheck, TrendingUp } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModuleAccessLog } from "@/hooks/use-module-access-log";
 import { canAccessModule } from "@/lib/module-permissions";
 
 const MOBILE_MODULES = [
   {
-    id: "sales-dashboard",
+    id: "mobile-sales-dashboard",
     title: "销售",
     description: "查看销售、毛利、小票与柜组明细",
     path: "/mobile/sales",
@@ -15,7 +16,7 @@ const MOBILE_MODULES = [
     iconClassName: "bg-blue-600 text-white",
   },
   {
-    id: "contracts",
+    id: "mobile-contracts",
     title: "合同",
     description: "查询合同台账、状态、期限与合同明细",
     path: "/mobile/contracts",
@@ -23,12 +24,20 @@ const MOBILE_MODULES = [
     iconClassName: "bg-teal-600 text-white",
   },
   {
-    id: "inventory-detail",
+    id: "mobile-inventory",
     title: "库存查询",
     description: "手工输入或扫描商品条码查询实时库存",
     path: "/mobile/inventory",
     icon: PackageSearch,
     iconClassName: "bg-cyan-700 text-white",
+  },
+  {
+    id: "mobile-revenue-dashboard",
+    title: "收益",
+    description: "查看门店、部门、柜位收益及费用明细",
+    path: "/mobile/revenue",
+    icon: CircleDollarSign,
+    iconClassName: "bg-amber-600 text-white",
   },
 ] as const;
 
@@ -36,6 +45,12 @@ export default function MobileHomePage() {
   const { user, menuUser, logout } = useAuth();
   const [, setLocation] = useLocation();
   const accessibleModules = MOBILE_MODULES.filter((module) => canAccessModule(menuUser, module.id));
+
+  useModuleAccessLog({
+    moduleId: "mobile-home",
+    moduleName: "手机端工作台",
+    clientType: "mobile",
+  });
 
   return (
     <main className="min-h-[100dvh] bg-slate-100 pb-[max(1rem,env(safe-area-inset-bottom))] text-slate-900">
@@ -99,14 +114,14 @@ export default function MobileHomePage() {
               <div className="rounded-2xl bg-slate-50 px-5 py-10 text-center">
                 <ShieldCheck className="mx-auto h-9 w-9 text-slate-400" />
                 <div className="mt-3 text-sm font-medium text-slate-700">暂无可访问的手机模块</div>
-                <div className="mt-2 text-xs leading-5 text-slate-500">请联系管理员开通销售或合同查看权限。</div>
+                <div className="mt-2 text-xs leading-5 text-slate-500">请联系管理员开通相应的手机端模块权限。</div>
               </div>
             )}
           </CardContent>
         </Card>
 
         <div className="flex items-center justify-center gap-2 py-2 text-xs text-slate-400">
-          <ShieldCheck className="h-4 w-4" /> 与网页端共享账号权限和数据范围
+          <ShieldCheck className="h-4 w-4" /> 手机端模块权限与业务数据范围共同控制
         </div>
       </div>
     </main>

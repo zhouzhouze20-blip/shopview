@@ -16,12 +16,20 @@ SHEETS = (
     ("区域", "areas"),
     ("品类", "categories"),
     ("柜组", "groups"),
+    ("特卖", "special_sales"),
     ("楼层", "floors"),
 )
 BLUE = "4472C4"
 WHITE = "FFFFFF"
 THIN = Side(style="thin", color="B7B7B7")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+METRIC_GROUPS = (
+    ("来客数", "笔"),
+    ("客单", "元"),
+    ("销售收入", "万元"),
+    ("毛利额", "万元"),
+    ("毛利率", "%"),
+)
 
 
 def _date_text(value: Any) -> str:
@@ -31,21 +39,22 @@ def _date_text(value: Any) -> str:
 def _write_headers(sheet, dimension_name: str) -> None:
     sheet.merge_cells("A5:D5")
     sheet["A5"] = "维度"
-    for start, end, label in ((5, 7, "销售收入"), (8, 10, "毛利额"), (11, 13, "毛利率")):
+    for index, (label, unit) in enumerate(METRIC_GROUPS):
+        start = 5 + index * 3
+        end = start + 2
         sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
         sheet.cell(5, start).value = label
+        for offset, period_label in enumerate(("本期", "同期", "同比")):
+            sheet.cell(6, start + offset).value = period_label
+            sheet.cell(7, start + offset).value = unit if offset < 2 else "%"
 
     identifiers = ("门店编码", "门店名称", f"{dimension_name}编码", f"{dimension_name}名称")
     for column, label in enumerate(identifiers, 1):
         sheet.merge_cells(start_row=6, start_column=column, end_row=7, end_column=column)
         sheet.cell(6, column).value = label
-    for group_start in (5, 8, 11):
-        for offset, label in enumerate(("本期", "同期", "同比")):
-            sheet.cell(6, group_start + offset).value = label
-            sheet.cell(7, group_start + offset).value = "万元" if group_start < 11 and offset < 2 else "%"
 
     for row in range(5, 8):
-        for column in range(1, 14):
+        for column in range(1, 20):
             cell = sheet.cell(row, column)
             cell.fill = PatternFill("solid", fgColor=BLUE)
             cell.font = Font(color=WHITE, bold=True)
@@ -54,27 +63,68 @@ def _write_headers(sheet, dimension_name: str) -> None:
 
 
 def _write_group_headers(sheet) -> None:
-    sheet.merge_cells("A5:F5")
+    sheet.merge_cells("A5:J5")
     sheet["A5"] = "维度"
-    for start, end, label in ((7, 9, "销售收入"), (10, 12, "毛利额"), (13, 15, "毛利率")):
+    for index, (label, unit) in enumerate(METRIC_GROUPS):
+        start = 11 + index * 3
+        end = start + 2
         sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
         sheet.cell(5, start).value = label
+        for offset, period_label in enumerate(("本期", "同期", "同比")):
+            sheet.cell(6, start + offset).value = period_label
+            sheet.cell(7, start + offset).value = unit if offset < 2 else "%"
 
     identifiers = (
-        "门店编码", "门店名称", "部门编码", "部门名称", "柜组编码", "柜组名称",
+        "门店编码",
+        "门店名称",
+        "部门编码",
+        "部门名称",
+        "区域编码",
+        "区域名称",
+        "品类编码",
+        "品类名称",
+        "柜组编码",
+        "柜组名称",
     )
     for column, label in enumerate(identifiers, 1):
         sheet.merge_cells(start_row=6, start_column=column, end_row=7, end_column=column)
         sheet.cell(6, column).value = label
-    for group_start in (7, 10, 13):
-        for offset, label in enumerate(("本期", "同期", "同比")):
-            sheet.cell(6, group_start + offset).value = label
-            sheet.cell(7, group_start + offset).value = (
-                "万元" if group_start < 13 and offset < 2 else "%"
-            )
-
     for row in range(5, 8):
-        for column in range(1, 16):
+        for column in range(1, 26):
+            cell = sheet.cell(row, column)
+            cell.fill = PatternFill("solid", fgColor=BLUE)
+            cell.font = Font(color=WHITE, bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = BORDER
+
+
+def _write_special_sale_headers(sheet) -> None:
+    sheet.merge_cells("A5:H5")
+    sheet["A5"] = "维度"
+    for index, (label, unit) in enumerate(METRIC_GROUPS):
+        start = 9 + index * 3
+        end = start + 2
+        sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
+        sheet.cell(5, start).value = label
+        for offset, period_label in enumerate(("本期", "同期", "同比")):
+            sheet.cell(6, start + offset).value = period_label
+            sheet.cell(7, start + offset).value = unit if offset < 2 else "%"
+
+    identifiers = (
+        "门店编码",
+        "门店名称",
+        "部门编码",
+        "部门名称",
+        "柜组编码",
+        "柜组名称",
+        "品牌编码",
+        "品牌名称",
+    )
+    for column, label in enumerate(identifiers, 1):
+        sheet.merge_cells(start_row=6, start_column=column, end_row=7, end_column=column)
+        sheet.cell(6, column).value = label
+    for row in range(5, 8):
+        for column in range(1, 24):
             cell = sheet.cell(row, column)
             cell.fill = PatternFill("solid", fgColor=BLUE)
             cell.font = Font(color=WHITE, bold=True)
@@ -88,15 +138,16 @@ def _write_hierarchy_headers(sheet) -> None:
     for column, label in enumerate(("门店", "部门", "区域", "品类"), 1):
         sheet.merge_cells(start_row=6, start_column=column, end_row=7, end_column=column)
         sheet.cell(6, column).value = label
-    for start, end, label in ((5, 7, "销售收入"), (8, 10, "毛利额"), (11, 13, "毛利率")):
+    for index, (label, unit) in enumerate(METRIC_GROUPS):
+        start = 5 + index * 3
+        end = start + 2
         sheet.merge_cells(start_row=5, start_column=start, end_row=5, end_column=end)
         sheet.cell(5, start).value = label
-    for group_start in (5, 8, 11):
-        for offset, label in enumerate(("本期", "同期", "同比")):
-            sheet.cell(6, group_start + offset).value = label
-            sheet.cell(7, group_start + offset).value = "万元" if group_start < 11 and offset < 2 else "%"
+        for offset, period_label in enumerate(("本期", "同期", "同比")):
+            sheet.cell(6, start + offset).value = period_label
+            sheet.cell(7, start + offset).value = unit if offset < 2 else "%"
     for row in range(5, 8):
-        for column in range(1, 14):
+        for column in range(1, 20):
             cell = sheet.cell(row, column)
             cell.fill = PatternFill("solid", fgColor=BLUE)
             cell.font = Font(color=WHITE, bold=True)
@@ -106,6 +157,12 @@ def _write_hierarchy_headers(sheet) -> None:
 
 def _metric_values(metrics: dict[str, Any]) -> list[Any]:
     return [
+        int(metrics.get("ticket_count_current") or 0),
+        int(metrics.get("ticket_count_prior") or 0),
+        metrics.get("ticket_count_yoy"),
+        metrics.get("average_ticket_current"),
+        metrics.get("average_ticket_prior"),
+        metrics.get("average_ticket_yoy"),
         float(metrics.get("sales_current") or 0) / 10000,
         float(metrics.get("sales_prior") or 0) / 10000,
         metrics.get("sales_yoy"),
@@ -138,7 +195,9 @@ def _write_data_row(
         cell = sheet.cell(row_number, column, value)
         cell.border = BORDER
         metric_column = column - identifier_columns
-        if metric_column in (1, 2, 4, 5):
+        if metric_column in (1, 2):
+            cell.number_format = "#,##0"
+        elif metric_column in (4, 5, 7, 8, 10, 11):
             cell.number_format = "0.00"
         elif metric_column >= 3:
             cell.number_format = "0.00%"
@@ -149,13 +208,13 @@ def _write_data_row(
 
 def _write_report_sheet(sheet, report: dict[str, Any], label: str, dimension_key: str) -> None:
     dates = report["dates"]
-    sheet.merge_cells("A1:M1")
+    sheet.merge_cells("A1:S1")
     sheet["A1"] = f"OD0002 门店销售毛利汇总表（{label}）"
     sheet["A1"].font = Font(size=16, bold=True)
     sheet["A1"].alignment = Alignment(horizontal="center")
-    sheet.merge_cells("A2:M2")
+    sheet.merge_cells("A2:S2")
     sheet["A2"] = f"本期：{_date_text(dates['start_date'])} 至 {_date_text(dates['end_date'])}"
-    sheet.merge_cells("A3:M3")
+    sheet.merge_cells("A3:S3")
     sheet["A3"] = f"同期：{_date_text(dates['prior_start_date'])} 至 {_date_text(dates['prior_end_date'])}"
     _write_headers(sheet, label)
 
@@ -171,20 +230,20 @@ def _write_report_sheet(sheet, report: dict[str, Any], label: str, dimension_key
     _write_data_row(sheet, row_number, ["合计", None, None, None] + _metric_values(total), total=True)
 
     sheet.freeze_panes = "A8"
-    widths = (14, 18, 16, 24) + (14,) * 9
+    widths = (14, 18, 16, 24) + (14,) * 15
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(index)].width = width
 
 
 def _write_group_sheet(sheet, report: dict[str, Any]) -> None:
     dates = report["dates"]
-    sheet.merge_cells("A1:O1")
+    sheet.merge_cells("A1:Y1")
     sheet["A1"] = "OD0002 门店销售毛利汇总表（柜组）"
     sheet["A1"].font = Font(size=16, bold=True)
     sheet["A1"].alignment = Alignment(horizontal="center")
-    sheet.merge_cells("A2:O2")
+    sheet.merge_cells("A2:Y2")
     sheet["A2"] = f"本期：{_date_text(dates['start_date'])} 至 {_date_text(dates['end_date'])}"
-    sheet.merge_cells("A3:O3")
+    sheet.merge_cells("A3:Y3")
     sheet["A3"] = f"同期：{_date_text(dates['prior_start_date'])} 至 {_date_text(dates['prior_end_date'])}"
     _write_group_headers(sheet)
 
@@ -195,6 +254,10 @@ def _write_group_sheet(sheet, report: dict[str, Any]) -> None:
             row.get("store_name"),
             row.get("department_code"),
             row.get("department_name"),
+            row.get("area_code"),
+            row.get("area_name"),
+            row.get("category_code"),
+            row.get("category_name"),
             row.get("dimension_code"),
             row.get("dimension_name"),
         ]
@@ -202,7 +265,7 @@ def _write_group_sheet(sheet, report: dict[str, Any]) -> None:
             sheet,
             row_number,
             identifiers + _metric_values(row.get("metrics", {})),
-            identifier_columns=6,
+            identifier_columns=10,
         )
         row_number += 1
 
@@ -210,12 +273,59 @@ def _write_group_sheet(sheet, report: dict[str, Any]) -> None:
     _write_data_row(
         sheet,
         row_number,
-        ["合计", None, None, None, None, None] + _metric_values(total),
-        identifier_columns=6,
+        ["合计", None, None, None, None, None, None, None, None, None]
+        + _metric_values(total),
+        identifier_columns=10,
         total=True,
     )
     sheet.freeze_panes = "A8"
-    widths = (14, 18, 16, 24, 18, 28) + (14,) * 9
+    widths = (14, 18, 16, 24, 14, 18, 14, 20, 18, 28) + (14,) * 15
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+
+def _write_special_sale_sheet(sheet, report: dict[str, Any]) -> None:
+    dates = report["dates"]
+    sheet.merge_cells("A1:W1")
+    sheet["A1"] = "OD0002 门店销售毛利汇总表（特卖）"
+    sheet["A1"].font = Font(size=16, bold=True)
+    sheet["A1"].alignment = Alignment(horizontal="center")
+    sheet.merge_cells("A2:W2")
+    sheet["A2"] = f"本期：{_date_text(dates['start_date'])} 至 {_date_text(dates['end_date'])}"
+    sheet.merge_cells("A3:W3")
+    sheet["A3"] = f"同期：{_date_text(dates['prior_start_date'])} 至 {_date_text(dates['prior_end_date'])}"
+    _write_special_sale_headers(sheet)
+
+    row_number = 8
+    for row in report.get("dimensions", {}).get("special_sales", []):
+        identifiers = [
+            row.get("store_code"),
+            row.get("store_name"),
+            row.get("department_code"),
+            row.get("department_name"),
+            row.get("dimension_code"),
+            row.get("dimension_name"),
+            row.get("brand_code"),
+            row.get("brand_name"),
+        ]
+        _write_data_row(
+            sheet,
+            row_number,
+            identifiers + _metric_values(row.get("metrics", {})),
+            identifier_columns=8,
+        )
+        row_number += 1
+
+    total = report.get("totals", {}).get("special_sales", {})
+    _write_data_row(
+        sheet,
+        row_number,
+        ["合计", None, None, None, None, None, None, None] + _metric_values(total),
+        identifier_columns=8,
+        total=True,
+    )
+    sheet.freeze_panes = "A8"
+    widths = (14, 18, 16, 24, 18, 28, 14, 28) + (14,) * 15
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(index)].width = width
 
@@ -229,13 +339,13 @@ def _hierarchy_text(name: Any, code: Any, *, suffix: str = "") -> Any:
 def _write_department_category_sheet(sheet, report: dict[str, Any]) -> None:
     dates = report["dates"]
     label = "部门（含品类）"
-    sheet.merge_cells("A1:M1")
+    sheet.merge_cells("A1:S1")
     sheet["A1"] = f"OD0002 门店销售毛利汇总表（{label}）"
     sheet["A1"].font = Font(size=16, bold=True)
     sheet["A1"].alignment = Alignment(horizontal="center")
-    sheet.merge_cells("A2:M2")
+    sheet.merge_cells("A2:S2")
     sheet["A2"] = f"本期：{_date_text(dates['start_date'])} 至 {_date_text(dates['end_date'])}"
-    sheet.merge_cells("A3:M3")
+    sheet.merge_cells("A3:S3")
     sheet["A3"] = f"同期：{_date_text(dates['prior_start_date'])} 至 {_date_text(dates['prior_end_date'])}"
     _write_hierarchy_headers(sheet)
 
@@ -279,7 +389,7 @@ def _write_department_category_sheet(sheet, report: dict[str, Any]) -> None:
     total = report.get("totals", {}).get("department_categories", {})
     _write_data_row(sheet, row_number, ["合计", None, None, None] + _metric_values(total), total=True)
     sheet.freeze_panes = "A8"
-    widths = (22, 24, 22, 24) + (14,) * 9
+    widths = (22, 24, 22, 24) + (14,) * 15
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(index)].width = width
 
@@ -292,9 +402,14 @@ def _write_notes(sheet, report: dict[str, Any]) -> None:
     excluded_departments = "、".join(sorted(EXCLUDED_DEPARTMENT_CODES))
     sheet["B2"] = (
         "销售日期取 sglhsrq；销售收入取 sglxssr；毛利额取 sgln2；"
+        "来客数按 salegoodslist.sglbillno 去重小票数计算；"
+        "客单=销售收入（元）/来客数，来客数为0时客单留空；"
         "排除租赁 sglwmid=5；排除楼层00；排除16部门；"
         f"排除部门编码：{excluded_departments}；{scope}；"
-        "合计仅包含当前用户权限范围；大类暂不提供。"
+        "合计仅包含当前用户权限范围；"
+        "特卖Sheet仅列 manaframe.mflc=16 的柜组，"
+        "品牌编码取 salegoodslist.sglppcode，并关联 codebrand.cbid 显示 codebrand.cbcname；"
+        "大类暂不提供。"
     )
     for cell in sheet[1]:
         cell.fill = PatternFill("solid", fgColor=BLUE)
@@ -305,7 +420,7 @@ def _write_notes(sheet, report: dict[str, Any]) -> None:
     sheet["B2"].alignment = Alignment(wrap_text=True, vertical="top")
     sheet.column_dimensions["A"].width = 20
     sheet.column_dimensions["B"].width = 110
-    sheet.row_dimensions[2].height = 60
+    sheet.row_dimensions[2].height = 120
 
 
 def _build_od0002_workbook(report: dict[str, Any]) -> Workbook:
@@ -315,6 +430,8 @@ def _build_od0002_workbook(report: dict[str, Any]) -> Workbook:
         sheet = workbook.create_sheet(label)
         if dimension_key == "groups":
             _write_group_sheet(sheet, report)
+        elif dimension_key == "special_sales":
+            _write_special_sale_sheet(sheet, report)
         else:
             _write_report_sheet(sheet, report, label, dimension_key)
         if dimension_key == "departments":

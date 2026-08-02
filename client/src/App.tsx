@@ -14,6 +14,7 @@ import MobileHomePage from "@/pages/mobile-home";
 import MobileSalesDashboardPage from "@/pages/mobile-sales-dashboard";
 import MobileContractsPage from "@/pages/mobile-contracts";
 import MobileInventoryPage from "@/pages/mobile-inventory";
+import MobileRevenueDashboardPage from "@/pages/mobile-revenue-dashboard";
 import { shouldUseMobileHome } from "@/lib/mobile-entry";
 // Floor definition/management pages removed
 import NotFound from "@/pages/not-found";
@@ -32,6 +33,7 @@ function Routes() {
       <Route path="/mobile/sales" component={MobileSalesDashboardPage} />
       <Route path="/mobile/contracts" component={MobileContractsPage} />
       <Route path="/mobile/inventory" component={MobileInventoryPage} />
+      <Route path="/mobile/revenue" component={MobileRevenueDashboardPage} />
       <Route path="/mobile" component={MobileHomePage} />
       <Route path="/" component={ResponsiveDashboard} />
       <Route path="/stores" component={StoresPage} />

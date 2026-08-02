@@ -103,6 +103,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
   const [selectedGeoId, setSelectedGeoId] = useState<number | undefined>(undefined);
   const [mapEditOpen, setMapEditOpen] = useState(false);
   const [labelMode, setLabelMode] = useState<"NONE" | "PATH" | "UNIT">("UNIT");
+  const [showPendingOnly, setShowPendingOnly] = useState(false);
 
   const listQuery = useBusinessUnits({
     storeId: currentFilter.storeId,
@@ -125,6 +126,14 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
   );
   const versionOptions = useMemo(() => unitVersionsQuery.data ?? [], [unitVersionsQuery.data]);
   const geoRows = useMemo(() => geoQuery.data ?? [], [geoQuery.data]);
+  const pendingGeoRows = useMemo(
+    () => geoRows.filter((g) => !!g.svg_element_id && g.unit_code === g.svg_element_id),
+    [geoRows],
+  );
+  const displayedGeoRows = useMemo(
+    () => (showPendingOnly ? pendingGeoRows : geoRows),
+    [showPendingOnly, pendingGeoRows, geoRows],
+  );
   const selectedBaseMap = useMemo(
     () => baseMapOptions.find((b) => b.id === selectedBaseMapId),
     [baseMapOptions, selectedBaseMapId],
@@ -134,8 +143,8 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
     [selectedBaseMap?.file_url],
   );
   const selectedGeoIndex = useMemo(
-    () => geoRows.findIndex((g) => g.id === selectedGeoId),
-    [geoRows, selectedGeoId],
+    () => displayedGeoRows.findIndex((g) => g.id === selectedGeoId),
+    [displayedGeoRows, selectedGeoId],
   );
   const selectedGeo = useMemo(
     () => geoRows.find((g) => g.id === selectedGeoId),
@@ -310,6 +319,9 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
             parent_unit_id: payload.parent_unit_id,
           },
         });
+        if (selectedGeoId) {
+          await geoQuery.refetch();
+        }
         toast({ title: updateSuccessText });
       } else {
         await createMutation.mutateAsync(payload);
@@ -646,7 +658,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
               variant="outline"
               disabled={selectedGeoIndex <= 0}
               onClick={() => {
-                const prev = geoRows[selectedGeoIndex - 1];
+                const prev = displayedGeoRows[selectedGeoIndex - 1];
                 if (prev) pickGeoForEdit(prev.id);
               }}
             >
@@ -655,9 +667,9 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
             <Button
               size="sm"
               variant="outline"
-              disabled={selectedGeoIndex < 0 || selectedGeoIndex >= geoRows.length - 1}
+              disabled={selectedGeoIndex < 0 || selectedGeoIndex >= displayedGeoRows.length - 1}
               onClick={() => {
-                const next = geoRows[selectedGeoIndex + 1];
+                const next = displayedGeoRows[selectedGeoIndex + 1];
                 if (next) pickGeoForEdit(next.id);
               }}
             >
@@ -666,7 +678,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
             <div className="text-xs text-muted-foreground">
               {selectedGeo
                 ? `当前 path: ${selectedGeo.svg_element_id || selectedGeo.id}（unit_id=${selectedGeo.unit_id}，编码=${selectedUnitCode}）`
-                : "点击图中蓝色区域开始编辑"}
+                : "点击图中区域开始编辑"}
             </div>
             <div className="ml-auto w-[220px]">
               <Select value={labelMode} onValueChange={(v) => setLabelMode(v as "NONE" | "PATH" | "UNIT")}>
@@ -680,6 +692,16 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                 </SelectContent>
               </Select>
             </div>
+            <Button
+              size="sm"
+              variant={showPendingOnly ? "default" : "outline"}
+              onClick={() => {
+                setShowPendingOnly((value) => !value);
+                setSelectedGeoId(undefined);
+              }}
+            >
+              {showPendingOnly ? `显示全部（${geoRows.length}）` : `只看待编辑（${pendingGeoRows.length}）`}
+            </Button>
           </div>
 
           {!selectedBaseMapUrl ? (
@@ -689,20 +711,22 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
           ) : (
             <div className="rounded-lg border bg-white overflow-hidden">
               <div className="px-4 py-2 border-b text-xs text-muted-foreground">
-                版本几何数量：{geoRows.length}（点击蓝色区域进入编辑）
+                版本几何数量：{geoRows.length} ｜ 待人工编辑：{pendingGeoRows.length}
+                {showPendingOnly ? "（当前仅显示橙色待编辑 path）" : "（点击区域进入编辑）"}
               </div>
               <div className="relative w-full aspect-[16/10] bg-slate-50">
                 <svg className="absolute inset-0 w-full h-full" viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} preserveAspectRatio="xMidYMid meet">
                   <image href={selectedBaseMapUrl} x={vb.x} y={vb.y} width={vb.w} height={vb.h} />
                   <g transform={alignTransformText}>
-                    {geoRows.map((g) => {
+                    {displayedGeoRows.map((g) => {
                       const isSelected = g.id === selectedGeoId;
+                      const needsReview = !!g.svg_element_id && g.unit_code === g.svg_element_id;
                       return (
                         <path
                           key={g.id}
                           d={g.path_data}
-                          fill={isSelected ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.18)"}
-                          stroke={isSelected ? "rgba(220,38,38,0.95)" : "rgba(37,99,235,0.9)"}
+                          fill={isSelected ? "rgba(239,68,68,0.25)" : needsReview ? "rgba(245,158,11,0.32)" : "rgba(59,130,246,0.18)"}
+                          stroke={isSelected ? "rgba(220,38,38,0.95)" : needsReview ? "rgba(217,119,6,0.95)" : "rgba(37,99,235,0.9)"}
                           strokeWidth={isSelected ? 3 : 2}
                           vectorEffect="non-scaling-stroke"
                           className="cursor-pointer"
@@ -715,6 +739,7 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                         if (p.x == null || p.y == null) return null;
                         const geo = geoRows.find((g) => g.id === p.id);
                         if (!geo) return null;
+                        if (!displayedGeoRows.some((item) => item.id === geo.id)) return null;
                         const isSelected = geo.id === selectedGeoId;
                         const textValue =
                           labelMode === "PATH"

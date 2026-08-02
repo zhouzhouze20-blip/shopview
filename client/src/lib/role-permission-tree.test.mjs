@@ -25,6 +25,21 @@ const permissions = [
   { id: 16, permission_code: "sales.od0002.view", permission_name: "查看OD0002门店销售毛利汇总表", module_code: "sales", action_code: "od0002_view" },
   { id: 17, permission_code: "sales.hdyy01.view", permission_name: "查看HDYY01柜组经营分析表", module_code: "sales", action_code: "hdyy01_view" },
   { id: 18, permission_code: "sales.brand_member_analysis.view", permission_name: "查看品牌会员分析", module_code: "sales", action_code: "brand_member_analysis_view" },
+  { id: 19, permission_code: "sales.category_performance.view", permission_name: "查看品类主管绩效", module_code: "sales", action_code: "category_performance_view" },
+  { id: 20, permission_code: "sales.category_performance.manage", permission_name: "维护品类主管绩效", module_code: "sales", action_code: "category_performance_manage" },
+  { id: 21, permission_code: "revenue.dashboard.view", permission_name: "查看收益看板", module_code: "revenue", action_code: "dashboard_view" },
+  { id: 22, permission_code: "sales.commodity_detail.view", permission_name: "查看商品销售明细", module_code: "sales", action_code: "commodity_detail_view" },
+  { id: 23, permission_code: "sales.settled_gross_profit.view", permission_name: "查看结算后销售毛利排行表", module_code: "sales", action_code: "settled_gross_profit_view" },
+  { id: 24, permission_code: "sales.od0001.view", permission_name: "查看OD0001销售逐日跟进表", module_code: "sales", action_code: "od0001_view" },
+  { id: 25, permission_code: "sales.od0003.view", permission_name: "查看OD0003中心销售跟进表", module_code: "sales", action_code: "od0003_view" },
+  { id: 26, permission_code: "mobile.sales.view", permission_name: "查看手机端销售看板", module_code: "mobile", action_code: "sales_view" },
+  { id: 27, permission_code: "mobile.contracts.view", permission_name: "查看手机端合同台账", module_code: "mobile", action_code: "contracts_view" },
+  { id: 28, permission_code: "mobile.inventory.view", permission_name: "查看手机端实时库存查询", module_code: "mobile", action_code: "inventory_view" },
+  { id: 29, permission_code: "mobile.revenue_dashboard.view", permission_name: "查看手机端收益看板", module_code: "mobile", action_code: "revenue_dashboard_view" },
+  { id: 30, permission_code: "sales.od0004.view", permission_name: "查看OD0004销售逐月跟进表", module_code: "sales", action_code: "od0004_view" },
+  { id: 31, permission_code: "sales.non_rental_monthly_revenue.view", permission_name: "查看非租赁品牌月度收益表", module_code: "sales", action_code: "non_rental_monthly_revenue_view" },
+  { id: 32, permission_code: "sales.hy0001.view", permission_name: "查看HY0001重点品牌会员消费情况", module_code: "sales", action_code: "hy0001_view" },
+  { id: 33, permission_code: "sales.od0005.view", permission_name: "查看OD0005微商城品牌销售统计", module_code: "sales", action_code: "od0005_view" },
 ];
 
 function findNode(nodes, id) {
@@ -39,6 +54,7 @@ function findNode(nodes, id) {
 test("builds financial management as folder, submodule, action permission hierarchy", () => {
   const tree = buildRolePermissionTree(permissions);
   const financialManagement = findNode(tree, "financial-management");
+  const revenueManagement = findNode(tree, "revenue-management");
   const activitySettlement = findNode(tree, "activity-settlement");
   const couponMonthly = findNode(tree, "coupon-monthly-balance");
 
@@ -46,9 +62,14 @@ test("builds financial management as folder, submodule, action permission hierar
   assert.equal(financialManagement.name, "财务管理");
   assert.deepEqual((financialManagement.children ?? []).map((node) => node.id), [
     "merchant-planning",
-    "revenue-map",
+    "revenue-management",
     "joint-settlement",
     "activity-settlement",
+  ]);
+  assert.ok(revenueManagement);
+  assert.deepEqual((revenueManagement.children ?? []).map((node) => node.id), [
+    "revenue-map",
+    "revenue-dashboard",
   ]);
 
   assert.ok(activitySettlement);
@@ -70,14 +91,37 @@ test("builds financial management as folder, submodule, action permission hierar
   );
 });
 
+test("groups mobile modules as independent role permissions", () => {
+  const tree = buildRolePermissionTree(permissions);
+  const mobileWorkbench = findNode(tree, "mobile-workbench");
+  const mobileSales = findNode(tree, "mobile-sales-dashboard");
+  const mobileContracts = findNode(tree, "mobile-contracts");
+  const mobileInventory = findNode(tree, "mobile-inventory");
+  const mobileRevenue = findNode(tree, "mobile-revenue-dashboard");
+
+  assert.ok(mobileWorkbench);
+  assert.equal(mobileWorkbench.name, "手机端");
+  assert.deepEqual((mobileWorkbench.children ?? []).map((node) => node.id), [
+    "mobile-sales-dashboard",
+    "mobile-contracts",
+    "mobile-inventory",
+    "mobile-revenue-dashboard",
+  ]);
+  assert.deepEqual(collectPermissionTreeIds(mobileWorkbench), [26, 27, 28, 29]);
+  assert.deepEqual((mobileSales.permissions ?? []).map((permission) => permission.permission_code), ["mobile.sales.view"]);
+  assert.deepEqual((mobileContracts.permissions ?? []).map((permission) => permission.permission_code), ["mobile.contracts.view"]);
+  assert.deepEqual((mobileInventory.permissions ?? []).map((permission) => permission.permission_code), ["mobile.inventory.view"]);
+  assert.deepEqual((mobileRevenue.permissions ?? []).map((permission) => permission.permission_code), ["mobile.revenue_dashboard.view"]);
+});
+
 test("collects descendant permission ids and reports indeterminate folder state", () => {
   const tree = buildRolePermissionTree(permissions);
   const financialManagement = findNode(tree, "financial-management");
   assert.ok(financialManagement);
 
-  assert.deepEqual(collectPermissionTreeIds(financialManagement), [1, 2, 3, 4, 5, 6, 7, 12, 8, 9, 10, 11]);
+  assert.deepEqual(collectPermissionTreeIds(financialManagement), [1, 2, 3, 21, 4, 5, 6, 7, 12, 8, 9, 10, 11]);
   assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3])), "indeterminate");
-  assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])), true);
+  assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21])), true);
   assert.equal(getPermissionTreeNodeState(financialManagement, new Set()), false);
 });
 
@@ -99,22 +143,71 @@ test("groups activity analysis permissions by page", () => {
   );
 });
 
-test("shows OD0002 and HDYY01 as independent sales report permissions", () => {
+test("shows every sales report as an independent permission", () => {
   const tree = buildRolePermissionTree(permissions);
   const salesReports = findNode(tree, "sales-reports");
+  const commodityDetail = findNode(tree, "commodity-sales-detail");
+  const settledGrossProfit = findNode(tree, "settled-gross-profit-ranking");
   const od0002 = findNode(tree, "od0002-sales-gross-profit");
+  const dailyFollowup = findNode(tree, "daily-sales-followup");
+  const od0003 = findNode(tree, "od0003-center-sales-followup");
+  const od0004 = findNode(tree, "od0004-monthly-followup");
+  const od0005 = findNode(tree, "od0005-micro-mall-brand-sales");
+  const hy0001 = findNode(tree, "hy0001-key-brand-member");
+  const nonRentalMonthlyRevenue = findNode(tree, "non-rental-monthly-revenue");
   const hdyy01 = findNode(tree, "hdyy01-group-operation-analysis");
 
   assert.ok(salesReports);
   assert.deepEqual((salesReports.children ?? []).map((node) => node.id), [
+    "commodity-sales-detail",
+    "settled-gross-profit-ranking",
+    "daily-sales-followup",
     "od0002-sales-gross-profit",
+    "od0003-center-sales-followup",
+    "od0004-monthly-followup",
+    "od0005-micro-mall-brand-sales",
+    "hy0001-key-brand-member",
+    "non-rental-monthly-revenue",
     "hdyy01-group-operation-analysis",
   ]);
+  assert.deepEqual(
+    (commodityDetail.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.commodity_detail.view"],
+  );
+  assert.deepEqual(
+    (settledGrossProfit.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.settled_gross_profit.view"],
+  );
   assert.ok(od0002);
   assert.deepEqual(
     (od0002.permissions ?? []).map((permission) => permission.permission_code),
     ["sales.od0002.view"],
   );
+  assert.deepEqual(
+    (dailyFollowup.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.od0001.view"],
+  );
+  assert.deepEqual(
+    (od0003.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.od0003.view"],
+  );
+  assert.deepEqual(
+    (od0004.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.od0004.view"],
+  );
+  assert.deepEqual(
+    (od0005.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.od0005.view"],
+  );
+  assert.deepEqual(
+    (hy0001.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.hy0001.view"],
+  );
+  assert.deepEqual(
+    (nonRentalMonthlyRevenue.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.non_rental_monthly_revenue.view"],
+  );
+  assert.equal(nonRentalMonthlyRevenue.name, "非租赁品牌月度收益表");
   assert.ok(hdyy01);
   assert.equal(hdyy01.name, "HDYY01柜组经营分析表");
   assert.deepEqual(
@@ -124,6 +217,14 @@ test("shows OD0002 and HDYY01 as independent sales report permissions", () => {
 
   assert.deepEqual(collectPermissionTreeIds(od0002), [16]);
   assert.deepEqual(collectPermissionTreeIds(hdyy01), [17]);
+  assert.deepEqual(collectPermissionTreeIds(commodityDetail), [22]);
+  assert.deepEqual(collectPermissionTreeIds(settledGrossProfit), [23]);
+  assert.deepEqual(collectPermissionTreeIds(dailyFollowup), [24]);
+  assert.deepEqual(collectPermissionTreeIds(od0003), [25]);
+  assert.deepEqual(collectPermissionTreeIds(od0004), [30]);
+  assert.deepEqual(collectPermissionTreeIds(od0005), [33]);
+  assert.deepEqual(collectPermissionTreeIds(hy0001), [32]);
+  assert.deepEqual(collectPermissionTreeIds(nonRentalMonthlyRevenue), [31]);
   assert.equal(getPermissionTreeNodeState(od0002, new Set([16])), true);
   assert.equal(getPermissionTreeNodeState(hdyy01, new Set([16])), false);
   assert.equal(getPermissionTreeNodeState(od0002, new Set([17])), false);
@@ -146,4 +247,17 @@ test("shows brand member analysis as an independent member analysis permission",
     ["sales.brand_member_analysis.view"],
   );
   assert.deepEqual(collectPermissionTreeIds(brandMemberAnalysis), [18]);
+});
+
+test("separates category performance view and maintenance permissions", () => {
+  const tree = buildRolePermissionTree(permissions);
+  const categoryPerformance = findNode(tree, "category-performance");
+
+  assert.ok(categoryPerformance);
+  assert.deepEqual(
+    (categoryPerformance.permissions ?? []).map((permission) => permission.permission_code),
+    ["sales.category_performance.view", "sales.category_performance.manage"],
+  );
+  assert.deepEqual(collectPermissionTreeIds(categoryPerformance), [19, 20]);
+  assert.equal(getPermissionTreeNodeState(categoryPerformance, new Set([19])), "indeterminate");
 });

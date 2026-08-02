@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BackofficeRevenueUnitCard } from "@/components/backoffice-revenue-unit-card";
+import { MultiBusinessUnitCard } from "@/components/multi-business-unit-card";
+import { MobileSpecialSaleMarker } from "@/components/mobile-special-sale-marker";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,13 +24,18 @@ import {
   useCreateRevenueExtraReceipt,
   useRevenueExtraReceipts,
   useRevenueMonthly,
+  useRevenueUnmatchedDetails,
   useRevenueUnitDetail,
   useVoidRevenueExtraReceipt,
 } from "@/hooks/useRevenue";
 import { resolveApiAssetUrl } from "@/lib/api";
+import { BACKOFFICE_REVENUE_UNIT_CODE, isBackofficeRevenueUnit } from "@/lib/backoffice-revenue-unit";
+import { isMobileSpecialSaleUnit } from "@/lib/mobile-special-sale";
+import { MULTI_BUSINESS_UNIT_CODE, isMultiBusinessUnit } from "@/lib/multi-business-unit";
+import { formatOperationMethod } from "@/lib/operation-method";
 import { deriveSvgViewBox } from "@/lib/svg-metadata";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
-import { CalendarDays, CheckCircle2, CircleDollarSign, Loader2, Minus, Plus, RotateCcw, Settings2, Target, XCircle } from "lucide-react";
+import { CalendarDays, CheckCircle2, CircleDollarSign, Download, Link2, Loader2, Minus, Plus, RotateCcw, Settings2, Target, XCircle } from "lucide-react";
 
 const money = (value: number) =>
   Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -46,6 +54,59 @@ function amountClass(value: number) {
   if (value < 0) return "text-red-600";
   if (value > 0) return "text-slate-900";
   return "text-slate-500";
+}
+
+const revenueMoney = (value: number) => {
+  const amount = money(Math.abs(value));
+  return value < 0 ? `-¥${amount}` : `¥${amount}`;
+};
+
+const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
+
+const REVENUE_MAP_PALETTE = {
+  high: {
+    fill: "rgba(154, 201, 183, 0.86)",
+    stroke: "rgba(76, 130, 110, 0.82)",
+    text: "#315e50",
+    surface: "#eff8f4",
+  },
+  middle: {
+    fill: "rgba(237, 211, 158, 0.88)",
+    stroke: "rgba(169, 131, 72, 0.82)",
+    text: "#755b2f",
+    surface: "#fbf7ea",
+  },
+  low: {
+    fill: "rgba(226, 166, 174, 0.86)",
+    stroke: "rgba(167, 94, 105, 0.8)",
+    text: "#8a4650",
+    surface: "#fbf0f2",
+  },
+  none: {
+    fill: "rgba(226, 232, 240, 0.52)",
+    stroke: "rgba(148, 163, 184, 0.72)",
+    text: "#64748b",
+    surface: "#f3f5f7",
+  },
+} as const;
+
+function compactRevenueMapLabel(
+  groupNames: string | null | undefined,
+  fallback: string,
+  maxChars = 10,
+) {
+  const names = (groupNames || "")
+    .split("、")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const primary = names[0] || fallback;
+  const suffix = names.length > 1 ? ` +${names.length - 1}` : "";
+  const availableChars = Math.max(3, maxChars - Array.from(suffix).length);
+  const chars = Array.from(primary);
+  const compactPrimary = chars.length > availableChars
+    ? `${chars.slice(0, Math.max(2, availableChars - 1)).join("")}…`
+    : primary;
+  return `${compactPrimary}${suffix}`;
 }
 
 type RevenueColorMode = "quantile" | "fixed";
@@ -130,13 +191,12 @@ function buildRevenueColorScale(rows: RevenueMonthlyItem[], config: RevenueColor
 }
 
 function revenueFill(value: number | undefined, scale: RevenueColorScale) {
-  if (value == null) return { fill: "rgba(226,232,240,0.42)", stroke: "rgba(100,116,139,0.7)" };
-  if (value < 0) return { fill: "rgba(244,63,94,0.62)", stroke: "rgba(159,18,57,0.95)" };
-  if (value === 0) return { fill: "rgba(251,113,133,0.34)", stroke: "rgba(190,18,60,0.78)" };
-  if (scale.high <= scale.low) return { fill: "rgba(20,184,166,0.62)", stroke: "rgba(15,118,110,0.95)" };
-  if (value >= scale.high) return { fill: "rgba(16,185,129,0.66)", stroke: "rgba(4,120,87,0.98)" };
-  if (value >= scale.low) return { fill: "rgba(250,204,21,0.62)", stroke: "rgba(161,98,7,0.92)" };
-  return { fill: "rgba(251,113,133,0.5)", stroke: "rgba(190,18,60,0.88)" };
+  if (value == null) return REVENUE_MAP_PALETTE.none;
+  if (value <= 0) return REVENUE_MAP_PALETTE.low;
+  if (scale.high <= scale.low) return REVENUE_MAP_PALETTE.high;
+  if (value >= scale.high) return REVENUE_MAP_PALETTE.high;
+  if (value >= scale.low) return REVENUE_MAP_PALETTE.middle;
+  return REVENUE_MAP_PALETTE.low;
 }
 
 function revenueColorBand(value: number | undefined, scale: RevenueColorScale) {
@@ -166,6 +226,7 @@ export default function RevenueMapPage() {
   const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
   const [selectedUnit, setSelectedUnit] = useState<RevenueMonthlyItem | null>(null);
   const [extraOpen, setExtraOpen] = useState(false);
+  const [unmatchedOpen, setUnmatchedOpen] = useState(false);
   const [colorConfigOpen, setColorConfigOpen] = useState(false);
   const [colorConfig, setColorConfig] = useState<RevenueColorConfig>(() => readRevenueColorConfig());
   const [draftColorConfig, setDraftColorConfig] = useState<RevenueColorConfig>(colorConfig);
@@ -196,21 +257,125 @@ export default function RevenueMapPage() {
   const geoQuery = useGeoElements(versionId ?? undefined);
   const alignQuery = useAlignTransform(versionId ?? undefined);
   const selectedStoreIdValue = storeFilter && Number.isFinite(Number(storeFilter)) ? Number(storeFilter) : null;
-  const monthlyQuery = useRevenueMonthly({ startDate, endDate, storeId: selectedStoreIdValue, floorId });
+  const monthlyQuery = useRevenueMonthly({
+    startDate,
+    endDate,
+    storeId: selectedStoreIdValue,
+    enabled: selectedStoreIdValue != null,
+  });
+  const unmatchedQuery = useRevenueUnmatchedDetails({
+    startDate,
+    endDate,
+    storeId: selectedStoreIdValue,
+    limit: 2000,
+    enabled: unmatchedOpen,
+  });
   const detailQuery = useRevenueUnitDetail({ unitId: selectedUnit?.unit_id, startDate, endDate });
   const extraQuery = useRevenueExtraReceipts({ startDate, endDate, storeId: selectedStoreIdValue, floorId });
   const unitsQuery = useBusinessUnits({ floorId: floorId ?? undefined });
+  const storeBackofficeUnitsQuery = useBusinessUnits({
+    storeId: selectedStoreIdValue,
+    keyword: BACKOFFICE_REVENUE_UNIT_CODE,
+    enabled: selectedStoreIdValue != null,
+  });
+  const storeMultiBusinessUnitsQuery = useBusinessUnits({
+    storeId: selectedStoreIdValue,
+    keyword: MULTI_BUSINESS_UNIT_CODE,
+    enabled: selectedStoreIdValue != null,
+  });
   const createExtra = useCreateRevenueExtraReceipt();
   const confirmExtra = useConfirmRevenueExtraReceipt(revenueMonth);
   const voidExtra = useVoidRevenueExtraReceipt(revenueMonth);
+  const revenueDataFetching =
+    monthlyQuery.isFetching ||
+    extraQuery.isFetching ||
+    (selectedUnit != null && detailQuery.isFetching) ||
+    (unmatchedOpen && unmatchedQuery.isFetching);
 
-  const rows = monthlyQuery.data?.items ?? [];
+  const storeRows = useMemo(
+    () => monthlyQuery.data?.items ?? [],
+    [monthlyQuery.data?.items],
+  );
+  const rows = useMemo(
+    () => (
+      floorId == null
+        ? storeRows
+        : storeRows.filter((row) => row.floor_id === floorId)
+    ),
+    [floorId, storeRows],
+  );
   const extras = extraQuery.data ?? [];
   const units = unitsQuery.data ?? [];
   const floors = floorsQuery.data ?? [];
   const baseMaps = baseMapsQuery.data ?? [];
   const versions = unitVersionsQuery.data ?? [];
   const geoRows = geoQuery.data ?? [];
+  const mobileSpecialSaleUnit = useMemo(
+    () => units.find((unit) => isMobileSpecialSaleUnit(unit.unit_code)) ?? null,
+    [units],
+  );
+  const storeLogicalFloorIds = useMemo(
+    () =>
+      new Set(
+        floors
+          .filter(
+            (floor) =>
+              floor.floor_code?.trim() === "BO" &&
+              floor.name?.trim() === "后台部门",
+          )
+          .map((floor) => floor.id),
+      ),
+    [floors],
+  );
+  const backofficeRevenueUnit = useMemo(
+    () =>
+      units.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isBackofficeRevenueUnit(unit.unit_code),
+      ) ??
+      storeBackofficeUnitsQuery.data?.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isBackofficeRevenueUnit(unit.unit_code),
+      ) ??
+      null,
+    [storeBackofficeUnitsQuery.data, storeLogicalFloorIds, units],
+  );
+  const multiBusinessUnit = useMemo(
+    () =>
+      units.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isMultiBusinessUnit(unit.unit_code),
+      ) ??
+      storeMultiBusinessUnitsQuery.data?.find(
+        (unit) =>
+          storeLogicalFloorIds.has(unit.floor_id) &&
+          isMultiBusinessUnit(unit.unit_code),
+      ) ??
+      null,
+    [storeLogicalFloorIds, storeMultiBusinessUnitsQuery.data, units],
+  );
+  const logicalUnitIds = useMemo(
+    () =>
+      new Set(
+        units
+          .filter(
+            (unit) =>
+              isMobileSpecialSaleUnit(unit.unit_code) ||
+              (
+                storeLogicalFloorIds.has(unit.floor_id) &&
+                (
+                  isBackofficeRevenueUnit(unit.unit_code) ||
+                  isMultiBusinessUnit(unit.unit_code)
+                )
+              ),
+          )
+          .map((unit) => unit.id),
+      ),
+    [storeLogicalFloorIds, units],
+  );
   const monthlyErrorText = monthlyQuery.error ? String(monthlyQuery.error) : "";
 
   const storeOptions = useMemo(() => {
@@ -248,12 +413,6 @@ export default function RevenueMapPage() {
     const globalStore = storeOptions.find((store) => store.value === globalStoreValue);
     setStoreFilter(globalStore?.value ?? storeOptions[0].value);
   }, [selectedStoreId, storeFilter, storeOptions]);
-
-  useEffect(() => {
-    if (!startDate || !endDate) return;
-    monthlyQuery.refetch();
-    extraQuery.refetch();
-  }, [endDate, floorId, selectedStoreIdValue, startDate]);
 
   useEffect(() => {
     if (!storeFilter) return;
@@ -299,15 +458,21 @@ export default function RevenueMapPage() {
     rows.forEach((row) => map.set(row.unit_id, row));
     return map;
   }, [rows]);
+  const storeRevenueByUnitId = useMemo(() => {
+    const map = new Map<number, RevenueMonthlyItem>();
+    storeRows.forEach((row) => map.set(row.unit_id, row));
+    return map;
+  }, [storeRows]);
   const revenueMapStats = useMemo(() => {
-    const mappedUnitIds = new Set(geoRows.map((geo) => geo.unit_id));
+    const mappedUnitIds = new Set([...geoRows.map((geo) => geo.unit_id), ...Array.from(logicalUnitIds)]);
     const mappedRevenueRows = rows.filter((row) => mappedUnitIds.has(row.unit_id));
     return {
       colored: mappedRevenueRows.filter((row) => row.metric_amount !== 0).length,
       matched: mappedRevenueRows.length,
       missingShape: rows.length - mappedRevenueRows.length,
+      logical: rows.filter((row) => logicalUnitIds.has(row.unit_id)).length,
     };
-  }, [geoRows, rows]);
+  }, [geoRows, logicalUnitIds, rows]);
 
   const selectedBaseMap = useMemo(() => baseMaps.find((item) => item.id === baseMapId) ?? null, [baseMaps, baseMapId]);
   const selectedBaseMapUrl = useMemo(() => resolveApiAssetUrl(selectedBaseMap?.file_url), [selectedBaseMap?.file_url]);
@@ -367,6 +532,13 @@ export default function RevenueMapPage() {
         id: geo.id,
         unit_id: geo.unit_id,
         point: getPathVisualCenter(geo.path_data),
+        maxLabelChars: Math.max(
+          5,
+          Math.min(
+            12,
+            Math.floor(Math.abs((geo.bbox_maxx ?? 220) - (geo.bbox_minx ?? 0)) / 22),
+          ),
+        ),
       })),
     [geoRows],
   );
@@ -374,32 +546,36 @@ export default function RevenueMapPage() {
     () => rows.filter((row) => (floorId == null ? true : row.floor_id === floorId)),
     [floorId, rows],
   );
+  const visiblePhysicalRevenueRows = useMemo(
+    () => visibleRevenueRows.filter((row) => !logicalUnitIds.has(row.unit_id)),
+    [logicalUnitIds, visibleRevenueRows],
+  );
   const revenueColorScale = useMemo(
-    () => buildRevenueColorScale(visibleRevenueRows, colorConfig),
-    [colorConfig, visibleRevenueRows],
+    () => buildRevenueColorScale(visiblePhysicalRevenueRows, colorConfig),
+    [colorConfig, visiblePhysicalRevenueRows],
   );
   const draftRevenueColorScale = useMemo(
-    () => buildRevenueColorScale(visibleRevenueRows, draftColorConfig),
-    [draftColorConfig, visibleRevenueRows],
+    () => buildRevenueColorScale(visiblePhysicalRevenueRows, draftColorConfig),
+    [draftColorConfig, visiblePhysicalRevenueRows],
   );
   const revenueColorCounts = useMemo(() => {
-    return visibleRevenueRows.reduce(
+    return visiblePhysicalRevenueRows.reduce(
       (acc, row) => {
         acc[revenueColorBand(row.metric_amount, revenueColorScale)] += 1;
         return acc;
       },
-      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visibleRevenueRows.length) },
+      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visiblePhysicalRevenueRows.length) },
     );
-  }, [geoRows.length, revenueColorScale, visibleRevenueRows]);
+  }, [geoRows.length, revenueColorScale, visiblePhysicalRevenueRows]);
   const draftRevenueColorCounts = useMemo(() => {
-    return visibleRevenueRows.reduce(
+    return visiblePhysicalRevenueRows.reduce(
       (acc, row) => {
         acc[revenueColorBand(row.metric_amount, draftRevenueColorScale)] += 1;
         return acc;
       },
-      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visibleRevenueRows.length) },
+      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visiblePhysicalRevenueRows.length) },
     );
-  }, [draftRevenueColorScale, geoRows.length, visibleRevenueRows]);
+  }, [draftRevenueColorScale, geoRows.length, visiblePhysicalRevenueRows]);
 
   useEffect(() => {
     if (colorConfigOpen) setDraftColorConfig(colorConfig);
@@ -450,12 +626,14 @@ export default function RevenueMapPage() {
   };
 
   const selectMapUnit = (unitId: number) => {
-    const row = revenueByUnitId.get(unitId);
+    const row = revenueByUnitId.get(unitId) ?? storeRevenueByUnitId.get(unitId);
     if (row) {
       setSelectedUnit(row);
       return;
     }
-    const unit = units.find((item) => item.id === unitId);
+    const unit =
+      units.find((item) => item.id === unitId) ??
+      (backofficeRevenueUnit?.id === unitId ? backofficeRevenueUnit : undefined);
     setSelectedUnit({
       unit_id: unitId,
       unit_code: unit?.unit_code || `unit-${unitId}`,
@@ -538,6 +716,206 @@ export default function RevenueMapPage() {
     if (storeRef != null) params.set("merchant_store_id", String(storeRef));
     window.location.href = `${window.location.pathname}?${params.toString()}`;
   };
+
+  const exportUnmatchedDetails = () => {
+    const data = unmatchedQuery.data;
+    if (!data?.items.length) return;
+    const header = [
+      "收益日期",
+      "门店编码",
+      "柜组编码",
+      "柜组名称",
+      "供应商编码",
+      "经营方式",
+      "销售数量",
+      "销售收入",
+      "销售毛利",
+      "来源行数",
+      "首张小票号",
+      "有效合同号",
+      "未匹配原因",
+    ];
+    const rowsForExport = data.items.map((row) => [
+      row.revenue_date?.slice(0, 10),
+      row.store_code,
+      row.source_group_code,
+      row.source_group_name,
+      row.source_supplier_code,
+      formatOperationMethod(row.source_operation_mode),
+      row.sales_qty,
+      row.sales_amount,
+      row.gross_profit_amount,
+      row.source_count,
+      row.first_bill_no,
+      row.contract_codes.join("、"),
+      row.reason,
+    ]);
+    const csv = `\uFEFF${[header, ...rowsForExport].map((row) => row.map(csvCell).join(",")).join("\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `未匹配收益明细_${data.store.store_code}_${startDate}_${endDate}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const openContractBinding = (contractId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", "contract-unit-bindings");
+    params.set("contract_id", contractId);
+    window.location.href = `${window.location.pathname}?${params.toString()}`;
+  };
+
+  const renderUnmatchedDetailsSheet = () => (
+    <Sheet open={unmatchedOpen} onOpenChange={setUnmatchedOpen}>
+      <SheetContent className="z-[60] flex w-full flex-col overflow-hidden bg-white p-0 sm:max-w-5xl">
+        <SheetHeader className="border-b px-5 py-4 pr-12">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <SheetTitle>未匹配收益明细</SheetTitle>
+              <SheetDescription className="mt-1">
+                {selectedStoreOption?.label || "当前门店"} · {startDate} 至 {endDate}
+              </SheetDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={exportUnmatchedDetails}
+              disabled={!unmatchedQuery.data?.items.length}
+            >
+              <Download className="mr-1 h-4 w-4" />
+              导出明细
+            </Button>
+          </div>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto bg-slate-50 px-5 py-4">
+          {unmatchedQuery.isLoading ? (
+            <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              正在加载未匹配明细...
+            </div>
+          ) : unmatchedQuery.isError ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              未匹配明细加载失败：{String(unmatchedQuery.error)}
+            </div>
+          ) : unmatchedQuery.data ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-md border bg-white px-4 py-3">
+                  <div className="text-xs text-muted-foreground">未匹配销售毛利</div>
+                  <div className={`mt-1 text-xl font-semibold ${amountClass(unmatchedQuery.data.total.amount)}`}>
+                    {revenueMoney(unmatchedQuery.data.total.amount)}
+                  </div>
+                </div>
+                <div className="rounded-md border bg-white px-4 py-3">
+                  <div className="text-xs text-muted-foreground">待处理记录</div>
+                  <div className="mt-1 text-xl font-semibold">{unmatchedQuery.data.total.item_count} 条</div>
+                  <div className="text-xs text-muted-foreground">{unmatchedQuery.data.granularity}</div>
+                </div>
+                <div className="rounded-md border bg-white px-4 py-3">
+                  <div className="text-xs text-muted-foreground">当前范围</div>
+                  <div className="mt-1 font-semibold">{unmatchedQuery.data.store.store_name || unmatchedQuery.data.store.store_code}</div>
+                  <div className="text-xs text-muted-foreground">门店级数据</div>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {unmatchedQuery.data.scope_note}
+                {unmatchedQuery.data.is_truncated
+                  ? ` 当前仅显示金额绝对值最大的 ${unmatchedQuery.data.returned_count} 条。`
+                  : ""}
+              </div>
+
+              <div className="overflow-hidden rounded-md border bg-white">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap">收益日期</TableHead>
+                        <TableHead className="min-w-48">来源柜组</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">销售收入</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">销售毛利</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">来源行数</TableHead>
+                        <TableHead className="min-w-36">合同号</TableHead>
+                        <TableHead className="min-w-52">未匹配原因</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {unmatchedQuery.data.items.length ? (
+                        unmatchedQuery.data.items.map((row) => (
+                          <TableRow
+                            key={[
+                              row.revenue_date,
+                              row.store_code,
+                              row.source_group_code,
+                              row.source_supplier_code,
+                              row.source_operation_mode,
+                            ].join("-")}
+                          >
+                            <TableCell className="whitespace-nowrap">{row.revenue_date?.slice(0, 10)}</TableCell>
+                            <TableCell>
+                              <div className="font-medium">{row.source_group_code || "—"}</div>
+                              <div className="text-xs text-muted-foreground">{row.source_group_name || "柜组名称未登记"}</div>
+                              <div className="text-xs text-muted-foreground">
+                                供应商 {row.source_supplier_code || "—"} · {formatOperationMethod(row.source_operation_mode) || "经营方式未登记"}
+                              </div>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-right">{money(row.sales_amount)}</TableCell>
+                            <TableCell className={`whitespace-nowrap text-right font-semibold ${amountClass(row.gross_profit_amount)}`}>
+                              {revenueMoney(row.gross_profit_amount)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-right">{row.source_count}</TableCell>
+                            <TableCell>
+                              {row.contract_codes.length ? (
+                                <div className="flex flex-col items-start gap-1">
+                                  {row.contract_codes.map((contractCode) => (
+                                    <div key={contractCode} className="flex items-center gap-2">
+                                      <span className="font-medium">{contractCode}</span>
+                                      {row.reason_code === "NO_UNIT_BINDING" ? (
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-7 px-2 text-xs"
+                                          onClick={() => openContractBinding(contractCode)}
+                                        >
+                                          <Link2 className="mr-1 h-3.5 w-3.5" />
+                                          去绑定
+                                        </Button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="whitespace-nowrap">{row.reason}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
+                            当前门店和日期范围没有未匹配收益
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
 
   const renderRevenueColorConfigSheet = () => (
     <Sheet open={colorConfigOpen} onOpenChange={setColorConfigOpen}>
@@ -668,16 +1046,16 @@ export default function RevenueMapPage() {
                 </div>
               )}
               <div className="grid grid-cols-3 gap-2 text-xs">
-                <div className="rounded-md border border-red-100 bg-red-50 px-3 py-2">
-                  <div className="font-semibold text-red-700">收益低/负</div>
+                <div className="rounded-md border px-3 py-2" style={{ borderColor: REVENUE_MAP_PALETTE.low.stroke, backgroundColor: REVENUE_MAP_PALETTE.low.surface }}>
+                  <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.low.text }}>收益低/负</div>
                   <div className="mt-1 text-muted-foreground">&lt; {money(draftRevenueColorScale.low)}</div>
                 </div>
-                <div className="rounded-md border border-yellow-100 bg-yellow-50 px-3 py-2">
-                  <div className="font-semibold text-yellow-700">中等</div>
+                <div className="rounded-md border px-3 py-2" style={{ borderColor: REVENUE_MAP_PALETTE.middle.stroke, backgroundColor: REVENUE_MAP_PALETTE.middle.surface }}>
+                  <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.middle.text }}>中等</div>
                   <div className="mt-1 text-muted-foreground">{money(draftRevenueColorScale.low)} - {money(draftRevenueColorScale.high)}</div>
                 </div>
-                <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
-                  <div className="font-semibold text-emerald-700">收益高</div>
+                <div className="rounded-md border px-3 py-2" style={{ borderColor: REVENUE_MAP_PALETTE.high.stroke, backgroundColor: REVENUE_MAP_PALETTE.high.surface }}>
+                  <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.high.text }}>收益高</div>
                   <div className="mt-1 text-muted-foreground">≥ {money(draftRevenueColorScale.high)}</div>
                 </div>
               </div>
@@ -693,20 +1071,20 @@ export default function RevenueMapPage() {
               <div className="text-xs text-muted-foreground">{visibleRevenueRows.length} 个收益柜位</div>
             </div>
             <div className="grid grid-cols-4 gap-2 p-3 text-xs">
-              <div className="rounded-md bg-emerald-50 px-3 py-2">
-                <div className="font-semibold text-emerald-700">收益高</div>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.high.surface }}>
+                <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.high.text }}>收益高</div>
                 <div className="mt-1">{draftRevenueColorCounts.high} 个</div>
               </div>
-              <div className="rounded-md bg-yellow-50 px-3 py-2">
-                <div className="font-semibold text-yellow-700">中等</div>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.middle.surface }}>
+                <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.middle.text }}>中等</div>
                 <div className="mt-1">{draftRevenueColorCounts.middle} 个</div>
               </div>
-              <div className="rounded-md bg-red-50 px-3 py-2">
-                <div className="font-semibold text-red-700">收益低/负</div>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.low.surface }}>
+                <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.low.text }}>收益低/负</div>
                 <div className="mt-1">{draftRevenueColorCounts.low} 个</div>
               </div>
-              <div className="rounded-md bg-slate-100 px-3 py-2">
-                <div className="font-semibold text-slate-600">无数据</div>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.none.surface }}>
+                <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.none.text }}>无数据</div>
                 <div className="mt-1">{draftRevenueColorCounts.none} 个</div>
               </div>
             </div>
@@ -805,7 +1183,9 @@ export default function RevenueMapPage() {
             <div className="rounded-md border bg-white">
               <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
                 <div className="text-sm font-semibold">销售毛利明细</div>
-                <div className="text-xs text-muted-foreground">{detailQuery.data.sales_details.length} 条</div>
+                <div className="text-xs text-muted-foreground">
+                  {detailQuery.data.sales_details.length + (detailQuery.data.loss_bearing_details?.length ?? 0)} 条
+                </div>
               </div>
               <div className="overflow-x-auto text-xs">
                 <Table>
@@ -825,7 +1205,7 @@ export default function RevenueMapPage() {
                             <div className="font-medium">{row.source_group_code || "—"}</div>
                             <div className="text-xs text-muted-foreground">{row.source_group_name || "—"}</div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">{row.operation_mode || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatOperationMethod(row.operation_mode)}</TableCell>
                           <TableCell className="whitespace-nowrap text-right">{money(row.tax_excluded_sales_amount)}</TableCell>
                           <TableCell className="whitespace-nowrap text-right font-medium">{money(row.tax_excluded_profit_amount)}</TableCell>
                         </TableRow>
@@ -838,6 +1218,39 @@ export default function RevenueMapPage() {
                   </TableBody>
                 </Table>
               </div>
+              {detailQuery.data.loss_bearing_details?.length ? (
+                <div className="border-t bg-amber-50/40">
+                  <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
+                    <div className="text-xs font-semibold text-amber-900">损失承担（已计入销售毛利）</div>
+                    <div className="text-xs text-amber-800">{detailQuery.data.loss_bearing_details.length} 条</div>
+                  </div>
+                  <div className="overflow-x-auto text-xs">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-44">柜组</TableHead>
+                          <TableHead className="whitespace-nowrap">费用</TableHead>
+                          <TableHead className="whitespace-nowrap text-right">含税</TableHead>
+                          <TableHead className="whitespace-nowrap text-right">计入毛利</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {detailQuery.data.loss_bearing_details.map((row) => (
+                          <TableRow key={row.id}>
+                            <TableCell>
+                              <div className="font-medium">{row.source_group_code || "—"}</div>
+                              <div className="text-xs text-muted-foreground">{row.source_group_name || "—"}</div>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">{row.fee_type_name || "损失承担"}</TableCell>
+                            <TableCell className="whitespace-nowrap text-right">{money(row.tax_included_amount)}</TableCell>
+                            <TableCell className="whitespace-nowrap text-right font-medium">{money(row.tax_excluded_amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-md border bg-white">
@@ -926,11 +1339,12 @@ export default function RevenueMapPage() {
   return (
     <div className="container mx-auto space-y-3 p-4" data-testid="revenue-map-page">
       {renderRevenueColorConfigSheet()}
+      {renderUnmatchedDetailsSheet()}
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-44">
           <h1 className="text-2xl font-bold tracking-tight">收益地图</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">绿色为高收益，黄色为中等，红色为低收益或负收益。</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">柔和绿色为高收益，暖黄色为中等，柔和红色为低收益或负收益。</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -1068,6 +1482,32 @@ export default function RevenueMapPage() {
         </div>
       </div>
 
+      {revenueDataFetching ? (
+        <div
+          data-testid="revenue-query-status"
+          className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-blue-700"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="inline-flex items-center gap-2 font-medium">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              正在查询最新收益数据…
+            </span>
+            <span className="text-xs text-blue-600">
+              {startDate} 至 {endDate}，完成后自动更新卡片和地图
+            </span>
+          </div>
+          <div
+            className="sales-dashboard-fetch-track h-1 rounded-full bg-blue-100"
+            role="progressbar"
+            aria-label="收益数据查询进度"
+          >
+            <div className="sales-dashboard-fetch-bar" />
+          </div>
+        </div>
+      ) : null}
+
       {monthlyQuery.isError ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           收益数据加载失败：{monthlyErrorText || "请检查收益汇总接口"}
@@ -1099,13 +1539,26 @@ export default function RevenueMapPage() {
             <div className="mt-1 text-xl font-semibold">{money(totals.extra)}</div>
           </CardContent>
         </Card>
-        <Card className="rounded-md">
-          <CardContent className="px-4 py-3">
-            <div className="text-xs font-medium text-muted-foreground">未匹配</div>
-            <div className="mt-1 text-xl font-semibold">{money(monthlyQuery.data?.unmatched.amount ?? 0)}</div>
-            <div className="text-xs text-muted-foreground">{monthlyQuery.data?.unmatched.item_count ?? 0} 条待处理</div>
-          </CardContent>
-        </Card>
+        <button
+          type="button"
+          className="block h-full text-left disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => setUnmatchedOpen(true)}
+          disabled={selectedStoreIdValue == null}
+          aria-label="查看未匹配收益明细"
+        >
+          <Card className="h-full rounded-md transition-colors hover:border-blue-400 hover:bg-blue-50/40">
+            <CardContent className="px-4 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-muted-foreground">未匹配</div>
+                <div className="text-xs font-medium text-blue-600">查看明细</div>
+              </div>
+              <div className={`mt-1 text-xl font-semibold ${amountClass(monthlyQuery.data?.unmatched.amount ?? 0)}`}>
+                {money(monthlyQuery.data?.unmatched.amount ?? 0)}
+              </div>
+              <div className="text-xs text-muted-foreground">{monthlyQuery.data?.unmatched.item_count ?? 0} 条待处理 · 门店级</div>
+            </CardContent>
+          </Card>
+        </button>
       </div>
 
       <Card className="rounded-md">
@@ -1116,10 +1569,10 @@ export default function RevenueMapPage() {
               图上收益
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm bg-emerald-400" />收益高</span>
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm bg-yellow-300" />中等</span>
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm bg-red-300" />收益低/负</span>
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm bg-slate-200" />无数据</span>
+              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.high.fill }} />收益高</span>
+              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.middle.fill }} />中等</span>
+              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.low.fill }} />收益低/负</span>
+              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.none.fill }} />无数据</span>
               <Button type="button" variant="outline" size="sm" className="ml-2 h-8" onClick={() => setColorConfigOpen(true)}>
                 <Settings2 className="mr-1 h-4 w-4" />
                 颜色规则
@@ -1139,15 +1592,39 @@ export default function RevenueMapPage() {
         <CardContent className="px-4 pb-4 pt-0">
           <div className={selectedUnit ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_520px]" : "grid gap-4"}>
             {!selectedBaseMapUrl ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">当前楼层没有可用底图</div>
+              backofficeRevenueUnit || multiBusinessUnit ? (
+                <div className="flex min-h-[420px] items-center justify-center rounded-md border bg-slate-50 p-6">
+                  <div className="flex flex-col gap-3">
+                    {backofficeRevenueUnit ? (
+                      <BackofficeRevenueUnitCard
+                        unitCode={backofficeRevenueUnit.unit_code}
+                        selected={selectedUnit?.unit_id === backofficeRevenueUnit.id}
+                        amount={storeRevenueByUnitId.get(backofficeRevenueUnit.id)?.metric_amount ?? null}
+                        onSelect={() => selectMapUnit(backofficeRevenueUnit.id)}
+                      />
+                    ) : null}
+                    {multiBusinessUnit ? (
+                      <MultiBusinessUnitCard
+                        unitCode={multiBusinessUnit.unit_code}
+                        selected={selectedUnit?.unit_id === multiBusinessUnit.id}
+                        amount={storeRevenueByUnitId.get(multiBusinessUnit.id)?.metric_amount ?? null}
+                        onSelect={() => selectMapUnit(multiBusinessUnit.id)}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-12 text-center text-sm text-muted-foreground">当前楼层没有可用底图</div>
+              )
             ) : !vb ? (
               <div className="py-12 text-center text-sm text-muted-foreground">当前底图缺少有效 viewBox，无法叠加柜位图</div>
             ) : (
               <div className="overflow-hidden rounded-md border bg-white">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
-                  <span>柜位数量：{geoRows.length}</span>
+                  <span>柜位数量：{geoRows.length + (mobileSpecialSaleUnit ? 1 : 0)}</span>
                   <span>有收益：{revenueMapStats.colored} 个</span>
                   <span>已匹配：{revenueMapStats.matched} 个</span>
+                  {mobileSpecialSaleUnit ? <span>流动特卖：{revenueMapStats.logical ? "有收益" : "待绑定"}</span> : null}
                   {revenueMapStats.missingShape > 0 ? <span>未上图：{revenueMapStats.missingShape} 个</span> : null}
                   <span>缩放：{Math.round(mapZoom * 100)}%</span>
                   <span>
@@ -1187,21 +1664,33 @@ export default function RevenueMapPage() {
                               d={geo.path_data}
                               fill={selected ? "rgba(59,130,246,0.62)" : color.fill}
                               stroke={selected ? "rgba(37,99,235,1)" : color.stroke}
-                              strokeWidth={selected ? 4.5 : row ? 3.25 : 2}
+                              strokeWidth={selected ? 4.5 : row ? 2.5 : 1.75}
                               vectorEffect="non-scaling-stroke"
-                              className="cursor-pointer transition-colors drop-shadow-sm hover:brightness-110"
+                              className="cursor-pointer transition-colors drop-shadow-sm hover:brightness-105"
                               onClick={() => {
                                 if (suppressMapClickRef.current) return;
                                 selectMapUnit(geo.unit_id);
                               }}
-                            />
+                            >
+                              <title>
+                                {row
+                                  ? `${row.source_group_names || row.source_group_codes || row.unit_code}｜柜位 ${row.unit_code}｜收益 ${revenueMoney(row.metric_amount)}`
+                                  : `柜位 ${geo.unit_id}｜暂无收益数据`}
+                              </title>
+                            </path>
                           );
                         })}
-                        {labelPoints.map(({ id, unit_id, point }) => {
+                        {labelPoints.map(({ id, unit_id, point, maxLabelChars }) => {
                           if (!point) return null;
                           const row = revenueByUnitId.get(unit_id);
                           const unit = units.find((item) => item.id === unit_id);
                           const hasRevenue = row && row.metric_amount !== 0;
+                          const fallbackCode = row?.unit_code || unit?.unit_code || `U${unit_id}`;
+                          const mapLabel = compactRevenueMapLabel(
+                            row?.source_group_names || row?.source_group_codes,
+                            fallbackCode,
+                            maxLabelChars,
+                          );
                           return (
                             <g key={`label-${id}`} pointerEvents="none">
                               <text
@@ -1209,14 +1698,14 @@ export default function RevenueMapPage() {
                                 y={hasRevenue ? point.y - 8 : point.y}
                                 textAnchor="middle"
                                 dominantBaseline="middle"
-                                fontSize={24}
+                                fontSize={22}
                                 fontWeight={800}
-                                fill="#0f172a"
-                                stroke="#ffffff"
-                                strokeWidth={6}
+                                fill="#27364a"
+                                stroke="rgba(255,255,255,0.94)"
+                                strokeWidth={5}
                                 paintOrder="stroke"
                               >
-                                {row?.unit_code || unit?.unit_code || `U${unit_id}`}
+                                {mapLabel}
                               </text>
                               {hasRevenue ? (
                                 <text
@@ -1226,12 +1715,12 @@ export default function RevenueMapPage() {
                                   dominantBaseline="middle"
                                   fontSize={18}
                                   fontWeight={800}
-                                  fill={row.metric_amount < 0 ? "#991b1b" : "#065f46"}
-                                  stroke="#ffffff"
-                                  strokeWidth={5}
+                                  fill={row.metric_amount < 0 ? REVENUE_MAP_PALETTE.low.text : "#365c52"}
+                                  stroke="rgba(255,255,255,0.94)"
+                                  strokeWidth={4.5}
                                   paintOrder="stroke"
                                 >
-                                  {money(row.metric_amount)}
+                                  {revenueMoney(row.metric_amount)}
                                 </text>
                               ) : null}
                             </g>
@@ -1240,6 +1729,40 @@ export default function RevenueMapPage() {
                       </g>
                     </g>
                   </svg>
+                  {mobileSpecialSaleUnit || backofficeRevenueUnit || multiBusinessUnit ? (
+                    <div
+                      data-testid="logical-revenue-unit-dock"
+                      className="absolute left-4 top-4 z-20 flex w-64 origin-top-left scale-50 flex-col gap-2"
+                    >
+                      {backofficeRevenueUnit ? (
+                        <BackofficeRevenueUnitCard
+                          unitCode={backofficeRevenueUnit.unit_code}
+                          selected={selectedUnit?.unit_id === backofficeRevenueUnit.id}
+                          amount={storeRevenueByUnitId.get(backofficeRevenueUnit.id)?.metric_amount ?? null}
+                          className="w-full bg-violet-50/95 p-3 backdrop-blur-sm"
+                          onSelect={() => selectMapUnit(backofficeRevenueUnit.id)}
+                        />
+                      ) : null}
+                      {multiBusinessUnit ? (
+                        <MultiBusinessUnitCard
+                          unitCode={multiBusinessUnit.unit_code}
+                          selected={selectedUnit?.unit_id === multiBusinessUnit.id}
+                          amount={storeRevenueByUnitId.get(multiBusinessUnit.id)?.metric_amount ?? null}
+                          className="w-full bg-sky-50/95 p-3 backdrop-blur-sm"
+                          onSelect={() => selectMapUnit(multiBusinessUnit.id)}
+                        />
+                      ) : null}
+                      {mobileSpecialSaleUnit ? (
+                        <MobileSpecialSaleMarker
+                          unitCode={mobileSpecialSaleUnit.unit_code}
+                          selected={selectedUnit?.unit_id === mobileSpecialSaleUnit.id}
+                          amount={revenueByUnitId.get(mobileSpecialSaleUnit.id)?.metric_amount ?? null}
+                          className="static w-full"
+                          onSelect={() => selectMapUnit(mobileSpecialSaleUnit.id)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -1260,6 +1783,7 @@ export default function RevenueMapPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>柜位</TableHead>
+                <TableHead>柜组名称</TableHead>
                 <TableHead>销售毛利</TableHead>
                 <TableHead>收费</TableHead>
                 <TableHead>补收</TableHead>
@@ -1269,13 +1793,16 @@ export default function RevenueMapPage() {
             </TableHeader>
             <TableBody>
               {monthlyQuery.isLoading ? (
-                <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">加载中...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">加载中...</TableCell></TableRow>
               ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">暂无数据</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">暂无数据</TableCell></TableRow>
               ) : (
                 rows.map((row) => (
                   <TableRow key={row.unit_id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedUnit(row)}>
                     <TableCell className="font-medium">{row.unit_code}</TableCell>
+                    <TableCell className="min-w-40 max-w-64 whitespace-normal">
+                      {row.source_group_names || "—"}
+                    </TableCell>
                     <TableCell>{money(row.sales_gross_profit_amount)}</TableCell>
                     <TableCell>{money(row.fee_amount)}</TableCell>
                     <TableCell>{money(row.extra_amount)}</TableCell>

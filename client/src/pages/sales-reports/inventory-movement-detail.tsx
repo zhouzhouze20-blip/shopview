@@ -2,6 +2,11 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Loader2, Search } from "lucide-react";
 
+import {
+  InventoryFilterAutocomplete,
+  type InventoryFilterField,
+  type InventoryFilterOption,
+} from "@/components/inventory-filter-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,6 +27,8 @@ type Filters = {
   goods_name: string;
   barcode: string;
 };
+
+type TextFilters = Pick<Filters, InventoryFilterField>;
 
 type MovementRow = {
   sequence: number;
@@ -144,6 +151,14 @@ const emptyFilters = (): Filters => {
   };
 };
 
+const emptyTextFilters = (): TextFilters => ({
+  supplier: "",
+  group: "",
+  goods_code: "",
+  goods_name: "",
+  barcode: "",
+});
+
 const buildQuery = (filters: Filters, includePaging: boolean) => {
   const query = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
@@ -172,16 +187,17 @@ const renderCell = (row: MovementRow, column: Column) => {
   return String(value ?? "").trim() || "—";
 };
 
-const TEXT_FILTERS: readonly { key: keyof Filters; label: string; placeholder: string }[] = [
-  { key: "supplier", label: "供应商", placeholder: "编码或名称" },
-  { key: "group", label: "柜组", placeholder: "编码或名称" },
-  { key: "goods_code", label: "商品代码", placeholder: "部分编码" },
-  { key: "goods_name", label: "商品名称", placeholder: "名称关键字" },
-  { key: "barcode", label: "商品条码", placeholder: "部分条码" },
+const TEXT_FILTERS: readonly { key: InventoryFilterField; label: string; placeholder: string; inputMode?: "numeric" }[] = [
+  { key: "supplier", label: "供应商", placeholder: "输入部分编码或名称" },
+  { key: "group", label: "柜组", placeholder: "输入部分编码或名称" },
+  { key: "goods_code", label: "商品代码", placeholder: "输入部分编码" },
+  { key: "goods_name", label: "商品名称", placeholder: "输入名称关键字" },
+  { key: "barcode", label: "商品条码", placeholder: "输入部分条码", inputMode: "numeric" },
 ];
 
 export default function InventoryMovementDetailReportPage() {
   const [draft, setDraft] = useState<Filters>(() => emptyFilters());
+  const [draftDisplay, setDraftDisplay] = useState<TextFilters>(() => emptyTextFilters());
   const [submitted, setSubmitted] = useState<Filters>(() => emptyFilters());
   const [hasSearched, setHasSearched] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -194,8 +210,18 @@ export default function InventoryMovementDetailReportPage() {
     enabled: hasSearched,
   });
 
-  const update = (key: keyof Filters, value: string) => {
+  const update = (key: "start_date" | "end_date", value: string) => {
     setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateTextInput = (key: InventoryFilterField, value: string) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+    setDraftDisplay((current) => ({ ...current, [key]: value }));
+  };
+
+  const selectTextOption = (key: InventoryFilterField, option: InventoryFilterOption) => {
+    setDraft((current) => ({ ...current, [key]: option.value }));
+    setDraftDisplay((current) => ({ ...current, [key]: option.label }));
   };
 
   const submit = () => {
@@ -217,6 +243,7 @@ export default function InventoryMovementDetailReportPage() {
   const reset = () => {
     const cleared = emptyFilters();
     setDraft(cleared);
+    setDraftDisplay(emptyTextFilters());
     setSubmitted(cleared);
     setHasSearched(false);
     setMessage(null);
@@ -266,7 +293,9 @@ export default function InventoryMovementDetailReportPage() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">查询条件</CardTitle>
-          <CardDescription>发生日期起止均包含；编码和名称支持模糊查询。</CardDescription>
+          <CardDescription>
+            发生日期起止均包含；供应商、柜组、商品代码、商品名称和商品条码均支持模糊查询。
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:max-w-3xl">
@@ -282,15 +311,20 @@ export default function InventoryMovementDetailReportPage() {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {TEXT_FILTERS.map((filter) => (
-              <div key={filter.key} className="space-y-2">
-                <Label htmlFor={`movement-${filter.key}`}>{filter.label}</Label>
-                <Input
-                  id={`movement-${filter.key}`}
-                  value={draft[filter.key]}
-                  placeholder={filter.placeholder}
-                  onChange={(event) => update(filter.key, event.target.value)}
-                />
-              </div>
+              <InventoryFilterAutocomplete
+                key={filter.key}
+                field={filter.key}
+                label={filter.label}
+                placeholder={filter.placeholder}
+                inputMode={filter.inputMode}
+                displayValue={draftDisplay[filter.key]}
+                filterValue={draft[filter.key]}
+                onInputChange={(value) => updateTextInput(filter.key, value)}
+                onSelect={(option) => selectTextOption(filter.key, option)}
+                optionsEndpoint={`${REPORT_ENDPOINT}/options`}
+                dates={{ start_date: draft.start_date, end_date: draft.end_date }}
+                inputIdPrefix="movement"
+              />
             ))}
           </div>
 

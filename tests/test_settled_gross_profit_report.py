@@ -155,7 +155,7 @@ def test_workbook_matches_reference_columns_and_includes_quality_and_scope():
     assert "柜位系统 PostgreSQL" in workbook["口径说明"]["B9"].value
 
 
-def test_endpoint_reuses_od0002_permission_and_business_scope(monkeypatch):
+def test_endpoint_uses_independent_permission_and_business_scope(monkeypatch):
     from python_app.routers import sales
     from python_app.routers.authz import DataScope
 
@@ -199,8 +199,47 @@ def test_endpoint_reuses_od0002_permission_and_business_scope(monkeypatch):
     )
 
     assert result == {"rows": []}
-    assert calls["permission"] == "sales.od0002.view"
+    assert calls["permission"] == "sales.settled_gross_profit.view"
     assert calls["scope_kwargs"]["store_expr"] == "st.store_id::text"
     assert calls["scope_kwargs"]["group_expr"] == "mf.mfcode"
     assert calls["load_kwargs"]["selected_store"] == "603"
     assert calls["load_kwargs"]["selected_department"] == "6030101"
+
+
+def test_filter_options_use_independent_permission(monkeypatch):
+    from python_app.routers import sales
+
+    calls = []
+    monkeypatch.setattr(
+        sales,
+        "_load_report_store_options",
+        lambda db, user, **kwargs: calls.append(("stores", kwargs)) or [],
+    )
+    monkeypatch.setattr(
+        sales,
+        "_load_report_department_options",
+        lambda db, user, store_id, **kwargs: (
+            calls.append(("departments", store_id, kwargs)) or []
+        ),
+    )
+
+    asyncio.run(sales.settled_gross_profit_stores(object(), object()))
+    asyncio.run(sales.settled_gross_profit_departments(" 603 ", object(), object()))
+
+    assert calls == [
+        (
+            "stores",
+            {
+                "permission_code": "sales.settled_gross_profit.view",
+                "prefix": "settled_gross_profit_stores",
+            },
+        ),
+        (
+            "departments",
+            " 603 ",
+            {
+                "permission_code": "sales.settled_gross_profit.view",
+                "prefix": "settled_gross_profit_departments",
+            },
+        ),
+    ]
