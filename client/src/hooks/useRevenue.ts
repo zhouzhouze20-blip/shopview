@@ -93,6 +93,17 @@ export interface RevenueExtraReceipt {
   remark?: string | null;
   attachment_url?: string | null;
   status: "DRAFT" | "CONFIRMED" | "VOID";
+  source_type?: "NC6051" | "MANUAL" | string | null;
+  source_detail_key?: string | null;
+  source_subject_code?: string | null;
+  source_department_code?: string | null;
+  source_department_name?: string | null;
+  source_explanation?: string | null;
+  match_method?: "PHYSICAL_CABINET" | "BACKOFFICE_FALLBACK" | "UNMATCHED" | string | null;
+  match_status?: "MATCHED" | "FALLBACK" | "UNMATCHED" | string | null;
+  match_reason?: string | null;
+  etl_batch_id?: string | null;
+  source_updated_at?: string | null;
   created_at?: string | null;
   confirmed_at?: string | null;
   voided_at?: string | null;

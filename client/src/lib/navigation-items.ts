@@ -119,6 +119,7 @@ export const navigationItems: NavigationItem[] = [
             subItems: [
               { id: "commodity-sales-detail", name: "商品销售明细", icon: FileText },
               { id: "settled-gross-profit-ranking", name: "结算后销售毛利排行表", icon: FileSpreadsheet },
+              { id: "store-other-business-income", name: "门店其他业务收入", icon: FileSpreadsheet },
             ],
           },
         ],

@@ -21,12 +21,6 @@ from routers.authz import load_business_scope, require_permission, scope_allows_
 router = APIRouter(prefix="/api/revenue-map", tags=["revenue"])
 logger = logging.getLogger(__name__)
 
-REVENUE_BINDING_ORDER_SQL = (
-    "(b.shop_unit_id IS NOT NULL) DESC, "
-    "COALESCE(b.is_primary, false) DESC, "
-    "b.id ASC"
-)
-
 LOSS_BEARING_FEE_NAME_PREFIX = "损失承担"
 LOSS_BEARING_TAX_DIVISOR = "1.13"
 
@@ -174,11 +168,18 @@ def _live_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") -> st
               NULLIF(TRIM(s.sglsupid), '') AS source_supplier_code,
               NULLIF(TRIM(s.sglwmid), '') AS source_operation_mode,
               COALESCE(SUM(s.sglsl), 0)::numeric(18,4) AS sales_qty,
-              COALESCE(SUM(s.sglxssr), 0)::numeric(18,2) AS sales_amount,
+              COALESCE(
+                SUM(
+                  (COALESCE(s.sglxssr, 0) + COALESCE(s.sglpfsr, 0))
+                  / NULLIF(1 + COALESCE(s.sglxstax, 0), 0)
+                ),
+                0
+              )::numeric AS sales_amount,
               COALESCE(
                 SUM(COALESCE(s.sgln2, 0) / NULLIF(1 + COALESCE(s.sglxstax, 0), 0)),
                 0
               )::numeric AS gross_profit_amount,
+              COALESCE(SUM(s.sgln2), 0)::numeric AS front_gross_profit_amount,
               COUNT(*)::integer AS source_count,
               MIN(s.sglbillno::varchar) AS first_bill_no
             FROM salegoodslist s
@@ -222,6 +223,7 @@ def _live_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") -> st
               sales_by_group.sales_qty,
               sales_by_group.sales_amount,
               sales_by_group.gross_profit_amount,
+              sales_by_group.front_gross_profit_amount,
               sales_by_group.source_count,
               sales_by_group.first_bill_no,
               ROW_NUMBER() OVER (
@@ -277,6 +279,7 @@ def _live_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") -> st
               ranked.sales_qty,
               ranked.sales_amount,
               ranked.gross_profit_amount,
+              ranked.front_gross_profit_amount,
               ranked.source_count,
               ranked.first_bill_no
             FROM ranked_live_sales ranked
@@ -644,6 +647,8 @@ def _live_revenue_source_ctes(
               revenue_date,
               source_group_code,
               source_group_name,
+              NULL::varchar AS source_department_code,
+              NULL::varchar AS source_department_name,
               gross_profit_amount AS sales_amount,
               0::numeric AS fee_amount,
               0::numeric AS extra_amount,
@@ -660,6 +665,8 @@ def _live_revenue_source_ctes(
               fee.revenue_date,
               fee.source_group_code,
               fee.source_group_name,
+              NULL::varchar,
+              NULL::varchar,
               CASE
                 WHEN {loss_bearing_fee_condition} THEN fee.tax_excluded_amount
                 ELSE 0::numeric
@@ -682,6 +689,8 @@ def _live_revenue_source_ctes(
               extra.revenue_date,
               extra.source_group_code,
               extra.source_group_name,
+              extra.source_department_code,
+              extra.source_department_name,
               0::numeric,
               0::numeric,
               extra.amount,
@@ -694,6 +703,52 @@ def _live_revenue_source_ctes(
             JOIN stores st ON TRIM(st.store_code) = TRIM(unit_floor.store_code)
             WHERE {extra_date_filter}
               AND extra.status = 'CONFIRMED'
+              AND extra.source_type = 'NC6051'
+        )
+    """
+
+
+def _nc_6051_extra_detail_ctes(extra_filter_sql: str = "") -> str:
+    """Build traceable NC6051 rows with the exact account name from PK_ACCSUBJ."""
+    return f"""
+        subject_names AS (
+          SELECT
+            TRIM(subjcode) AS subject_code,
+            MIN(NULLIF(TRIM(subjname), '')) AS subject_name
+          FROM ods.nc_bd_accsubj
+          WHERE COALESCE(dr, 0) = 0
+            AND TRIM(subjcode) LIKE '6051%'
+          GROUP BY TRIM(subjcode)
+        ),
+        filtered_extras AS (
+          SELECT
+            extra.*,
+            COALESCE(
+              exact_subject.subject_name,
+              subject_names.subject_name,
+              NULLIF(TRIM(extra.extra_type), ''),
+              '未命名科目'
+            ) AS source_subject_name
+          FROM revenue_extra_receipts extra
+          LEFT JOIN LATERAL (
+            SELECT finance.pk_accsubj
+            FROM bh_dw_gl_detail_fact2 finance
+            WHERE finance.pk_detail = extra.source_detail_key
+            ORDER BY finance.load_date DESC NULLS LAST
+            LIMIT 1
+          ) finance_subject ON true
+          LEFT JOIN LATERAL (
+            SELECT MIN(NULLIF(TRIM(acc.subjname), '')) AS subject_name
+            FROM ods.nc_bd_accsubj acc
+            WHERE acc.pk_accsubj = finance_subject.pk_accsubj
+              AND COALESCE(acc.dr, 0) = 0
+          ) exact_subject ON true
+          LEFT JOIN subject_names
+            ON subject_names.subject_code = TRIM(extra.source_subject_code)
+          WHERE extra.revenue_date BETWEEN :start_date AND :end_date
+            AND extra.status = 'CONFIRMED'
+            AND extra.source_type = 'NC6051'
+            {extra_filter_sql}
         )
     """
 
@@ -823,6 +878,17 @@ def _receipt_to_dict(row) -> dict:
         "remark": row.remark,
         "attachment_url": row.attachment_url,
         "status": row.status,
+        "source_type": getattr(row, "source_type", None),
+        "source_detail_key": getattr(row, "source_detail_key", None),
+        "source_subject_code": getattr(row, "source_subject_code", None),
+        "source_department_code": getattr(row, "source_department_code", None),
+        "source_department_name": getattr(row, "source_department_name", None),
+        "source_explanation": getattr(row, "source_explanation", None),
+        "match_method": getattr(row, "match_method", None),
+        "match_status": getattr(row, "match_status", None),
+        "match_reason": getattr(row, "match_reason", None),
+        "etl_batch_id": getattr(row, "etl_batch_id", None),
+        "source_updated_at": _dt(getattr(row, "source_updated_at", None)),
         "created_by": row.created_by,
         "confirmed_by": row.confirmed_by,
         "voided_by": row.voided_by,
@@ -904,8 +970,14 @@ async def revenue_dashboard(
                   src.store_id,
                   st.store_code,
                   st.store_name,
-                  NULLIF(TRIM(dept.mfcode), '') AS department_code,
-                  NULLIF(TRIM(dept.mfcname), '') AS department_name,
+                  COALESCE(
+                    NULLIF(TRIM(dept.mfcode), ''),
+                    NULLIF(TRIM(src.source_department_code), '')
+                  ) AS department_code,
+                  COALESCE(
+                    NULLIF(TRIM(dept.mfcname), ''),
+                    NULLIF(TRIM(src.source_department_name), '')
+                  ) AS department_name,
                   NULLIF(TRIM(src.source_group_code), '') AS group_code,
                   COALESCE(
                     NULLIF(TRIM(src.source_group_name), ''),
@@ -938,8 +1010,14 @@ async def revenue_dashboard(
                   src.store_id,
                   st.store_code,
                   st.store_name,
-                  NULLIF(TRIM(dept.mfcode), ''),
-                  NULLIF(TRIM(dept.mfcname), ''),
+                  COALESCE(
+                    NULLIF(TRIM(dept.mfcode), ''),
+                    NULLIF(TRIM(src.source_department_code), '')
+                  ),
+                  COALESCE(
+                    NULLIF(TRIM(dept.mfcname), ''),
+                    NULLIF(TRIM(src.source_department_name), '')
+                  ),
                   NULLIF(TRIM(src.source_group_code), ''),
                   COALESCE(
                     NULLIF(TRIM(src.source_group_name), ''),
@@ -1211,6 +1289,341 @@ async def revenue_dashboard_group_details(
         raise HTTPException(
             status_code=500,
             detail="获取柜位收益看板明细失败，请稍后重试",
+        ) from exc
+
+
+@router.get("/dashboard/extra-details")
+async def revenue_dashboard_extra_details(
+    start_date: date,
+    end_date: date,
+    store_id: int,
+    source_group_code: Optional[str] = None,
+    source_group_name: Optional[str] = None,
+    unit_code: Optional[str] = None,
+    limit: int = Query(2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return NC6051 subject summaries and voucher explanations for one dashboard row."""
+    require_permission(db, current_user, "revenue.dashboard.view")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
+
+    normalized_group_code = (source_group_code or "").strip()
+    normalized_group_name = (source_group_name or "").strip()
+    normalized_unit_code = (unit_code or "").strip()
+    if not normalized_group_code and not normalized_group_name:
+        raise HTTPException(status_code=400, detail="柜位编码或来源部门名称至少填写一个")
+
+    try:
+        store_row = db.execute(
+            text(
+                """
+                SELECT store_id, store_code, store_name
+                FROM stores
+                WHERE store_id = :store_id
+                """
+            ),
+            {"store_id": store_id},
+        ).mappings().first()
+        if not store_row:
+            raise HTTPException(status_code=404, detail="门店不存在")
+
+        params = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "store_id": store_id,
+            "source_group_code": normalized_group_code,
+            "source_group_name": normalized_group_name,
+            "unit_code": normalized_unit_code,
+            "limit": limit,
+        }
+        if normalized_group_code:
+            row_filter = "AND UPPER(TRIM(extra.source_group_code)) = UPPER(:source_group_code)"
+        else:
+            row_filter = """
+              AND NULLIF(TRIM(extra.source_group_code), '') IS NULL
+              AND TRIM(extra.source_group_name) = :source_group_name
+            """
+        if normalized_unit_code:
+            row_filter += " AND TRIM(extra.unit_code) = :unit_code"
+        row_filter = "AND extra.store_id = :store_id " + row_filter
+        common_ctes = _nc_6051_extra_detail_ctes(row_filter)
+
+        metadata = db.execute(
+            text(
+                f"""
+                WITH {common_ctes}
+                SELECT
+                  MIN(NULLIF(TRIM(source_department_code), '')) AS department_code,
+                  MIN(NULLIF(TRIM(source_department_name), '')) AS department_name,
+                  MIN(NULLIF(TRIM(source_group_code), '')) AS group_code,
+                  MIN(NULLIF(TRIM(source_group_name), '')) AS group_name,
+                  MIN(NULLIF(TRIM(unit_code), '')) AS unit_code
+                FROM filtered_extras
+                """
+            ),
+            params,
+        ).mappings().first()
+
+        scope_subject = {
+            "store_id": int(store_row["store_id"]),
+            "department_code": metadata.get("department_code") if metadata else None,
+            "department_name": (
+                metadata.get("department_name") if metadata else normalized_group_name
+            ),
+            "group_code": (
+                metadata.get("group_code") if metadata else normalized_group_code or None
+            ),
+        }
+        scope = load_business_scope(db, current_user, fallback_resource_code="revenue")
+        if not _dashboard_row_allowed(scope, scope_subject):
+            raise HTTPException(status_code=403, detail="目标其他收益不在当前用户数据权限范围内")
+
+        subject_rows = db.execute(
+            text(
+                f"""
+                WITH {common_ctes}
+                SELECT
+                  COALESCE(NULLIF(TRIM(source_subject_code), ''), '未编码') AS subject_code,
+                  source_subject_name AS subject_name,
+                  COUNT(*)::bigint AS detail_count,
+                  COALESCE(SUM(amount), 0)::numeric AS amount
+                FROM filtered_extras
+                GROUP BY
+                  COALESCE(NULLIF(TRIM(source_subject_code), ''), '未编码'),
+                  source_subject_name
+                ORDER BY ABS(COALESCE(SUM(amount), 0)) DESC, subject_code
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        detail_rows = db.execute(
+            text(
+                f"""
+                WITH {common_ctes}
+                SELECT
+                  id,
+                  revenue_date,
+                  source_subject_code,
+                  source_subject_name,
+                  extra_type,
+                  source_department_code,
+                  source_department_name,
+                  source_explanation,
+                  voucher_no,
+                  amount,
+                  source_detail_key,
+                  source_group_code,
+                  source_group_name,
+                  unit_code,
+                  match_method,
+                  match_status,
+                  match_reason,
+                  COUNT(*) OVER ()::bigint AS total_count,
+                  COALESCE(SUM(amount) OVER (), 0)::numeric AS total_amount
+                FROM filtered_extras
+                ORDER BY revenue_date DESC, ABS(amount) DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        subject_items = [
+            {
+                "subject_code": row.get("subject_code"),
+                "subject_name": row.get("subject_name"),
+                "detail_count": int(row.get("detail_count") or 0),
+                "amount": _money(row.get("amount")),
+            }
+            for row in subject_rows
+        ]
+        detail_items = [
+            {
+                "id": str(row.get("id")),
+                "revenue_date": _dt(row.get("revenue_date")),
+                "subject_code": row.get("source_subject_code"),
+                "subject_name": row.get("source_subject_name"),
+                "extra_type": row.get("extra_type"),
+                "department_code": row.get("source_department_code"),
+                "department_name": row.get("source_department_name"),
+                "explanation": row.get("source_explanation"),
+                "voucher_no": row.get("voucher_no"),
+                "amount": _money(row.get("amount")),
+                "source_detail_key": row.get("source_detail_key"),
+                "source_group_code": row.get("source_group_code"),
+                "source_group_name": row.get("source_group_name"),
+                "unit_code": row.get("unit_code"),
+                "match_method": row.get("match_method"),
+                "match_status": row.get("match_status"),
+                "match_reason": row.get("match_reason"),
+            }
+            for row in detail_rows
+        ]
+        total_count = int(detail_rows[0].get("total_count") or 0) if detail_rows else 0
+        total_amount = _money(detail_rows[0].get("total_amount")) if detail_rows else 0.0
+        return {
+            "store": {
+                "store_id": int(store_row["store_id"]),
+                "store_code": store_row.get("store_code"),
+                "store_name": store_row.get("store_name"),
+            },
+            "target": {
+                "department_code": metadata.get("department_code") if metadata else None,
+                "department_name": metadata.get("department_name") if metadata else normalized_group_name,
+                "group_code": metadata.get("group_code") if metadata else normalized_group_code or None,
+                "group_name": metadata.get("group_name") if metadata else normalized_group_name,
+                "unit_code": metadata.get("unit_code") if metadata else normalized_unit_code or None,
+            },
+            "start_date": _dt(start_date),
+            "end_date": _dt(end_date),
+            "date_basis": "revenue_date",
+            "total_count": total_count,
+            "returned_count": len(detail_items),
+            "is_truncated": total_count > len(detail_items),
+            "total_amount": total_amount,
+            "subjects": subject_items,
+            "items": detail_items,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "获取其他收益科目摘要明细失败 store_id=%s group_code=%s group_name=%s start_date=%s end_date=%s",
+            store_id,
+            normalized_group_code,
+            normalized_group_name,
+            start_date,
+            end_date,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="获取其他收益科目摘要明细失败，请稍后重试",
+        ) from exc
+
+
+@router.get("/dashboard/extra-export-details")
+async def revenue_dashboard_extra_export_details(
+    start_date: date,
+    end_date: date,
+    limit: int = Query(20000, ge=1, le=50000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return permission-scoped NC6051 rows for the revenue dashboard workbook."""
+    require_permission(db, current_user, "revenue.dashboard.view")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
+
+    try:
+        params = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "scan_limit": 50001,
+        }
+        common_ctes = _nc_6051_extra_detail_ctes()
+        rows = db.execute(
+            text(
+                f"""
+                WITH {common_ctes}
+                SELECT
+                  extra.id,
+                  extra.store_id,
+                  st.store_code,
+                  st.store_name,
+                  extra.revenue_date,
+                  extra.source_subject_code,
+                  extra.source_subject_name,
+                  extra.extra_type,
+                  extra.source_department_code,
+                  extra.source_department_name,
+                  extra.source_explanation,
+                  extra.voucher_no,
+                  extra.amount,
+                  extra.source_detail_key,
+                  extra.source_group_code,
+                  extra.source_group_name,
+                  extra.unit_code,
+                  extra.match_method,
+                  extra.match_status,
+                  extra.match_reason
+                FROM filtered_extras extra
+                JOIN stores st ON st.store_id = extra.store_id
+                ORDER BY
+                  st.store_code,
+                  extra.source_department_code,
+                  extra.source_subject_code,
+                  extra.revenue_date,
+                  extra.voucher_no,
+                  extra.id
+                LIMIT :scan_limit
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        scope = load_business_scope(db, current_user, fallback_resource_code="revenue")
+        allowed_rows = [
+            dict(row)
+            for row in rows
+            if _dashboard_row_allowed(
+                scope,
+                {
+                    "store_id": row.get("store_id"),
+                    "department_code": row.get("source_department_code"),
+                    "department_name": row.get("source_department_name"),
+                    "group_code": row.get("source_group_code"),
+                },
+            )
+        ]
+        returned_rows = allowed_rows[:limit]
+        items = [
+            {
+                "id": str(row.get("id")),
+                "store_id": int(row.get("store_id")),
+                "store_code": row.get("store_code"),
+                "store_name": row.get("store_name"),
+                "revenue_date": _dt(row.get("revenue_date")),
+                "subject_code": row.get("source_subject_code"),
+                "subject_name": row.get("source_subject_name"),
+                "extra_type": row.get("extra_type"),
+                "department_code": row.get("source_department_code"),
+                "department_name": row.get("source_department_name"),
+                "explanation": row.get("source_explanation"),
+                "voucher_no": row.get("voucher_no"),
+                "amount": _money(row.get("amount")),
+                "source_detail_key": row.get("source_detail_key"),
+                "source_group_code": row.get("source_group_code"),
+                "source_group_name": row.get("source_group_name"),
+                "unit_code": row.get("unit_code"),
+                "match_method": row.get("match_method"),
+                "match_status": row.get("match_status"),
+                "match_reason": row.get("match_reason"),
+            }
+            for row in returned_rows
+        ]
+        return {
+            "start_date": _dt(start_date),
+            "end_date": _dt(end_date),
+            "permission_scoped": True,
+            "total_count": len(allowed_rows),
+            "returned_count": len(items),
+            "is_truncated": len(rows) >= params["scan_limit"] or len(allowed_rows) > len(items),
+            "items": items,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "获取收益看板其他收益导出明细失败 start_date=%s end_date=%s",
+            start_date,
+            end_date,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="获取收益看板其他收益导出明细失败，请稍后重试",
         ) from exc
 
 
@@ -1594,7 +2007,10 @@ async def unit_revenue_detail(
                 SELECT
                   md5(
                     live_sales.revenue_date::text || '|' ||
+                    live_sales.store_id::text || '|' ||
                     live_sales.source_group_code || '|' ||
+                    COALESCE(live_sales.source_supplier_code, '') || '|' ||
+                    COALESCE(live_sales.source_operation_mode, '') || '|' ||
                     live_sales.unit_id::text
                   ) AS id,
                   live_sales.revenue_date,
@@ -1661,7 +2077,9 @@ async def unit_revenue_detail(
                 f"""
                 SELECT *
                 FROM revenue_extra_receipts extra
-                WHERE extra.unit_id = :unit_id AND {extra_date_filter}
+                WHERE extra.unit_id = :unit_id
+                  AND extra.source_type = 'NC6051'
+                  AND {extra_date_filter}
                 ORDER BY revenue_date DESC, id DESC
                 LIMIT 500
                 """
@@ -1779,7 +2197,7 @@ async def list_extra_receipts(
     if start_date and end_date and end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
     params: dict = {}
-    filters: list[str] = []
+    filters: list[str] = ["source_type = 'NC6051'"]
     if start_date and end_date:
         filters.append("revenue_date BETWEEN :start_date AND :end_date")
         params["start_date"] = start_date
@@ -1822,33 +2240,10 @@ async def create_extra_receipt(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "revenue.extra.create")
-    payload = _normalize_unit_fields(db, _model_data(body))
-    if payload["amount"] == 0:
-        raise HTTPException(status_code=400, detail="金额不能为 0")
-    try:
-        row = db.execute(
-            text(
-                """
-                INSERT INTO revenue_extra_receipts (
-                    store_id, floor_id, unit_id, unit_code, revenue_date, extra_type, amount,
-                    receipt_date, voucher_no, contract_code, supplier_code, supplier_name,
-                    source_group_code, source_group_name, remark, attachment_url, created_by
-                )
-                VALUES (
-                    :store_id, :floor_id, :unit_id, :unit_code, :revenue_date, :extra_type, :amount,
-                    :receipt_date, :voucher_no, :contract_code, :supplier_code, :supplier_name,
-                    :source_group_code, :source_group_name, :remark, :attachment_url, :created_by
-                )
-                RETURNING *
-                """
-            ),
-            {**payload, "created_by": current_user.user_id},
-        ).fetchone()
-        db.commit()
-        return _receipt_to_dict(row)
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"创建补收记录失败: {exc}")
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="手工补收已停用；电表、物业、营运收费由 NC6051 自动同步",
+    )
 
 
 @router.put("/extra-receipts/{receipt_id}")
@@ -1859,60 +2254,10 @@ async def update_extra_receipt(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "revenue.extra.edit")
-    current = db.execute(
-        text("SELECT id, status FROM revenue_extra_receipts WHERE id = :id"),
-        {"id": receipt_id},
-    ).fetchone()
-    if not current:
-        raise HTTPException(status_code=404, detail="补收记录不存在")
-    if current.status != "DRAFT":
-        raise HTTPException(status_code=400, detail="只有草稿状态可以修改")
-
-    payload = {k: v for k, v in _model_data(body).items() if v is not None}
-    if "unit_id" in payload:
-        payload = _normalize_unit_fields(db, payload)
-    if "amount" in payload and payload["amount"] == 0:
-        raise HTTPException(status_code=400, detail="金额不能为 0")
-    if not payload:
-        raise HTTPException(status_code=400, detail="没有可更新字段")
-
-    allowed = {
-        "store_id",
-        "floor_id",
-        "unit_id",
-        "unit_code",
-        "revenue_date",
-        "extra_type",
-        "amount",
-        "receipt_date",
-        "voucher_no",
-        "contract_code",
-        "supplier_code",
-        "supplier_name",
-        "source_group_code",
-        "source_group_name",
-        "remark",
-        "attachment_url",
-    }
-    sets = [f"{key} = :{key}" for key in payload if key in allowed]
-    payload["id"] = receipt_id
-    try:
-        row = db.execute(
-            text(
-                f"""
-                UPDATE revenue_extra_receipts
-                SET {", ".join(sets)}, updated_at = NOW()
-                WHERE id = :id
-                RETURNING *
-                """
-            ),
-            payload,
-        ).fetchone()
-        db.commit()
-        return _receipt_to_dict(row)
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"更新补收记录失败: {exc}")
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="NC6051 自动收费不允许手工修改，请修正来源或柜位绑定后重新同步",
+    )
 
 
 @router.post("/extra-receipts/{receipt_id}/confirm")
@@ -1922,22 +2267,10 @@ async def confirm_extra_receipt(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "revenue.extra.confirm")
-    row = db.execute(
-        text(
-            """
-            UPDATE revenue_extra_receipts
-            SET status = 'CONFIRMED', confirmed_by = :user_id, confirmed_at = NOW(), updated_at = NOW()
-            WHERE id = :id AND status = 'DRAFT'
-            RETURNING *
-            """
-        ),
-        {"id": receipt_id, "user_id": current_user.user_id},
-    ).fetchone()
-    if not row:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="只有草稿状态可以确认，或记录不存在")
-    db.commit()
-    return _receipt_to_dict(row)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="NC6051 自动收费写入后即确认，不需要人工确认",
+    )
 
 
 @router.post("/extra-receipts/{receipt_id}/void")
@@ -1947,22 +2280,10 @@ async def void_extra_receipt(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "revenue.extra.void")
-    row = db.execute(
-        text(
-            """
-            UPDATE revenue_extra_receipts
-            SET status = 'VOID', voided_by = :user_id, voided_at = NOW(), updated_at = NOW()
-            WHERE id = :id AND status <> 'VOID'
-            RETURNING *
-            """
-        ),
-        {"id": receipt_id, "user_id": current_user.user_id},
-    ).fetchone()
-    if not row:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="记录不存在或已作废")
-    db.commit()
-    return _receipt_to_dict(row)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="NC6051 自动收费不允许手工作废，请修正来源后重新同步",
+    )
 
 
 @router.post("/recalculate")
@@ -1977,7 +2298,21 @@ async def recalculate_revenue(
 
     params = {"start_date": body.start_date, "end_date": body.end_date, "unit_id": body.unit_id}
     unit_filter = "AND unit_id = :unit_id" if body.unit_id is not None else ""
+    live_sales_ctes = _live_sales_ctes("s.sglhsrq BETWEEN :start_date AND :end_date")
     try:
+        nc_refresh = db.execute(
+            text(
+                """
+                SELECT *
+                FROM refresh_nc_6051_extra_receipts(
+                    :start_date,
+                    :end_date,
+                    'recalc_' || TO_CHAR(clock_timestamp(), 'YYYYMMDDHH24MISSMS')
+                )
+                """
+            ),
+            params,
+        ).fetchone()
         db.execute(
             text(
                 """
@@ -1991,72 +2326,64 @@ async def recalculate_revenue(
         sales_result = db.execute(
             text(
                 f"""
-                WITH sales_by_group AS (
-                    SELECT
-                      s.sglhsrq::date AS revenue_date,
-                      NULLIF(TRIM(s.sglmarket), '') AS store_code,
-                      NULLIF(TRIM(s.sglmfid), '') AS source_group_code,
-                      COALESCE(SUM(s.sglsl), 0)::numeric(18,4) AS sales_qty,
-                      COALESCE(SUM(s.sglxssr), 0)::numeric(18,2) AS sales_amount,
-                      COALESCE(SUM(s.sgln2), 0)::numeric(18,2) AS gross_profit_amount,
-                      COUNT(*)::integer AS source_count,
-                      MIN(s.sglbillno::varchar) AS first_bill_no
-                    FROM salegoodslist s
-                    WHERE s.sglhsrq BETWEEN :start_date AND :end_date
-                      AND NULLIF(TRIM(s.sglmfid), '') IS NOT NULL
-                    GROUP BY s.sglhsrq, NULLIF(TRIM(s.sglmarket), ''), NULLIF(TRIM(s.sglmfid), '')
-                ),
+                WITH {live_sales_ctes},
                 matched AS (
                     SELECT
-                      CASE WHEN sales_by_group.store_code ~ '^[0-9]+$' THEN sales_by_group.store_code::integer ELSE NULL END AS store_id,
-                      bu.floor_id,
-                      bu.id AS unit_id,
-                      bu.unit_code,
-                      sales_by_group.revenue_date,
-                      sales_by_group.source_group_code,
-                      cg.group_name AS source_group_name,
-                      cg.department_code,
-                      cg.department_name,
-                      cg.area_name,
+                      live.store_id,
+                      live.floor_id,
+                      live.unit_id,
+                      live.unit_code,
+                      live.revenue_date,
+                      live.source_group_code,
+                      COALESCE(live.source_group_name, metadata.group_name) AS source_group_name,
+                      metadata.department_code,
+                      metadata.department_name,
+                      metadata.area_name,
                       f.name AS floor_name,
-                      COALESCE(NULLIF(cg.operation_method, ''), binding.business_type) AS operation_mode,
-                      binding.supplier_id AS supplier_code,
-                      binding.brand_id AS supplier_name,
-                      binding.contract_id AS contract_code,
-                      sales_by_group.sales_qty,
-                      sales_by_group.sales_amount,
-                      sales_by_group.gross_profit_amount,
-                      sales_by_group.first_bill_no,
-                      sales_by_group.source_count
-                    FROM sales_by_group
-                    JOIN counter_groups cg
-                      ON UPPER(TRIM(cg.group_code)) = UPPER(TRIM(sales_by_group.source_group_code))
-                    JOIN LATERAL (
-                        SELECT b.*
-                        FROM business_unit_binding b
-                        WHERE b.counter_group_id = cg.group_id
-                          AND COALESCE(b.status, 'ACTIVE') = 'ACTIVE'
-                          AND (b.start_date IS NULL OR b.start_date <= sales_by_group.revenue_date)
-                          AND (b.end_date IS NULL OR b.end_date >= sales_by_group.revenue_date)
-                        ORDER BY {REVENUE_BINDING_ORDER_SQL}
+                      live.operation_mode,
+                      live.source_supplier_code,
+                      live.source_operation_mode,
+                      live.supplier_code,
+                      live.supplier_name,
+                      live.contract_code,
+                      live.sales_qty,
+                      live.sales_amount,
+                      live.gross_profit_amount,
+                      live.front_gross_profit_amount,
+                      live.first_bill_no,
+                      live.source_count
+                    FROM live_sales live
+                    LEFT JOIN floors f ON f.id = live.floor_id
+                    LEFT JOIN LATERAL (
+                        SELECT
+                          cg.group_name,
+                          cg.department_code,
+                          cg.department_name,
+                          cg.area_name
+                        FROM counter_groups cg
+                        WHERE cg.store_id = live.store_id
+                          AND UPPER(TRIM(cg.group_code)) = UPPER(TRIM(live.source_group_code))
+                        ORDER BY cg.group_id ASC
                         LIMIT 1
-                    ) binding ON true
-                    JOIN business_units bu ON bu.id = binding.shop_unit_id
-                    LEFT JOIN floors f ON f.id = bu.floor_id
-                    WHERE (:unit_id IS NULL OR bu.id = :unit_id)
+                    ) metadata ON true
+                    WHERE (:unit_id IS NULL OR live.unit_id = :unit_id)
                 )
                 INSERT INTO unit_revenue_sales_detail (
                     id, store_id, floor_id, unit_id, unit_code, revenue_date,
                     source_group_code, source_group_name, department_code, department_name,
                     area_name, floor_name, operation_mode, supplier_code, supplier_name,
                     contract_code, sales_qty, tax_excluded_sales_amount,
-                    tax_excluded_profit_amount, source_doc_no, source_row_key,
+                    tax_excluded_profit_amount, front_gross_profit_amount,
+                    source_doc_no, source_row_key,
                     etl_batch_id, raw_payload, updated_at
                 )
                 SELECT
                     md5(
                         matched.revenue_date::text || '|' ||
+                        matched.store_id::text || '|' ||
                         matched.source_group_code || '|' ||
+                        COALESCE(matched.source_supplier_code, '') || '|' ||
+                        COALESCE(matched.source_operation_mode, '') || '|' ||
                         matched.unit_id::text
                     ) AS id,
                     matched.store_id,
@@ -2077,10 +2404,23 @@ async def recalculate_revenue(
                     matched.sales_qty,
                     matched.sales_amount,
                     matched.gross_profit_amount,
+                    matched.front_gross_profit_amount,
                     matched.first_bill_no,
-                    matched.revenue_date::text || '_' || matched.source_group_code,
+                    concat_ws(
+                      '|',
+                      matched.revenue_date::text,
+                      matched.store_id::text,
+                      matched.source_group_code,
+                      COALESCE(matched.source_supplier_code, ''),
+                      COALESCE(matched.source_operation_mode, '')
+                    ),
                     'RECALC_SALES_' || to_char(NOW(), 'YYYYMMDDHH24MISS'),
-                    jsonb_build_object('source', 'salegoodslist', 'source_count', matched.source_count),
+                    jsonb_build_object(
+                      'source', 'salegoodslist',
+                      'source_count', matched.source_count,
+                      'source_supplier_code', matched.source_supplier_code,
+                      'source_operation_mode', matched.source_operation_mode
+                    ),
                     NOW()
                 FROM matched
                 WHERE matched.unit_id IS NOT NULL
@@ -2172,6 +2512,7 @@ async def recalculate_revenue(
                     FROM revenue_extra_receipts
                     WHERE revenue_date BETWEEN :start_date AND :end_date
                       AND status = 'CONFIRMED'
+                      AND source_type = 'NC6051'
                       AND unit_id IS NOT NULL
                       {unit_filter}
                 ),
@@ -2219,6 +2560,11 @@ async def recalculate_revenue(
             "end_date": body.end_date.isoformat(),
             "unit_id": body.unit_id,
             "sales_detail_rows": sales_detail_rows,
+            "nc_6051_source_rows": int(nc_refresh.source_rows or 0),
+            "nc_6051_inserted_rows": int(nc_refresh.inserted_rows or 0),
+            "nc_6051_physical_match_rows": int(nc_refresh.physical_match_rows or 0),
+            "nc_6051_backoffice_fallback_rows": int(nc_refresh.backoffice_fallback_rows or 0),
+            "nc_6051_unmatched_rows": int(nc_refresh.unmatched_rows or 0),
             "summary_rows": inserted,
         }
     except Exception as exc:

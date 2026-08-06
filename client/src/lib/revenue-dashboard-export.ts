@@ -23,15 +23,41 @@ export type RevenueDashboardExportItem = {
   fee_breakdown?: RevenueDashboardFeeBreakdown[];
 };
 
+export type RevenueDashboardExtraExportItem = {
+  id: string;
+  store_id: number;
+  store_code?: string | null;
+  store_name?: string | null;
+  revenue_date: string;
+  subject_code?: string | null;
+  subject_name?: string | null;
+  extra_type?: string | null;
+  department_code?: string | null;
+  department_name?: string | null;
+  explanation?: string | null;
+  voucher_no?: string | null;
+  amount: number;
+  source_detail_key?: string | null;
+  source_group_code?: string | null;
+  source_group_name?: string | null;
+  unit_code?: string | null;
+  match_method?: string | null;
+  match_status?: string | null;
+  match_reason?: string | null;
+};
+
 export type RevenueDashboardExportData = {
   filename: string;
   feeColumns: string[];
   summaryRows: Array<Array<string | number>>;
   feeDetailRows: Array<Array<string | number>>;
+  extraSubjectRows: Array<Array<string | number>>;
+  extraDetailRows: Array<Array<string | number>>;
   notesRows: Array<Array<string | number>>;
 };
 
 const amount = (value: number | null | undefined) => Number(value || 0);
+const moneyDifference = (value: number) => (Math.abs(value) < 0.005 ? 0 : value);
 
 const feeColumnName = (fee: RevenueDashboardFeeBreakdown) => {
   const code = String(fee.fee_type_code || "").trim();
@@ -49,6 +75,7 @@ export function buildRevenueDashboardExportData(
   items: RevenueDashboardExportItem[],
   startDate: string,
   endDate: string,
+  extraItems: RevenueDashboardExtraExportItem[] = [],
 ): RevenueDashboardExportData {
   const feeColumns = Array.from(
     new Set(
@@ -101,7 +128,7 @@ export function buildRevenueDashboardExportData(
       amount(item.fee_amount),
       amount(item.extra_amount),
       amount(item.total_amount),
-      amount(item.fee_amount) - feeBreakdownTotal,
+      moneyDifference(amount(item.fee_amount) - feeBreakdownTotal),
       ...feeColumns.map((column) => amount(breakdown.get(column))),
     ];
   });
@@ -152,6 +179,176 @@ export function buildRevenueDashboardExportData(
     ),
   ];
 
+  const sortedExtraItems = [...extraItems].sort(
+    (left, right) =>
+      compareText(left.store_code || left.store_name, right.store_code || right.store_name) ||
+      compareText(left.department_code || left.department_name, right.department_code || right.department_name) ||
+      compareText(left.subject_code || left.subject_name, right.subject_code || right.subject_name) ||
+      compareText(left.revenue_date, right.revenue_date) ||
+      compareText(left.voucher_no, right.voucher_no) ||
+      compareText(left.source_detail_key || left.id, right.source_detail_key || right.id),
+  );
+
+  const subjectBuckets = new Map<
+    string,
+    {
+      store_code: string;
+      store_name: string;
+      department_code: string;
+      department_name: string;
+      subject_code: string;
+      subject_name: string;
+      extra_type: string;
+      detail_count: number;
+      amount: number;
+    }
+  >();
+  sortedExtraItems.forEach((item) => {
+    const storeCode = String(item.store_code || "");
+    const storeName = String(item.store_name || "");
+    const departmentCode = String(item.department_code || "");
+    const departmentName = String(item.department_name || "未归属部门");
+    const subjectCode = String(item.subject_code || "未编码");
+    const subjectName = String(item.subject_name || item.extra_type || "未命名科目");
+    const extraType = String(item.extra_type || "其他收益");
+    const key = [
+      storeCode,
+      storeName,
+      departmentCode,
+      departmentName,
+      subjectCode,
+      subjectName,
+      extraType,
+    ].join("\u001f");
+    const bucket = subjectBuckets.get(key) || {
+      store_code: storeCode,
+      store_name: storeName,
+      department_code: departmentCode,
+      department_name: departmentName,
+      subject_code: subjectCode,
+      subject_name: subjectName,
+      extra_type: extraType,
+      detail_count: 0,
+      amount: 0,
+    };
+    bucket.detail_count += 1;
+    bucket.amount += amount(item.amount);
+    subjectBuckets.set(key, bucket);
+  });
+
+  const subjectDetailRows = Array.from(subjectBuckets.values())
+    .sort(
+      (left, right) =>
+        compareText(left.store_code || left.store_name, right.store_code || right.store_name) ||
+        compareText(left.department_code || left.department_name, right.department_code || right.department_name) ||
+        compareText(left.subject_code || left.subject_name, right.subject_code || right.subject_name),
+    )
+    .map((row) => [
+      startDate,
+      endDate,
+      row.store_code,
+      row.store_name,
+      row.department_code,
+      row.department_name,
+      row.subject_code,
+      row.subject_name,
+      row.extra_type,
+      row.detail_count,
+      row.amount,
+    ]);
+  const subjectTotalRow: Array<string | number> = [
+    "",
+    "",
+    "",
+    "合计",
+    "",
+    "",
+    "",
+    "",
+    "",
+    subjectDetailRows.reduce((sum, row) => sum + amount(row[9] as number), 0),
+    subjectDetailRows.reduce((sum, row) => sum + amount(row[10] as number), 0),
+  ];
+  const extraSubjectRows = [
+    [
+      "开始日期",
+      "结束日期",
+      "门店编码",
+      "门店",
+      "部门编码",
+      "部门",
+      "科目编码",
+      "科目名称",
+      "收益类型",
+      "明细笔数",
+      "科目金额",
+    ],
+    ...subjectDetailRows,
+    subjectTotalRow,
+  ];
+
+  const extraRawRows = sortedExtraItems.map((item) => [
+    String(item.revenue_date || "").slice(0, 10),
+    item.store_code || "",
+    item.store_name || "",
+    item.department_code || "",
+    item.department_name || "未归属部门",
+    item.subject_code || "未编码",
+    item.subject_name || item.extra_type || "未命名科目",
+    item.extra_type || "其他收益",
+    item.explanation || "",
+    item.voucher_no || "",
+    item.source_group_code || "",
+    item.source_group_name || "",
+    item.unit_code || "",
+    item.match_method || "",
+    item.match_reason || "",
+    amount(item.amount),
+    item.source_detail_key || item.id,
+  ]);
+  const extraTotalRow: Array<string | number> = [
+    "",
+    "",
+    "合计",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    extraRawRows.reduce((sum, row) => sum + amount(row[15] as number), 0),
+    "",
+  ];
+  const extraDetailRows = [
+    [
+      "确认日期",
+      "门店编码",
+      "门店",
+      "部门编码",
+      "部门",
+      "科目编码",
+      "科目名称",
+      "收益类型",
+      "摘要",
+      "NC凭证",
+      "柜组编码",
+      "柜组/来源部门",
+      "图上经营单元",
+      "匹配方式",
+      "匹配说明",
+      "金额",
+      "来源明细键",
+    ],
+    ...extraRawRows,
+    extraTotalRow,
+  ];
+
   return {
     filename: `收益看板_柜组最明细_${startDate}_${endDate}.xlsx`,
     feeColumns,
@@ -161,6 +358,8 @@ export function buildRevenueDashboardExportData(
       totalRow,
     ],
     feeDetailRows,
+    extraSubjectRows,
+    extraDetailRows,
     notesRows: [
       ["收益看板导出说明"],
       ["查询日期", `${startDate} 至 ${endDate}`],
@@ -171,7 +370,9 @@ export function buildRevenueDashboardExportData(
       ["去税收费汇总", "不含税；仅统计已关联付款日期的收费；不含已计入销售毛利的损失承担"],
       ["未付款收费", "未关联结算付款日期或租赁付款日期的收费不进入本次导出"],
       ["收费明细列", "按收费项目编码和名称动态展开，不含税金额"],
-      ["其他收益", "已确认的其他收益"],
+      ["其他收益", "已确认的 NC6051 非富基收费；另附按科目汇总和逐笔摘要明细"],
+      ["其他收益科目汇总", "按门店、部门、NC科目和收益类型汇总，金额保留两位小数"],
+      ["其他收益摘要明细", "按门店、部门、科目、确认日期排序；保留摘要、NC凭证、柜位归属和来源明细键"],
       ["总收益", "销售毛利（不含税） + 去税收费汇总 + 其他收益"],
       ["收费分类校验差额", "去税收费汇总 - 各收费明细列合计；正常应为 0"],
     ],
@@ -195,6 +396,7 @@ function styleDataSheet(
   rows: Array<Array<string | number>>,
   amountColumnStart: number,
   hasTotalRow = false,
+  amountColumnEnd?: number,
 ) {
   const range = XLSX.utils.decode_range(sheet["!ref"] || "A1:A1");
   for (let column = range.s.c; column <= range.e.c; column += 1) {
@@ -202,7 +404,20 @@ function styleDataSheet(
     if (header) header.s = headerStyle;
   }
   for (let row = 1; row <= range.e.r; row += 1) {
-    for (let column = amountColumnStart; column <= range.e.c; column += 1) {
+    for (let column = range.s.c; column <= range.e.c; column += 1) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      if (cell) {
+        cell.s = {
+          fill: { fgColor: { rgb: "FFFFFF" } },
+          font: { color: { rgb: "0F172A" } },
+          border: {
+            bottom: { style: "hair", color: { rgb: "E2E8F0" } },
+          },
+        };
+      }
+    }
+    const lastAmountColumn = Math.min(amountColumnEnd ?? range.e.c, range.e.c);
+    for (let column = amountColumnStart; column <= lastAmountColumn; column += 1) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
       if (cell) cell.z = '#,##0.00;[Red]-#,##0.00';
     }
@@ -231,12 +446,13 @@ function styleDataSheet(
   sheet["!rows"] = [{ hpt: 32 }];
 }
 
-export function exportRevenueDashboardExcel(
+export function buildRevenueDashboardWorkbook(
   items: RevenueDashboardExportItem[],
   startDate: string,
   endDate: string,
+  extraItems: RevenueDashboardExtraExportItem[] = [],
 ) {
-  const data = buildRevenueDashboardExportData(items, startDate, endDate);
+  const data = buildRevenueDashboardExportData(items, startDate, endDate, extraItems);
   const workbook = XLSX.utils.book_new();
 
   const summarySheet = XLSX.utils.aoa_to_sheet(data.summaryRows);
@@ -257,7 +473,7 @@ export function exportRevenueDashboardExcel(
 
   const feeDetailSheet = XLSX.utils.aoa_to_sheet(data.feeDetailRows);
   if (data.feeDetailRows.length > 0) {
-    styleDataSheet(feeDetailSheet, data.feeDetailRows, 10);
+    styleDataSheet(feeDetailSheet, data.feeDetailRows, 10, false, 10);
   }
   feeDetailSheet["!cols"] = [
     { wch: 12 },
@@ -274,12 +490,70 @@ export function exportRevenueDashboardExcel(
   ];
   XLSX.utils.book_append_sheet(workbook, feeDetailSheet, "收费分类明细");
 
+  const extraSubjectSheet = XLSX.utils.aoa_to_sheet(data.extraSubjectRows);
+  styleDataSheet(extraSubjectSheet, data.extraSubjectRows, 10, true, 10);
+  const extraSubjectRange = XLSX.utils.decode_range(extraSubjectSheet["!ref"] || "A1:A1");
+  for (let row = 1; row <= extraSubjectRange.e.r; row += 1) {
+    const countCell = extraSubjectSheet[XLSX.utils.encode_cell({ r: row, c: 9 })];
+    if (countCell) countCell.z = "#,##0";
+  }
+  extraSubjectSheet["!cols"] = [
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 22 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 18 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, extraSubjectSheet, "其他收益科目汇总");
+
+  const extraDetailSheet = XLSX.utils.aoa_to_sheet(data.extraDetailRows);
+  styleDataSheet(extraDetailSheet, data.extraDetailRows, 15, true, 15);
+  extraDetailSheet["!cols"] = [
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 22 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 16 },
+    { wch: 56 },
+    { wch: 30 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 42 },
+    { wch: 18 },
+    { wch: 38 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, extraDetailSheet, "其他收益摘要明细");
+
   const notesSheet = XLSX.utils.aoa_to_sheet(data.notesRows);
   notesSheet["!cols"] = [{ wch: 22 }, { wch: 72 }];
+  const notesRange = XLSX.utils.decode_range(notesSheet["!ref"] || "A1:A1");
+  for (let row = notesRange.s.r; row <= notesRange.e.r; row += 1) {
+    for (let column = notesRange.s.c; column <= notesRange.e.c; column += 1) {
+      const cell = notesSheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      if (cell) {
+        cell.s = {
+          fill: { fgColor: { rgb: "FFFFFF" } },
+          font: { color: { rgb: "0F172A" } },
+        };
+      }
+    }
+  }
   const titleCell = notesSheet.A1;
   if (titleCell) {
     titleCell.s = {
       font: { bold: true, sz: 16, color: { rgb: "1E3A5F" } },
+      fill: { fgColor: { rgb: "FFFFFF" } },
     };
   }
   XLSX.utils.book_append_sheet(workbook, notesSheet, "导出说明");
@@ -289,5 +563,20 @@ export function exportRevenueDashboardExcel(
     Subject: `${startDate} 至 ${endDate}`,
     Author: "ShopView",
   };
-  XLSX.writeFile(workbook, data.filename);
+  return { workbook, filename: data.filename };
+}
+
+export function exportRevenueDashboardExcel(
+  items: RevenueDashboardExportItem[],
+  startDate: string,
+  endDate: string,
+  extraItems: RevenueDashboardExtraExportItem[] = [],
+) {
+  const { workbook, filename } = buildRevenueDashboardWorkbook(
+    items,
+    startDate,
+    endDate,
+    extraItems,
+  );
+  XLSX.writeFile(workbook, filename);
 }

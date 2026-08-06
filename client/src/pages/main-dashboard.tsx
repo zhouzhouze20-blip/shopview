@@ -31,6 +31,7 @@ import Od0003CenterSalesFollowupPage from "./sales-reports/od0003-center-sales-f
 import Od0004MonthlyFollowupPage from "./sales-reports/od0004-monthly-followup";
 import Od0005MicroMallBrandSalesPage from "./sales-reports/od0005-micro-mall-brand-sales";
 import NonRentalMonthlyRevenuePage from "./sales-reports/non-rental-monthly-revenue";
+import StoreOtherBusinessIncomePage from "./sales-reports/store-other-business-income";
 import Hdyy01GroupOperationAnalysisPage from "./sales-reports/hdyy01-group-operation-analysis";
 import Hy0001KeyBrandMemberPage from "./sales-reports/hy0001-key-brand-member";
 import MerchantPlanningPage from "./merchant-planning";
@@ -177,6 +178,7 @@ const MODULE_LABELS: Record<string, string> = {
   "od0004-monthly-followup": "OD0004 销售逐月跟进表",
   "od0005-micro-mall-brand-sales": "OD0005 微商城品牌销售统计",
   "non-rental-monthly-revenue": "非租赁品牌月度收益表",
+  "store-other-business-income": "门店其他业务收入",
   "hdyy01-group-operation-analysis": "HDYY01柜组经营分析表",
   "hy0001-key-brand-member": "HY0001 重点品牌会员消费情况",
   "merchant-planning": "招商规划",
@@ -748,6 +750,8 @@ export default function MainDashboard() {
         return <Od0005MicroMallBrandSalesPage />;
       case "non-rental-monthly-revenue":
         return <NonRentalMonthlyRevenuePage />;
+      case "store-other-business-income":
+        return <StoreOtherBusinessIncomePage />;
       case "hdyy01-group-operation-analysis":
         return <Hdyy01GroupOperationAnalysisPage />;
       case "hy0001-key-brand-member":

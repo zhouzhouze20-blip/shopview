@@ -131,6 +131,12 @@ CORE_PERMISSION_DEFINITIONS = [
         "sales",
         "non_rental_monthly_revenue_view",
     ),
+    (
+        "sales.store_other_business_income.view",
+        "查看门店其他业务收入",
+        "sales",
+        "store_other_business_income_view",
+    ),
     ("sales.hdyy01.view", "查看HDYY01柜组经营分析表", "sales", "hdyy01_view"),
     ("sales.inventory.view", "查看实时库存查询", "sales", "inventory_view"),
     ("sales.inventory_history.view", "查看历史库存明细报表", "sales", "inventory_history_view"),

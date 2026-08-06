@@ -792,6 +792,7 @@ def _manager_actuals(
                   OR LEFT(TRIM(source_group_code), 3) = :store_code
                 )
                 AND status = 'CONFIRMED'
+                AND source_type = 'NC6051'
               GROUP BY UPPER(TRIM(source_group_code))
             ),
             group_revenue AS (
@@ -1029,7 +1030,7 @@ async def category_performance_scorecard(
         "latest_sales_date": latest_sales_date.isoformat() if latest_sales_date else None,
         "latest_fee_date": latest_fee_date.isoformat() if latest_fee_date else None,
         "definitions": {
-            "area_actual": "分管品牌柜组的不含税毛利、收费及已确认补录收益合计，单位万元",
+            "area_actual": "分管品牌柜组的不含税毛利、富基收费及NC6051非富基收费合计，单位万元",
             "key_brand_actual": "重点品牌柜组售价金额合计，单位万元",
             "score": "达成率×对应权重；不封顶。总分达到100/90/80分时系数分别为1.2/1.0/0.9，否则0.8",
         },

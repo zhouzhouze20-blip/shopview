@@ -38,6 +38,7 @@ export const MODULE_PERMISSION_REQUIREMENTS: Record<string, string[]> = {
   "od0005-micro-mall-brand-sales": ["sales.od0005.view"],
   "hy0001-key-brand-member": ["sales.hy0001.view"],
   "non-rental-monthly-revenue": ["sales.non_rental_monthly_revenue.view"],
+  "store-other-business-income": ["sales.store_other_business_income.view"],
   "hdyy01-group-operation-analysis": ["sales.hdyy01.view"],
   "inventory-detail": ["sales.inventory.view"],
   "historical-inventory-detail": ["sales.inventory_history.view"],

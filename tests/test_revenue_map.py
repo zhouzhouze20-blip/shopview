@@ -27,9 +27,8 @@ def test_revenue_sales_financial_period_uses_sglhsrq_everywhere():
     assert "s.sglhsrq >= to_date(:revenue_month || '-01', 'YYYY-MM-DD')" in monthly_source
     assert "s.sglhsrq >= to_date(:revenue_month || '-01', 'YYYY-MM-DD')" in detail_source
     assert 'sales_date_filter = "s.sglhsrq BETWEEN :start_date AND :end_date"' in detail_source
-    assert "s.sglhsrq::date AS revenue_date" in recalculate_source
-    assert "WHERE s.sglhsrq BETWEEN :start_date AND :end_date" in recalculate_source
-    assert "GROUP BY s.sglhsrq" in recalculate_source
+    assert '_live_sales_ctes("s.sglhsrq BETWEEN :start_date AND :end_date")' in recalculate_source
+    assert "FROM live_sales live" in recalculate_source
 
 
 def test_monthly_revenue_uses_indexable_store_filter_and_safe_error_detail():
@@ -97,14 +96,14 @@ def test_revenue_map_returns_group_names_and_uses_soft_map_labels():
     assert 'row.source_group_names || "—"' in page_source
 
 
-def test_revenue_recalculation_prefers_a_binding_with_a_mapped_unit():
-    order_sql = " ".join(revenue.REVENUE_BINDING_ORDER_SQL.split())
+def test_revenue_recalculation_reuses_unique_live_binding_resolution():
+    recalculate_source = inspect.getsource(revenue.recalculate_revenue)
 
-    assert order_sql.startswith("(b.shop_unit_id IS NOT NULL) DESC")
-    assert order_sql.index("b.shop_unit_id IS NOT NULL") < order_sql.index("b.is_primary")
-    assert "ORDER BY {REVENUE_BINDING_ORDER_SQL}" in inspect.getsource(
-        revenue.recalculate_revenue
-    )
+    assert '_live_sales_ctes("s.sglhsrq BETWEEN :start_date AND :end_date")' in recalculate_source
+    assert "FROM live_sales live" in recalculate_source
+    assert "JOIN counter_groups cg" not in recalculate_source
+    assert "SELECT b.*" not in recalculate_source
+    assert "LEFT JOIN LATERAL (" in recalculate_source
 
 
 def test_live_revenue_source_reads_sales_directly_and_keeps_other_sources():
@@ -121,6 +120,7 @@ def test_live_revenue_source_reads_sales_directly_and_keeps_other_sources():
     assert "FROM unit_revenue_fee_detail fee" in sql
     assert "FROM revenue_extra_receipts extra" in sql
     assert "extra.status = 'CONFIRMED'" in sql
+    assert "extra.source_type = 'NC6051'" in sql
     assert "unit_daily_revenue_summary" not in sql
     assert "unit_revenue_sales_detail" not in sql
     assert "JOIN manaframe mf" in sql
@@ -135,6 +135,48 @@ def test_live_revenue_source_reads_sales_directly_and_keeps_other_sources():
     assert "candidate.contract_end_date >= fee.revenue_date" in sql
     assert "PARTITION BY fee.id" in sql
     assert "resolved.resolution_rank = 1" in sql
+
+
+def test_nc_6051_extra_receipts_are_automatic_traceable_and_cabinet_aware():
+    root = Path(__file__).resolve().parents[1]
+    migration_source = (
+        root
+        / "python_app"
+        / "alembic"
+        / "versions"
+        / "a5c6d7e8f9a0_automate_nc_6051_extra_receipts.py"
+    ).read_text(encoding="utf-8")
+    page_source = (root / "client" / "src" / "pages" / "revenue-map.tsx").read_text(
+        encoding="utf-8"
+    )
+    recalculate_source = inspect.getsource(revenue.recalculate_revenue)
+    create_source = inspect.getsource(revenue.create_extra_receipt)
+
+    assert "refresh_nc_6051_extra_receipts" in migration_source
+    assert "PARTITION BY COALESCE(" in migration_source
+    assert "BTRIM(subject_code) IN ('605108', '605112')" in migration_source
+    assert "LIKE '%微信电费%'" in migration_source
+    assert "LIKE '%物业%'" in migration_source
+    assert "LIKE '%运营%'" in migration_source
+    assert "NOT (explanation ~ '计提.*(销项)?税')" in migration_source
+    assert "PHYSICAL_CABINET" in migration_source
+    assert "BACKOFFICE_FALLBACK" in migration_source
+    assert "后台部门收益" in migration_source
+    assert "revenue_nc_cabinet_alias" in migration_source
+    assert "熹木和牛" in migration_source
+    assert "6030116065" in migration_source
+    assert "JOIN contmanaframe contract_group" in migration_source
+    assert "WHEN alias.id IS NOT NULL THEN 0" in migration_source
+    assert "source_detail_key" in migration_source
+    assert "raw_payload" in migration_source
+    assert "FROM refresh_nc_6051_extra_receipts" in recalculate_source
+    assert "AND source_type = 'NC6051'" in recalculate_source
+    assert "HTTP_410_GONE" in create_source
+    assert "新增补收" not in page_source
+    assert "保存草稿" not in page_source
+    assert "6051 电表、物业、营运收费由后台自动同步" in page_source
+    assert "富基收费" in page_source
+    assert "6051非富基收费" in page_source
 
 
 def test_live_sales_follow_unit_contract_group_relationship_and_remove_sales_tax():
@@ -160,7 +202,14 @@ def test_live_sales_follow_unit_contract_group_relationship_and_remove_sales_tax
     assert "NULLIF(TRIM(s.sglsupid), '') AS source_supplier_code" in sql
     assert "NULLIF(TRIM(s.sglwmid), '') AS source_operation_mode" in sql
     assert "b.counter_group_id = cg.group_id" not in sql
+    assert (
+        "(COALESCE(s.sglxssr, 0) + COALESCE(s.sglpfsr, 0)) "
+        "/ NULLIF(1 + COALESCE(s.sglxstax, 0), 0)"
+        in sql
+    )
+    assert "COALESCE(SUM(s.sglxssr), 0)::numeric(18,2) AS sales_amount" not in sql
     assert "COALESCE(s.sgln2, 0) / NULLIF(1 + COALESCE(s.sglxstax, 0), 0)" in sql
+    assert "COALESCE(SUM(s.sgln2), 0)::numeric AS front_gross_profit_amount" in sql
     assert ")::numeric AS gross_profit_amount" in sql
     assert ")::numeric(18,2) AS gross_profit_amount" not in sql
     assert "JOIN contract_group_bindings candidate" in sql
@@ -176,6 +225,21 @@ def test_live_sales_follow_unit_contract_group_relationship_and_remove_sales_tax
     assert "ranked.resolution_rank = 1" in sql
     assert "JOIN LATERAL" not in sql
     assert "cm.cmstatus" not in sql
+
+
+def test_revenue_recalculation_keeps_supplier_mode_key_and_corrected_amounts():
+    source = inspect.getsource(revenue.recalculate_revenue)
+    detail_source = inspect.getsource(revenue.unit_revenue_detail)
+
+    assert "matched.sales_amount" in source
+    assert "matched.gross_profit_amount" in source
+    assert "matched.front_gross_profit_amount" in source
+    assert "matched.source_supplier_code" in source
+    assert "matched.source_operation_mode" in source
+    assert "source_supplier_code', matched.source_supplier_code" in source
+    assert "source_operation_mode', matched.source_operation_mode" in source
+    assert "live_sales.source_supplier_code" in detail_source
+    assert "live_sales.source_operation_mode" in detail_source
 
 
 def test_unmatched_reasons_use_erp_group_master_and_separate_contract_from_unit():
@@ -472,6 +536,47 @@ def test_revenue_dashboard_group_detail_reconciles_daily_profit_and_fee_document
     assert "收费按付款日期统计，仅包含已关联付款记录的数据" in page_source
 
 
+def test_revenue_dashboard_extra_detail_drills_to_nc_subjects_and_explanations():
+    endpoint_source = inspect.getsource(revenue.revenue_dashboard_extra_details)
+    subject_cte_source = inspect.getsource(revenue._nc_6051_extra_detail_ctes)
+    export_endpoint_source = inspect.getsource(revenue.revenue_dashboard_extra_export_details)
+    dashboard_source = inspect.getsource(revenue.revenue_dashboard)
+    live_source_sql = revenue._live_revenue_source_ctes(
+        "s.sglhsrq BETWEEN :start_date AND :end_date",
+        "payment_ref.payment_date BETWEEN :start_date AND :end_date",
+        "extra.revenue_date BETWEEN :start_date AND :end_date",
+    )
+    page_source = (
+        Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "revenue-dashboard.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert 'require_permission(db, current_user, "revenue.dashboard.view")' in endpoint_source
+    assert "FROM ods.nc_bd_accsubj" in subject_cte_source
+    assert "finance.pk_detail = extra.source_detail_key" in subject_cte_source
+    assert "acc.pk_accsubj = finance_subject.pk_accsubj" in subject_cte_source
+    assert "source_subject_code" in endpoint_source
+    assert "source_explanation" in endpoint_source
+    assert "voucher_no" in endpoint_source
+    assert "COUNT(*)::bigint AS detail_count" in endpoint_source
+    assert "SUM(amount) OVER ()" in endpoint_source
+    assert "_dashboard_row_allowed(scope, scope_subject)" in endpoint_source
+    assert "extra.source_department_code" in live_source_sql
+    assert "extra.source_department_name" in live_source_sql
+    assert "src.source_department_code" in dashboard_source
+    assert "src.source_department_name" in dashboard_source
+    assert 'require_permission(db, current_user, "revenue.dashboard.view")' in export_endpoint_source
+    assert "_nc_6051_extra_detail_ctes()" in export_endpoint_source
+    assert "_dashboard_row_allowed(" in export_endpoint_source
+    assert '"source_detail_key"' in export_endpoint_source
+    assert 'openDetail(row, "extras")' in page_source
+    assert "/api/revenue-map/dashboard/extra-details" in page_source
+    assert "其他收益科目及摘要明细" in page_source
+    assert "科目明细" in page_source
+    assert "摘要明细" in page_source
+    assert "NC凭证" in page_source
+    assert 'row.group_code || `unit:${row.unit_codes || "未绑定"}:name:${row.group_name}`' in page_source
+
+
 def test_revenue_dashboard_exports_group_grain_with_untaxed_fee_columns():
     page_source = (
         Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "revenue-dashboard.tsx"
@@ -494,5 +599,12 @@ def test_revenue_dashboard_exports_group_grain_with_untaxed_fee_columns():
     assert "其他收益" in export_source
     assert "feeColumns.map" in export_source
     assert "收费分类校验差额" in export_source
+    assert "其他收益科目汇总" in export_source
+    assert "其他收益摘要明细" in export_source
+    assert "科目编码" in export_source
+    assert "NC凭证" in export_source
+    assert "来源明细键" in export_source
+    assert "/api/revenue-map/dashboard/extra-export-details" in page_source
+    assert "正在整理科目" in page_source
     assert "销售毛利按财务日期；收费按付款日期；其他收益按确认收益日期" in export_source
     assert "未关联结算付款日期或租赁付款日期的收费不进入本次导出" in export_source

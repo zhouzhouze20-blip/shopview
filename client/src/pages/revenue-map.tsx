@@ -5,13 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BackofficeRevenueUnitCard } from "@/components/backoffice-revenue-unit-card";
 import { MultiBusinessUnitCard } from "@/components/multi-business-unit-card";
 import { MobileSpecialSaleMarker } from "@/components/mobile-special-sale-marker";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useBaseMapsList, useFloorDictList } from "@/hooks/useBaseMaps";
 import { useBusinessUnits } from "@/hooks/useBusinessUnits";
@@ -20,13 +18,10 @@ import { useAlignTransform, useUnitMapVersions } from "@/hooks/useUnitMapVersion
 import { useStore } from "@/contexts/StoreContext";
 import {
   RevenueMonthlyItem,
-  useConfirmRevenueExtraReceipt,
-  useCreateRevenueExtraReceipt,
   useRevenueExtraReceipts,
   useRevenueMonthly,
   useRevenueUnmatchedDetails,
   useRevenueUnitDetail,
-  useVoidRevenueExtraReceipt,
 } from "@/hooks/useRevenue";
 import { resolveApiAssetUrl } from "@/lib/api";
 import { BACKOFFICE_REVENUE_UNIT_CODE, isBackofficeRevenueUnit } from "@/lib/backoffice-revenue-unit";
@@ -35,12 +30,11 @@ import { MULTI_BUSINESS_UNIT_CODE, isMultiBusinessUnit } from "@/lib/multi-busin
 import { formatOperationMethod } from "@/lib/operation-method";
 import { deriveSvgViewBox } from "@/lib/svg-metadata";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
-import { CalendarDays, CheckCircle2, CircleDollarSign, Download, Link2, Loader2, Minus, Plus, RotateCcw, Settings2, Target, XCircle } from "lucide-react";
+import { CalendarDays, CircleDollarSign, Download, Link2, Loader2, Minus, Plus, RotateCcw, Settings2, Target } from "lucide-react";
 
 const money = (value: number) =>
   Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const todayMonth = () => new Date().toISOString().slice(0, 7);
 const todayDate = () => new Date().toISOString().slice(0, 10);
 const getFloorStoreRef = (floor: { store_id?: string | null; building_code?: string | null }) =>
   floor.store_id?.trim() || floor.building_code?.trim() || "";
@@ -81,6 +75,12 @@ const REVENUE_MAP_PALETTE = {
     stroke: "rgba(167, 94, 105, 0.8)",
     text: "#8a4650",
     surface: "#fbf0f2",
+  },
+  vacant: {
+    fill: "rgba(207, 192, 232, 0.84)",
+    stroke: "rgba(126, 96, 168, 0.82)",
+    text: "#654b89",
+    surface: "#f5f1fa",
   },
   none: {
     fill: "rgba(226, 232, 240, 0.52)",
@@ -208,16 +208,15 @@ function revenueColorBand(value: number | undefined, scale: RevenueColorScale) {
   return "low";
 }
 
-function statusBadge(status: string) {
-  if (status === "CONFIRMED") return <Badge className="bg-emerald-600">已确认</Badge>;
-  if (status === "VOID") return <Badge variant="secondary">已作废</Badge>;
-  return <Badge variant="outline">草稿</Badge>;
+function matchStatusBadge(matchStatus?: string | null) {
+  if (matchStatus === "MATCHED") return <Badge className="bg-emerald-600">柜位已匹配</Badge>;
+  if (matchStatus === "FALLBACK") return <Badge className="bg-amber-600">后台归集</Badge>;
+  return <Badge variant="destructive">待补柜位映射</Badge>;
 }
 
 export default function RevenueMapPage() {
   const [startDate, setStartDate] = useState(todayDate());
   const [endDate, setEndDate] = useState(todayDate());
-  const revenueMonth = startDate.slice(0, 7) || todayMonth();
   const [storeFilter, setStoreFilter] = useState("");
   const [floorId, setFloorId] = useState<number | null>(null);
   const [baseMapId, setBaseMapId] = useState<number | null>(null);
@@ -225,20 +224,10 @@ export default function RevenueMapPage() {
   const [mapZoom, setMapZoom] = useState(1);
   const [mapPan, setMapPan] = useState({ x: 0, y: 0 });
   const [selectedUnit, setSelectedUnit] = useState<RevenueMonthlyItem | null>(null);
-  const [extraOpen, setExtraOpen] = useState(false);
   const [unmatchedOpen, setUnmatchedOpen] = useState(false);
   const [colorConfigOpen, setColorConfigOpen] = useState(false);
   const [colorConfig, setColorConfig] = useState<RevenueColorConfig>(() => readRevenueColorConfig());
   const [draftColorConfig, setDraftColorConfig] = useState<RevenueColorConfig>(colorConfig);
-  const [form, setForm] = useState({
-    unitId: "",
-    revenueDate: todayDate(),
-    extraType: "临时补收",
-    amount: "",
-    voucherNo: "",
-    supplierName: "",
-    remark: "",
-  });
   const { toast } = useToast();
   const { selectedStoreId, stores, isLoading: storesLoading } = useStore();
   const dragStateRef = useRef<{
@@ -283,9 +272,6 @@ export default function RevenueMapPage() {
     keyword: MULTI_BUSINESS_UNIT_CODE,
     enabled: selectedStoreIdValue != null,
   });
-  const createExtra = useCreateRevenueExtraReceipt();
-  const confirmExtra = useConfirmRevenueExtraReceipt(revenueMonth);
-  const voidExtra = useVoidRevenueExtraReceipt(revenueMonth);
   const revenueDataFetching =
     monthlyQuery.isFetching ||
     extraQuery.isFetching ||
@@ -310,6 +296,18 @@ export default function RevenueMapPage() {
   const baseMaps = baseMapsQuery.data ?? [];
   const versions = unitVersionsQuery.data ?? [];
   const geoRows = geoQuery.data ?? [];
+  const businessUnitById = useMemo(
+    () => new Map(units.map((unit) => [unit.id, unit])),
+    [units],
+  );
+  const vacantUnitIds = useMemo(
+    () => new Set(
+      geoRows
+        .filter((geo) => (geo.unit_status || businessUnitById.get(geo.unit_id)?.status) === "VACANT")
+        .map((geo) => geo.unit_id),
+    ),
+    [businessUnitById, geoRows],
+  );
   const mobileSpecialSaleUnit = useMemo(
     () => units.find((unit) => isMobileSpecialSaleUnit(unit.unit_code)) ?? null,
     [units],
@@ -550,32 +548,46 @@ export default function RevenueMapPage() {
     () => visibleRevenueRows.filter((row) => !logicalUnitIds.has(row.unit_id)),
     [logicalUnitIds, visibleRevenueRows],
   );
+  const visibleOperatingRevenueRows = useMemo(
+    () => visiblePhysicalRevenueRows.filter((row) => !vacantUnitIds.has(row.unit_id)),
+    [vacantUnitIds, visiblePhysicalRevenueRows],
+  );
   const revenueColorScale = useMemo(
-    () => buildRevenueColorScale(visiblePhysicalRevenueRows, colorConfig),
-    [colorConfig, visiblePhysicalRevenueRows],
+    () => buildRevenueColorScale(visibleOperatingRevenueRows, colorConfig),
+    [colorConfig, visibleOperatingRevenueRows],
   );
   const draftRevenueColorScale = useMemo(
-    () => buildRevenueColorScale(visiblePhysicalRevenueRows, draftColorConfig),
-    [draftColorConfig, visiblePhysicalRevenueRows],
+    () => buildRevenueColorScale(visibleOperatingRevenueRows, draftColorConfig),
+    [draftColorConfig, visibleOperatingRevenueRows],
   );
   const revenueColorCounts = useMemo(() => {
-    return visiblePhysicalRevenueRows.reduce(
-      (acc, row) => {
-        acc[revenueColorBand(row.metric_amount, revenueColorScale)] += 1;
+    return geoRows.reduce(
+      (acc, geo) => {
+        if (vacantUnitIds.has(geo.unit_id)) {
+          acc.vacant += 1;
+          return acc;
+        }
+        const row = revenueByUnitId.get(geo.unit_id);
+        acc[revenueColorBand(row?.metric_amount, revenueColorScale)] += 1;
         return acc;
       },
-      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visiblePhysicalRevenueRows.length) },
+      { high: 0, middle: 0, low: 0, vacant: 0, none: 0 },
     );
-  }, [geoRows.length, revenueColorScale, visiblePhysicalRevenueRows]);
+  }, [geoRows, revenueByUnitId, revenueColorScale, vacantUnitIds]);
   const draftRevenueColorCounts = useMemo(() => {
-    return visiblePhysicalRevenueRows.reduce(
-      (acc, row) => {
-        acc[revenueColorBand(row.metric_amount, draftRevenueColorScale)] += 1;
+    return geoRows.reduce(
+      (acc, geo) => {
+        if (vacantUnitIds.has(geo.unit_id)) {
+          acc.vacant += 1;
+          return acc;
+        }
+        const row = revenueByUnitId.get(geo.unit_id);
+        acc[revenueColorBand(row?.metric_amount, draftRevenueColorScale)] += 1;
         return acc;
       },
-      { high: 0, middle: 0, low: 0, none: Math.max(0, geoRows.length - visiblePhysicalRevenueRows.length) },
+      { high: 0, middle: 0, low: 0, vacant: 0, none: 0 },
     );
-  }, [draftRevenueColorScale, geoRows.length, visiblePhysicalRevenueRows]);
+  }, [draftRevenueColorScale, geoRows, revenueByUnitId, vacantUnitIds]);
 
   useEffect(() => {
     if (colorConfigOpen) setDraftColorConfig(colorConfig);
@@ -649,39 +661,6 @@ export default function RevenueMapPage() {
       fee_detail_count: 0,
       extra_detail_count: 0,
     });
-  };
-
-  const handleCreateExtra = async () => {
-    const unit = units.find((item) => String(item.id) === form.unitId);
-    if (!unit) {
-      toast({ title: "请选择柜位", variant: "destructive" });
-      return;
-    }
-    const amount = Number(form.amount);
-    if (!Number.isFinite(amount) || amount === 0) {
-      toast({ title: "请填写非零金额", variant: "destructive" });
-      return;
-    }
-    try {
-      await createExtra.mutateAsync({
-        unit_id: unit.id,
-        unit_code: unit.unit_code,
-        store_id: selectedStoreIdValue,
-        floor_id: unit.floor_id,
-        revenue_date: form.revenueDate,
-        extra_type: form.extraType || "其他收益",
-        amount,
-        receipt_date: form.revenueDate,
-        voucher_no: form.voucherNo || undefined,
-        supplier_name: form.supplierName || undefined,
-        remark: form.remark || undefined,
-      });
-      setExtraOpen(false);
-      setForm({ unitId: "", revenueDate: todayDate(), extraType: "临时补收", amount: "", voucherNo: "", supplierName: "", remark: "" });
-      toast({ title: "补收已保存" });
-    } catch (error) {
-      toast({ title: "补收保存失败", description: String(error), variant: "destructive" });
-    }
   };
 
   const saveRevenueColorConfig = () => {
@@ -1070,7 +1049,7 @@ export default function RevenueMapPage() {
               <div className="text-sm font-semibold">应用后预览</div>
               <div className="text-xs text-muted-foreground">{visibleRevenueRows.length} 个收益柜位</div>
             </div>
-            <div className="grid grid-cols-4 gap-2 p-3 text-xs">
+            <div className="grid grid-cols-2 gap-2 p-3 text-xs sm:grid-cols-5">
               <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.high.surface }}>
                 <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.high.text }}>收益高</div>
                 <div className="mt-1">{draftRevenueColorCounts.high} 个</div>
@@ -1082,6 +1061,10 @@ export default function RevenueMapPage() {
               <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.low.surface }}>
                 <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.low.text }}>收益低/负</div>
                 <div className="mt-1">{draftRevenueColorCounts.low} 个</div>
+              </div>
+              <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.vacant.surface }}>
+                <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.vacant.text }}>空置</div>
+                <div className="mt-1">{draftRevenueColorCounts.vacant} 个</div>
               </div>
               <div className="rounded-md px-3 py-2" style={{ backgroundColor: REVENUE_MAP_PALETTE.none.surface }}>
                 <div className="font-semibold" style={{ color: REVENUE_MAP_PALETTE.none.text }}>无数据</div>
@@ -1139,8 +1122,8 @@ export default function RevenueMapPage() {
                 {[
                   ["总收益", detailTotals?.total ?? 0],
                   ["销售毛利", detailTotals?.sales ?? 0],
-                  ["收费", detailTotals?.fee ?? 0],
-                  ["补收", detailTotals?.extra ?? 0],
+                  ["富基收费", detailTotals?.fee ?? 0],
+                  ["6051非富基收费", detailTotals?.extra ?? 0],
                 ].map(([label, value]) => (
                   <div key={String(label)} className="rounded-md border bg-white px-3 py-2">
                     <div className="text-xs text-muted-foreground">{label}</div>
@@ -1160,8 +1143,8 @@ export default function RevenueMapPage() {
                     <TableRow>
                       <TableHead className="whitespace-nowrap">日期</TableHead>
                       <TableHead className="whitespace-nowrap text-right">销售毛利</TableHead>
-                      <TableHead className="whitespace-nowrap text-right">收费</TableHead>
-                      <TableHead className="whitespace-nowrap text-right">补收</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">富基收费</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">6051非富基收费</TableHead>
                       <TableHead className="whitespace-nowrap text-right">总收益</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1255,7 +1238,7 @@ export default function RevenueMapPage() {
 
             <div className="rounded-md border bg-white">
               <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-                <div className="text-sm font-semibold">收费明细</div>
+                <div className="text-sm font-semibold">富基收费明细</div>
                 <div className="text-xs text-muted-foreground">{detailQuery.data.fee_details.length} 条</div>
               </div>
               <div className="overflow-x-auto text-xs">
@@ -1283,7 +1266,7 @@ export default function RevenueMapPage() {
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">暂无收费明细</TableCell>
+                        <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">暂无富基收费明细</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1293,7 +1276,7 @@ export default function RevenueMapPage() {
 
             <div className="rounded-md border bg-white">
               <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-                <div className="text-sm font-semibold">补收明细</div>
+                <div className="text-sm font-semibold">NC6051 自动收费明细</div>
                 <div className="text-xs text-muted-foreground">{detailQuery.data.extra_receipts.length} 条</div>
               </div>
               <div className="overflow-x-auto text-xs">
@@ -1303,7 +1286,7 @@ export default function RevenueMapPage() {
                       <TableHead className="whitespace-nowrap">日期</TableHead>
                       <TableHead>类型</TableHead>
                       <TableHead className="whitespace-nowrap text-right">金额</TableHead>
-                      <TableHead className="whitespace-nowrap">状态</TableHead>
+                      <TableHead className="whitespace-nowrap">柜位匹配</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1316,12 +1299,12 @@ export default function RevenueMapPage() {
                             <div className="text-xs text-muted-foreground">{row.remark || row.voucher_no || "—"}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right font-medium">{money(row.amount)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{statusBadge(row.status)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{matchStatusBadge(row.match_status)}</TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">暂无补收明细</TableCell>
+                        <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">暂无 NC6051 自动收费明细</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1344,7 +1327,7 @@ export default function RevenueMapPage() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-44">
           <h1 className="text-2xl font-bold tracking-tight">收益地图</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">柔和绿色为高收益，暖黄色为中等，柔和红色为低收益或负收益。</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">柔和绿色为高收益，暖黄色为中等，柔和红色为低收益或负收益，浅紫色为空置，浅灰色为无数据。</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -1415,70 +1398,9 @@ export default function RevenueMapPage() {
               className="h-9 w-36"
             />
           </div>
-          <Dialog open={extraOpen} onOpenChange={setExtraOpen}>
-            <DialogTrigger asChild>
-              <Button className="h-9">
-                <Plus className="mr-2 h-4 w-4" />
-                补收
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-xl">
-              <DialogHeader>
-                <DialogTitle>新增补收</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-4 py-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label>柜位</Label>
-                    <Select value={form.unitId} onValueChange={(v) => setForm((prev) => ({ ...prev, unitId: v }))}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择柜位" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {units.slice(0, 200).map((unit) => (
-                          <SelectItem key={unit.id} value={String(unit.id)}>
-                            {unit.unit_code}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label>收益日期</Label>
-                    <Input type="date" value={form.revenueDate} onChange={(e) => setForm((prev) => ({ ...prev, revenueDate: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label>类型</Label>
-                    <Input value={form.extraType} onChange={(e) => setForm((prev) => ({ ...prev, extraType: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>金额</Label>
-                    <Input inputMode="decimal" value={form.amount} onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label>凭证号</Label>
-                    <Input value={form.voucherNo} onChange={(e) => setForm((prev) => ({ ...prev, voucherNo: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>供应商</Label>
-                    <Input value={form.supplierName} onChange={(e) => setForm((prev) => ({ ...prev, supplierName: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>备注</Label>
-                  <Textarea value={form.remark} onChange={(e) => setForm((prev) => ({ ...prev, remark: e.target.value }))} />
-                </div>
-                <Button onClick={handleCreateExtra} disabled={createExtra.isPending}>
-                  {createExtra.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  保存草稿
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <div className="max-w-64 rounded-md border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
+            6051 电表、物业、营运收费由后台自动同步，无需手工补收。
+          </div>
         </div>
       </div>
 
@@ -1529,13 +1451,13 @@ export default function RevenueMapPage() {
         </Card>
         <Card className="rounded-md">
           <CardContent className="px-4 py-3">
-            <div className="text-xs font-medium text-muted-foreground">收费</div>
+            <div className="text-xs font-medium text-muted-foreground">富基收费</div>
             <div className="mt-1 text-xl font-semibold">{money(totals.fee)}</div>
           </CardContent>
         </Card>
         <Card className="rounded-md">
           <CardContent className="px-4 py-3">
-            <div className="text-xs font-medium text-muted-foreground">补收</div>
+            <div className="text-xs font-medium text-muted-foreground">6051非富基收费</div>
             <div className="mt-1 text-xl font-semibold">{money(totals.extra)}</div>
           </CardContent>
         </Card>
@@ -1572,6 +1494,7 @@ export default function RevenueMapPage() {
               <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.high.fill }} />收益高</span>
               <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.middle.fill }} />中等</span>
               <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.low.fill }} />收益低/负</span>
+              <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.vacant.fill }} />空置</span>
               <span className="inline-flex items-center gap-1"><span className="h-3 w-5 rounded-sm" style={{ backgroundColor: REVENUE_MAP_PALETTE.none.fill }} />无数据</span>
               <Button type="button" variant="outline" size="sm" className="ml-2 h-8" onClick={() => setColorConfigOpen(true)}>
                 <Settings2 className="mr-1 h-4 w-4" />
@@ -1632,7 +1555,7 @@ export default function RevenueMapPage() {
                     {colorConfig.capMode === "p95" ? "，P95封顶" : ""}
                     {colorConfig.ignoreTopCount > 0 ? `，忽略前${colorConfig.ignoreTopCount}个极高值` : ""}
                   </span>
-                  <span>高/中/低/无：{revenueColorCounts.high}/{revenueColorCounts.middle}/{revenueColorCounts.low}/{revenueColorCounts.none}</span>
+                  <span>高/中/低/空置/无：{revenueColorCounts.high}/{revenueColorCounts.middle}/{revenueColorCounts.low}/{revenueColorCounts.vacant}/{revenueColorCounts.none}</span>
                   <span>{selectedUnit ? "左侧可继续点击其他柜位" : "点击柜位查看收益组成"}</span>
                 </div>
                 <div
@@ -1656,7 +1579,11 @@ export default function RevenueMapPage() {
                       <g transform={alignTransformText}>
                         {geoRows.map((geo) => {
                           const row = revenueByUnitId.get(geo.unit_id);
-                          const color = revenueFill(row?.metric_amount, revenueColorScale);
+                          const unit = businessUnitById.get(geo.unit_id);
+                          const isVacant = vacantUnitIds.has(geo.unit_id);
+                          const color = isVacant
+                            ? REVENUE_MAP_PALETTE.vacant
+                            : revenueFill(row?.metric_amount, revenueColorScale);
                           const selected = selectedUnit?.unit_id === geo.unit_id;
                           return (
                             <path
@@ -1673,7 +1600,9 @@ export default function RevenueMapPage() {
                               }}
                             >
                               <title>
-                                {row
+                                {isVacant
+                                  ? `柜位 ${unit?.unit_code || geo.unit_code || geo.unit_id}｜空置`
+                                  : row
                                   ? `${row.source_group_names || row.source_group_codes || row.unit_code}｜柜位 ${row.unit_code}｜收益 ${revenueMoney(row.metric_amount)}`
                                   : `柜位 ${geo.unit_id}｜暂无收益数据`}
                               </title>
@@ -1683,7 +1612,7 @@ export default function RevenueMapPage() {
                         {labelPoints.map(({ id, unit_id, point, maxLabelChars }) => {
                           if (!point) return null;
                           const row = revenueByUnitId.get(unit_id);
-                          const unit = units.find((item) => item.id === unit_id);
+                          const unit = businessUnitById.get(unit_id);
                           const hasRevenue = row && row.metric_amount !== 0;
                           const fallbackCode = row?.unit_code || unit?.unit_code || `U${unit_id}`;
                           const mapLabel = compactRevenueMapLabel(
@@ -1785,8 +1714,8 @@ export default function RevenueMapPage() {
                 <TableHead>柜位</TableHead>
                 <TableHead>柜组名称</TableHead>
                 <TableHead>销售毛利</TableHead>
-                <TableHead>收费</TableHead>
-                <TableHead>补收</TableHead>
+                <TableHead>富基收费</TableHead>
+                <TableHead>6051非富基收费</TableHead>
                 <TableHead>总收益</TableHead>
                 <TableHead>明细数</TableHead>
               </TableRow>
@@ -1822,7 +1751,7 @@ export default function RevenueMapPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CalendarDays className="h-5 w-5" />
-            补收记录
+            NC6051 自动收费
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -1833,13 +1762,13 @@ export default function RevenueMapPage() {
                 <TableHead>柜位</TableHead>
                 <TableHead>类型</TableHead>
                 <TableHead>金额</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>操作</TableHead>
+                <TableHead>柜位匹配</TableHead>
+                <TableHead>来源说明</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {extras.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">暂无补收</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">暂无 NC6051 自动收费</TableCell></TableRow>
               ) : (
                 extras.map((row) => (
                   <TableRow key={row.id}>
@@ -1847,21 +1776,10 @@ export default function RevenueMapPage() {
                     <TableCell>{row.unit_code || "—"}</TableCell>
                     <TableCell>{row.extra_type}</TableCell>
                     <TableCell>{money(row.amount)}</TableCell>
-                    <TableCell>{statusBadge(row.status)}</TableCell>
+                    <TableCell>{matchStatusBadge(row.match_status)}</TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        {row.status === "DRAFT" ? (
-                          <Button size="sm" variant="outline" onClick={() => confirmExtra.mutate(row.id)}>
-                            <CheckCircle2 className="mr-1 h-4 w-4" />
-                            确认
-                          </Button>
-                        ) : null}
-                        {row.status !== "VOID" ? (
-                          <Button size="sm" variant="outline" onClick={() => voidExtra.mutate(row.id)}>
-                            <XCircle className="mr-1 h-4 w-4" />
-                            作废
-                          </Button>
-                        ) : null}
+                      <div className="max-w-80 whitespace-normal text-xs text-muted-foreground">
+                        {row.match_reason || row.source_explanation || "NC6051 自动同步"}
                       </div>
                     </TableCell>
                   </TableRow>

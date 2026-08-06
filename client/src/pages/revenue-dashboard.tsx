@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiGet } from "@/lib/api";
 import {
   exportRevenueDashboardExcel,
+  type RevenueDashboardExtraExportItem,
   type RevenueDashboardFeeBreakdown,
 } from "@/lib/revenue-dashboard-export";
 
@@ -55,6 +56,16 @@ type RevenueDashboardResponse = {
   items: RevenueDashboardItem[];
 };
 
+type RevenueDashboardExtraExportResponse = {
+  start_date: string;
+  end_date: string;
+  permission_scoped: boolean;
+  total_count: number;
+  returned_count: number;
+  is_truncated: boolean;
+  items: RevenueDashboardExtraExportItem[];
+};
+
 type SummaryRow = {
   key: string;
   label: string;
@@ -69,7 +80,7 @@ type SummaryRow = {
 };
 
 type DrillLevel = "stores" | "departments" | "groups";
-type DetailMode = "gross-profit" | "fees";
+type DetailMode = "gross-profit" | "fees" | "extras";
 
 type RevenueDashboardGroupDetail = {
   store: {
@@ -118,6 +129,53 @@ type RevenueDashboardGroupDetail = {
   };
 };
 
+type RevenueDashboardExtraDetail = {
+  store: {
+    store_id: number;
+    store_code?: string | null;
+    store_name?: string | null;
+  };
+  target: {
+    department_code?: string | null;
+    department_name?: string | null;
+    group_code?: string | null;
+    group_name?: string | null;
+    unit_code?: string | null;
+  };
+  start_date: string;
+  end_date: string;
+  date_basis: "revenue_date";
+  total_count: number;
+  returned_count: number;
+  is_truncated: boolean;
+  total_amount: number;
+  subjects: Array<{
+    subject_code: string;
+    subject_name: string;
+    detail_count: number;
+    amount: number;
+  }>;
+  items: Array<{
+    id: string;
+    revenue_date: string;
+    subject_code?: string | null;
+    subject_name?: string | null;
+    extra_type?: string | null;
+    department_code?: string | null;
+    department_name?: string | null;
+    explanation?: string | null;
+    voucher_no?: string | null;
+    amount: number;
+    source_detail_key?: string | null;
+    source_group_code?: string | null;
+    source_group_name?: string | null;
+    unit_code?: string | null;
+    match_method?: string | null;
+    match_status?: string | null;
+    match_reason?: string | null;
+  }>;
+};
+
 const isoDate = (value: Date) => {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
@@ -137,6 +195,14 @@ const money = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value || 0);
 
+const detailMoney = (value: number) =>
+  new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+
 const compactMoney = (value: number) => {
   const absolute = Math.abs(value);
   if (absolute >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
@@ -148,7 +214,7 @@ const departmentKey = (row: RevenueDashboardItem) =>
   row.department_code || `name:${row.department_name}`;
 
 const groupKey = (row: RevenueDashboardItem) =>
-  row.group_code || `unit:${row.unit_codes || row.group_name}`;
+  row.group_code || `unit:${row.unit_codes || "未绑定"}:name:${row.group_name}`;
 
 const aggregateRows = (
   rows: RevenueDashboardItem[],
@@ -231,6 +297,7 @@ export default function RevenueDashboardPage() {
   const [selectedStoreKey, setSelectedStoreKey] = useState<string | null>(null);
   const [selectedDepartmentKey, setSelectedDepartmentKey] = useState<string | null>(null);
   const [detailSelection, setDetailSelection] = useState<{ row: SummaryRow; mode: DetailMode } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const query = useQuery({
     queryKey: ["revenue-dashboard", appliedRange.startDate, appliedRange.endDate],
@@ -263,7 +330,37 @@ export default function RevenueDashboardPage() {
         `/api/revenue-map/dashboard/groups/${encodeURIComponent(groupCode)}/details?${params.toString()}`,
       );
     },
-    enabled: Boolean(selectedStoreKey && detailSelection?.row.code),
+    enabled: Boolean(
+      selectedStoreKey
+      && detailSelection?.row.code
+      && detailSelection.mode !== "extras"
+    ),
+  });
+
+  const extraDetailQuery = useQuery({
+    queryKey: [
+      "revenue-dashboard-extra-detail",
+      selectedStoreKey,
+      detailSelection?.row.key,
+      appliedRange.startDate,
+      appliedRange.endDate,
+    ],
+    queryFn: () => {
+      if (!selectedStoreKey || !detailSelection) throw new Error("缺少门店或其他收益行");
+      const params = new URLSearchParams({
+        store_id: selectedStoreKey,
+        start_date: appliedRange.startDate,
+        end_date: appliedRange.endDate,
+        source_group_name: detailSelection.row.label,
+      });
+      if (detailSelection.row.code) {
+        params.set("source_group_code", detailSelection.row.code);
+      }
+      return apiGet<RevenueDashboardExtraDetail>(
+        `/api/revenue-map/dashboard/extra-details?${params.toString()}`,
+      );
+    },
+    enabled: Boolean(selectedStoreKey && detailSelection?.mode === "extras"),
   });
 
   const permissionRows = query.data?.items ?? [];
@@ -369,32 +466,48 @@ export default function RevenueDashboardPage() {
   };
 
   const openDetail = (row: SummaryRow, mode: DetailMode) => {
-    if (!selectedStoreKey || !row.code) return;
+    if (!selectedStoreKey || (mode !== "extras" && !row.code)) return;
     setDetailSelection({ row, mode });
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!permissionRows.length) {
       toast({ title: "暂无数据可导出", variant: "destructive" });
       return;
     }
+    setIsExporting(true);
     try {
+      const params = new URLSearchParams({
+        start_date: appliedRange.startDate,
+        end_date: appliedRange.endDate,
+      });
+      const extraDetails = await apiGet<RevenueDashboardExtraExportResponse>(
+        `/api/revenue-map/dashboard/extra-export-details?${params.toString()}`,
+      );
+      if (extraDetails.is_truncated) {
+        throw new Error(
+          `其他收益明细共 ${extraDetails.total_count.toLocaleString()} 条，已超过单次导出上限，请缩短日期范围后重试。`,
+        );
+      }
       exportRevenueDashboardExcel(
         permissionRows,
         appliedRange.startDate,
         appliedRange.endDate,
+        extraDetails.items,
       );
       toast({
         title: "收益明细已导出",
-        description: "已按门店、部门、柜组展开各项去税收费列。",
+        description: "已增加其他收益科目汇总和 NC 摘要明细表页。",
       });
     } catch (error) {
       console.error("导出收益看板柜组明细失败", error);
       toast({
         title: "导出失败",
-        description: "Excel 文件生成失败，请稍后重试。",
+        description: error instanceof Error ? error.message : "Excel 文件生成失败，请稍后重试。",
         variant: "destructive",
       });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -446,10 +559,10 @@ export default function RevenueDashboardPage() {
               variant="outline"
               className="flex-1 whitespace-nowrap sm:flex-none"
               onClick={handleExport}
-              disabled={!permissionRows.length || query.isFetching}
+              disabled={!permissionRows.length || query.isFetching || isExporting}
             >
-              <Download className="mr-2 h-4 w-4" />
-              导出最明细
+              {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+              {isExporting ? "正在整理科目…" : "导出最明细"}
             </Button>
           </div>
         </CardContent>
@@ -608,7 +721,21 @@ export default function RevenueDashboardPage() {
                           </button>
                         ) : money(row.fee)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{money(row.extra)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {level === "groups" && row.extra !== 0 ? (
+                          <button
+                            type="button"
+                            className="font-medium text-blue-700 underline-offset-4 hover:underline"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openDetail(row, "extras");
+                            }}
+                            aria-label={`查看${row.label}其他收益科目及摘要明细`}
+                          >
+                            {money(row.extra)}
+                          </button>
+                        ) : money(row.extra)}
+                      </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{money(row.total)}</TableCell>
                       {level !== "groups" && (
                         <TableCell><ChevronRight className="h-4 w-4 text-slate-400" /></TableCell>
@@ -639,21 +766,35 @@ export default function RevenueDashboardPage() {
               <SheetHeader className="border-b px-5 py-4 pr-12">
                 <SheetTitle>
                   {detailSelection?.row.label}
-                  {detailSelection?.mode === "gross-profit" ? " · 每日毛利明细" : " · 费用明细"}
+                  {detailSelection?.mode === "gross-profit"
+                    ? " · 每日毛利明细"
+                    : detailSelection?.mode === "fees"
+                      ? " · 费用明细"
+                      : " · 其他收益科目及摘要明细"}
                 </SheetTitle>
                 <SheetDescription>
-                  柜位 {detailSelection?.row.code || "—"} · {appliedRange.startDate} 至 {appliedRange.endDate}
-                  {detailSelection?.mode === "fees" ? " · 按付款日期" : ""}
+                  柜位 {detailSelection?.row.code || detailSelection?.row.unit_codes || "后台部门收益"} · {appliedRange.startDate} 至 {appliedRange.endDate}
+                  {detailSelection?.mode === "fees"
+                    ? " · 按付款日期"
+                    : detailSelection?.mode === "extras"
+                      ? " · 按收益确认日期"
+                      : ""}
                 </SheetDescription>
               </SheetHeader>
               <div className="min-h-0 flex-1 overflow-auto p-5">
-                {detailQuery.isLoading ? (
+                {(detailSelection?.mode === "extras" ? extraDetailQuery.isLoading : detailQuery.isLoading) ? (
                   <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />正在加载明细…
                   </div>
-                ) : detailQuery.isError ? (
+                ) : (detailSelection?.mode === "extras" ? extraDetailQuery.isError : detailQuery.isError) ? (
                   <div className="py-10 text-center text-sm text-red-600">
-                    {detailQuery.error instanceof Error ? detailQuery.error.message : "明细加载失败"}
+                    {detailSelection?.mode === "extras"
+                      ? extraDetailQuery.error instanceof Error
+                        ? extraDetailQuery.error.message
+                        : "其他收益明细加载失败"
+                      : detailQuery.error instanceof Error
+                        ? detailQuery.error.message
+                        : "明细加载失败"}
                   </div>
                 ) : detailQuery.data && detailSelection?.mode === "gross-profit" ? (
                   <div className="space-y-4">
@@ -766,6 +907,123 @@ export default function RevenueDashboardPage() {
                     {detailQuery.data.fees.is_truncated ? (
                       <p className="text-xs text-amber-700">
                         共 {detailQuery.data.fees.total_count} 条，当前显示前 {detailQuery.data.fees.returned_count} 条。
+                      </p>
+                    ) : null}
+                  </div>
+                ) : extraDetailQuery.data && detailSelection?.mode === "extras" ? (
+                  <div className="space-y-5">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-md border bg-slate-50 p-4">
+                        <div className="text-xs text-muted-foreground">柜位表其他收益</div>
+                        <div className="mt-1 text-xl font-semibold">{detailMoney(detailSelection.row.extra)}</div>
+                      </div>
+                      <div className="rounded-md border bg-slate-50 p-4">
+                        <div className="text-xs text-muted-foreground">摘要明细合计</div>
+                        <div className="mt-1 text-xl font-semibold">{detailMoney(extraDetailQuery.data.total_amount)}</div>
+                      </div>
+                      <div className="rounded-md border bg-slate-50 p-4">
+                        <div className="text-xs text-muted-foreground">NC 明细笔数</div>
+                        <div className="mt-1 text-xl font-semibold">{extraDetailQuery.data.total_count}</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div>
+                        <h3 className="text-sm font-semibold">科目明细</h3>
+                        <p className="text-xs text-muted-foreground">按 NC 6051 科目汇总，科目名称取 NC 科目档案。</p>
+                      </div>
+                      <div className="overflow-x-auto rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="whitespace-nowrap">科目编码</TableHead>
+                              <TableHead className="min-w-40">科目名称</TableHead>
+                              <TableHead className="whitespace-nowrap text-right">明细笔数</TableHead>
+                              <TableHead className="whitespace-nowrap text-right">科目金额</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {extraDetailQuery.data.subjects.length ? (
+                              extraDetailQuery.data.subjects.map((subject) => (
+                                <TableRow key={`${subject.subject_code}-${subject.subject_name}`}>
+                                  <TableCell className="whitespace-nowrap font-medium">{subject.subject_code}</TableCell>
+                                  <TableCell>{subject.subject_name}</TableCell>
+                                  <TableCell className="text-right">{subject.detail_count}</TableCell>
+                                  <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
+                                    {detailMoney(subject.amount)}
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                  当前日期范围暂无科目明细
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div>
+                        <h3 className="text-sm font-semibold">摘要明细</h3>
+                        <p className="text-xs text-muted-foreground">保留 NC 凭证、来源部门、摘要和柜位归属，金额按贷方减借方。</p>
+                      </div>
+                      <div className="overflow-x-auto rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="whitespace-nowrap">确认日期</TableHead>
+                              <TableHead className="min-w-40">科目</TableHead>
+                              <TableHead className="min-w-72">摘要</TableHead>
+                              <TableHead className="min-w-40">来源部门</TableHead>
+                              <TableHead className="whitespace-nowrap">NC凭证</TableHead>
+                              <TableHead className="min-w-36">柜位归属</TableHead>
+                              <TableHead className="whitespace-nowrap text-right">金额</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {extraDetailQuery.data.items.length ? (
+                              extraDetailQuery.data.items.map((item) => (
+                                <TableRow key={item.id}>
+                                  <TableCell className="whitespace-nowrap">{item.revenue_date?.slice(0, 10)}</TableCell>
+                                  <TableCell>
+                                    <div className="font-medium">{item.subject_name || item.extra_type || "未命名科目"}</div>
+                                    <div className="text-xs text-muted-foreground">{item.subject_code || "未编码"}</div>
+                                  </TableCell>
+                                  <TableCell className="max-w-md whitespace-normal break-words">{item.explanation || "—"}</TableCell>
+                                  <TableCell>
+                                    <div>{item.department_name || "—"}</div>
+                                    <div className="text-xs text-muted-foreground">{item.department_code || "—"}</div>
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap font-medium">{item.voucher_no || "—"}</TableCell>
+                                  <TableCell>
+                                    <div>{item.source_group_name || item.unit_code || "后台部门收益"}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {item.source_group_code || item.match_method || "—"}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
+                                    {detailMoney(item.amount)}
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                                  当前日期范围暂无摘要明细
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                    {extraDetailQuery.data.is_truncated ? (
+                      <p className="text-xs text-amber-700">
+                        共 {extraDetailQuery.data.total_count} 条，当前显示前 {extraDetailQuery.data.returned_count} 条。
                       </p>
                     ) : null}
                   </div>

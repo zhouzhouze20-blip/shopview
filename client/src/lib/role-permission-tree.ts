@@ -137,6 +137,11 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
             permissionCodes: ["sales.non_rental_monthly_revenue.view"],
           },
           {
+            id: "store-other-business-income",
+            name: "门店其他业务收入",
+            permissionCodes: ["sales.store_other_business_income.view"],
+          },
+          {
             id: "hdyy01-group-operation-analysis",
             name: "HDYY01柜组经营分析表",
             permissionCodes: ["sales.hdyy01.view"],

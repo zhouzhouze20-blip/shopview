@@ -49,6 +49,7 @@ test("sales reports are grouped into the three store folders and other", () => {
   assert.deepEqual(findNode(navigationItems, "other-reports").subItems.map((item) => item.id), [
     "commodity-sales-detail",
     "settled-gross-profit-ranking",
+    "store-other-business-income",
   ]);
 });
 
