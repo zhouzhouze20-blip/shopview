@@ -25,6 +25,13 @@ const conditionLabels: Record<string, string> = {
   from_level: "返回前层级",
   to_level: "返回后层级",
   page: "页码",
+  exclude_rental: "排除租赁销售",
+  exclude_backoffice_departments: "排除后台部门销售",
+  unassigned_department: "未归属部门",
+  filter_action: "筛选动作",
+  view_mode: "查看期间",
+  preset_days: "快捷天数",
+  refresh: "刷新查询",
 };
 
 const levelLabels: Record<string, string> = {
@@ -52,6 +59,7 @@ function displayValue(key: string, value: unknown): string {
   if (key === "query_level") return levelLabels[String(value)] || String(value);
   if (key === "query_type") return queryTypeLabels[String(value)] || String(value);
   if (key === "navigation_action" && String(value) === "back") return "返回上一级";
+  if (key === "view_mode") return String(value) === "prior" ? "上年同期" : "本期";
   if (key === "from_level" || key === "to_level") return levelLabels[String(value)] || String(value);
   return String(value);
 }

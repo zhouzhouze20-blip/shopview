@@ -64,6 +64,17 @@ export function currentFinancialYear(value: Date): number {
   return value.getFullYear();
 }
 
+export function isMonthlyFollowupQueryReady(input: {
+  selectedGlobalStoreId: string | number | null;
+  resolvedGlobalStoreCode: string | null;
+  submittedStoreId: string;
+  hasManualFilters: boolean;
+}): boolean {
+  if (input.selectedGlobalStoreId === null) return true;
+  if (input.resolvedGlobalStoreCode === null) return false;
+  return input.hasManualFilters || input.submittedStoreId === input.resolvedGlobalStoreCode;
+}
+
 export function buildMonthlyFollowupParams(input: {
   financialYear: number;
   dimension: MonthlyFollowupDimension;

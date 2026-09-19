@@ -16,6 +16,7 @@ import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   buildDailyFollowupParams,
+  dailyFollowupExportErrorMessage,
   DAILY_FOLLOWUP_ALL_DEPARTMENTS,
   DAILY_FOLLOWUP_ALL_STORES,
   financialMonthForDate,
@@ -266,7 +267,7 @@ export default function DailyFollowupReportPage() {
       toast({
         variant: "destructive",
         title: "导出失败",
-        description: "Excel 文件生成失败，请稍后重试。",
+        description: dailyFollowupExportErrorMessage(error),
       });
     } finally {
       setExporting(false);

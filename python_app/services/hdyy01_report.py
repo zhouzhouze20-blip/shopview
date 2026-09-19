@@ -50,6 +50,7 @@ DISPLAY_FIELDS = (
     "level2_name",
     "grade_label",
 )
+HDYY01_QUERY_TIMEOUT_SECONDS = 60
 
 
 def _clean_optional(value: str | None) -> str | None:
@@ -82,7 +83,7 @@ def build_report_query(
     selected_store_sql = ""
     if normalized_store is not None:
         params["selected_store"] = normalized_store
-        selected_store_sql = " AND s.sglmarket::text = :selected_store"
+        selected_store_sql = " AND s.sglmarket = :selected_store"
 
     normalized_department = _clean_optional(selected_department)
     selected_department_sql = ""
@@ -220,12 +221,18 @@ scoped_ticket_keys AS (
   FROM base_sales
 ),
 member_tickets AS (
-  SELECT DISTINCT h.billno, TRIM(BOTH FROM h.mkt) AS store_code
-  FROM salehead h
-  JOIN scoped_ticket_keys s
-    ON h.billno = s.sglbillno
-   AND TRIM(BOTH FROM h.mkt) = s.store_code
-  WHERE NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+  -- A correlated primary-key lookup avoids scanning the entire multi-year
+  -- salehead table when the scoped ticket set is much smaller.
+  SELECT h.billno, s.store_code
+  FROM scoped_ticket_keys s
+  JOIN LATERAL (
+    SELECT h.billno
+    FROM salehead h
+    WHERE h.billno = s.sglbillno
+      AND TRIM(BOTH FROM h.mkt) = s.store_code
+      AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+    LIMIT 1
+  ) h ON TRUE
 ),
 unmatched_member_tickets AS (
   -- A salehead ticket absent from the scoped facts cannot be attributed to a
@@ -431,6 +438,10 @@ def load_hdyy01_report(
         scope_params,
         selected_store,
         selected_department,
+    )
+    db.execute(
+        text(f"SET LOCAL statement_timeout = '{HDYY01_QUERY_TIMEOUT_SECONDS}s'"),
+        {},
     )
     rows = db.execute(text(sql), params).mappings().all()
     return build_report_payload(

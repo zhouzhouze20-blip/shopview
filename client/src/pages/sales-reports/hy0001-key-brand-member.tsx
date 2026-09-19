@@ -304,16 +304,19 @@ export default function Hy0001KeyBrandMemberPage() {
 
       {report?.manager_summary.length ? (
         <Card>
-          <CardHeader><CardTitle className="text-base">品类主管黑金、黑钻会员销售汇总</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">品类主管黑金、黑钻会员人数及销售汇总</CardTitle></CardHeader>
           <CardContent>
             <div className="mb-3 text-xs text-muted-foreground">{selectedStore?.store_name ?? submitted?.storeCode} · 与样表底部主管汇总口径一致</div>
             <Table>
-              <TableHeader><TableRow><TableHead>品类主管</TableHead><TableHead className="text-right">重点品牌数</TableHead><TableHead className="text-right">本期销售</TableHead><TableHead className="text-right">同期销售</TableHead><TableHead className="text-right">同比</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>品类主管</TableHead><TableHead className="text-right">重点品牌数</TableHead><TableHead className="text-right">本期人数</TableHead><TableHead className="text-right">同期人数</TableHead><TableHead className="text-right">人数同比</TableHead><TableHead className="text-right">本期销售</TableHead><TableHead className="text-right">同期销售</TableHead><TableHead className="text-right">销售同比</TableHead></TableRow></TableHeader>
               <TableBody>
                 {report.manager_summary.map((row) => (
                   <TableRow key={row.manager_name}>
                     <TableCell className="font-medium">{row.manager_name}</TableCell>
                     <TableCell className="text-right">{formatHy0001Count(row.key_brand_count)}</TableCell>
+                    <TableCell className="text-right">{formatHy0001Count(row.current_premium_buyers)}</TableCell>
+                    <TableCell className="text-right text-slate-500">{formatHy0001Count(row.prior_premium_buyers)}</TableCell>
+                    <TableCell className={`text-right ${hy0001YoyClass(row.premium_buyer_yoy)}`}>{formatHy0001Yoy(row.premium_buyer_yoy)}</TableCell>
                     <TableCell className="text-right">{formatHy0001Money(row.current_premium_sales)}</TableCell>
                     <TableCell className="text-right text-slate-500">{formatHy0001Money(row.prior_premium_sales)}</TableCell>
                     <TableCell className={`text-right ${hy0001YoyClass(row.premium_sales_yoy)}`}>{formatHy0001Yoy(row.premium_sales_yoy)}</TableCell>

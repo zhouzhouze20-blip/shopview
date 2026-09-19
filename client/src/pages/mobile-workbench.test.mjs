@@ -11,13 +11,82 @@ const contractsSource = readFileSync(join(pagesDir, "mobile-contracts.tsx"), "ut
 const salesSource = readFileSync(join(pagesDir, "mobile-sales-dashboard.tsx"), "utf8");
 const inventorySource = readFileSync(join(pagesDir, "mobile-inventory.tsx"), "utf8");
 const revenueSource = readFileSync(join(pagesDir, "mobile-revenue-dashboard.tsx"), "utf8");
+const receivablesSource = readFileSync(join(pagesDir, "mobile-rental-receivables.tsx"), "utf8");
+const couponFollowupsSource = readFileSync(join(pagesDir, "mobile-coupon-followups.tsx"), "utf8");
+const supplierPaymentsSource = readFileSync(join(pagesDir, "mobile-supplier-payments.tsx"), "utf8");
 
 test("mobile workbench routes home, sales, contracts, and inventory separately", () => {
   assert.match(appSource, /path="\/mobile\/sales" component=\{MobileSalesDashboardPage\}/);
   assert.match(appSource, /path="\/mobile\/contracts" component=\{MobileContractsPage\}/);
   assert.match(appSource, /path="\/mobile\/inventory" component=\{MobileInventoryPage\}/);
   assert.match(appSource, /path="\/mobile\/revenue" component=\{MobileRevenueDashboardPage\}/);
+  assert.match(appSource, /path="\/mobile\/rental-receivables" component=\{MobileRentalReceivablesPage\}/);
+  assert.match(appSource, /path="\/mobile\/supplier-payments" component=\{MobileSupplierPaymentsPage\}/);
   assert.match(appSource, /path="\/mobile" component=\{MobileHomePage\}/);
+});
+
+test("mobile workbench exposes permission-scoped rental receivables drilldown", () => {
+  assert.match(homeSource, /id: "mobile-rental-receivables"/);
+  assert.match(homeSource, /path: "\/mobile\/rental-receivables"/);
+  assert.match(homeSource, /title: "租赁应收未收"/);
+  assert.match(receivablesSource, /canAccessModule\(menuUser, "mobile-rental-receivables"\)/);
+  assert.match(receivablesSource, /门店/);
+  assert.match(receivablesSource, /部门/);
+  assert.match(receivablesSource, /柜组/);
+  assert.match(receivablesSource, /金额明细/);
+  assert.match(receivablesSource, /\/api\/rental-receivables\/mobile\/drilldown/);
+  assert.match(receivablesSource, /\/api\/rental-receivables\/mobile\/bills/);
+});
+
+test("mobile receivables keeps headline amounts fully visible on narrow phones", () => {
+  const amountLabelIndex = receivablesSource.indexOf(">应收未收</div>");
+  const summaryStart = receivablesSource.lastIndexOf('className="mt-3 grid', amountLabelIndex);
+  const summaryEnd = receivablesSource.indexOf("已按账号权限过滤", summaryStart);
+  const summarySource = receivablesSource.slice(summaryStart, summaryEnd);
+
+  assert.match(summarySource, /grid-cols-2/);
+  assert.match(summarySource, /col-span-2/);
+  assert.doesNotMatch(summarySource, /truncate text-sm font-bold tabular-nums/);
+});
+
+test("mobile receivables shows supplier actual receivable in summary and bill detail", () => {
+  assert.match(receivablesSource, /supplierActualReceivableAmount\(summary\?\.receivable_amount, summary\?\.sales_refund_amount\)/);
+  assert.match(receivablesSource, /supplierActualReceivableAmount\(detailQuery\.data\.totals\.receivable_amount, detailQuery\.data\.totals\.sales_refund_amount\)/);
+  assert.equal((receivablesSource.match(/供应商实际应收金额/g) || []).length, 2);
+});
+
+test("mobile receivables uses compact two-line hierarchy cards", () => {
+  const hierarchyStart = receivablesSource.indexOf("drillQuery.data.items.map");
+  const hierarchyEnd = receivablesSource.indexOf("billsQuery.data.items.map", hierarchyStart);
+  const hierarchySource = receivablesSource.slice(hierarchyStart, hierarchyEnd);
+
+  assert.match(receivablesSource, /<div className="space-y-1">/);
+  assert.match(hierarchySource, /rounded-2xl bg-white px-3 py-2/);
+  assert.match(hierarchySource, /\{item\.bill_count\} 张/);
+  assert.doesNotMatch(hierarchySource, /w-full rounded-3xl bg-white p-4 text-left/);
+});
+
+test("mobile receivable detail rows only show name, period, and balance amount", () => {
+  const detailsStart = receivablesSource.indexOf("visibleDetails.map");
+  const detailsEnd = receivablesSource.indexOf("</SheetContent>", detailsStart);
+  const detailsSource = receivablesSource.slice(detailsStart, detailsEnd);
+
+  assert.match(detailsSource, /item\.item_name/);
+  assert.match(detailsSource, /shortDate\(item\.period_from\)/);
+  assert.match(detailsSource, /shortDate\(item\.period_to\)/);
+  assert.match(detailsSource, /money\(item\.balance_amount\)/);
+  assert.doesNotMatch(detailsSource, /项目金额|已收款|抵扣|明细余额/);
+  assert.doesNotMatch(detailsSource, /item\.item_code|item\.finance_month/);
+});
+
+test("mobile receivable detail sheet has an opaque fixed header and its own scroll area", () => {
+  const sheetStart = receivablesSource.indexOf('<Sheet open={Boolean(selectedBill)}');
+  const sheetEnd = receivablesSource.indexOf("</Sheet>", sheetStart);
+  const sheetSource = receivablesSource.slice(sheetStart, sheetEnd);
+
+  assert.match(sheetSource, /SheetContent[^>]+bg-white[^>]+overflow-hidden/);
+  assert.match(sheetSource, /SheetHeader className="border-b/);
+  assert.match(sheetSource, /h-\[calc\(92dvh-5\.5rem\)\] overflow-y-auto/);
 });
 
 test("mobile workbench exposes the revenue dashboard as the fourth app", () => {
@@ -47,6 +116,61 @@ test("mobile workbench exposes inventory through its mobile module permission", 
   assert.match(homeSource, /path: "\/mobile\/inventory"/);
   assert.match(homeSource, /title: "库存查询"/);
   assert.match(inventorySource, /canAccessModule\(menuUser, "mobile-inventory"\)/);
+});
+
+test("mobile workbench exposes the C coupon follow-up module", () => {
+  assert.match(homeSource, /id: "mobile-coupon-followups"/);
+  assert.match(homeSource, /path: "\/mobile\/coupon-followups"/);
+  assert.match(appSource, /MobileCouponFollowupsPage/);
+  assert.match(appSource, /path="\/mobile\/coupon-followups"/);
+  assert.match(couponFollowupsSource, /canAccessModule\(menuUser, "mobile-coupon-followups"\)/);
+});
+
+test("mobile workbench exposes query-business-scope supplier payments", () => {
+  assert.match(homeSource, /id: "mobile-supplier-payments"/);
+  assert.match(homeSource, /path: "\/mobile\/supplier-payments"/);
+  assert.match(homeSource, /title: "供应商付款单"/);
+  assert.match(supplierPaymentsSource, /canAccessModule\(menuUser, "mobile-supplier-payments"\)/);
+  assert.match(supplierPaymentsSource, /\/api\/erp-settlements\/mobile\/supplier-payments/);
+  assert.match(supplierPaymentsSource, /按查询业务范围显示/);
+  assert.match(supplierPaymentsSource, /跨范围单据仅计可见部分/);
+  assert.doesNotMatch(supplierPaymentsSource, /品类主管绩效/);
+  assert.match(supplierPaymentsSource, /实际应付（当前可见）/);
+});
+
+test("mobile supplier payment search separates exact supplier code from fuzzy name", () => {
+  assert.match(supplierPaymentsSource, /supplier_code/);
+  assert.match(supplierPaymentsSource, /supplier_name/);
+  assert.match(supplierPaymentsSource, /\/\^\\d\+\$\//);
+  assert.match(supplierPaymentsSource, /供应商号（精确）或名称（模糊）/);
+});
+
+test("mobile supplier payment headline amounts stay fully visible", () => {
+  const summaryStart = supplierPaymentsSource.indexOf("function PaymentStageCard(");
+  const summaryEnd = supplierPaymentsSource.indexOf("function PaymentDetail(", summaryStart);
+  const summarySource = supplierPaymentsSource.slice(summaryStart, summaryEnd);
+
+  assert.match(summarySource, /w-full/);
+  assert.match(summarySource, /flex-wrap/);
+  assert.match(summarySource, /whitespace-nowrap font-mono/);
+  assert.match(summarySource, /text-lg/);
+  assert.doesNotMatch(summarySource, /truncate font-mono/);
+});
+
+test("mobile supplier payment detail shows income, invoice, payable, and expense evidence", () => {
+  assert.match(supplierPaymentsSource, /实际应付（当前可见）/);
+  assert.match(supplierPaymentsSource, /销售收入/);
+  assert.match(supplierPaymentsSource, /应开票金额/);
+  assert.match(supplierPaymentsSource, /票减/);
+  assert.match(supplierPaymentsSource, /费用/);
+  assert.match(supplierPaymentsSource, /收入构成/);
+  assert.match(supplierPaymentsSource, /票减明细/);
+  assert.match(supplierPaymentsSource, /费用明细/);
+  assert.match(supplierPaymentsSource, /charge\.expense_name_display/);
+  assert.match(supplierPaymentsSource, /charge\.sscmoney/);
+  assert.match(supplierPaymentsSource, /付款汇总存在历史差异/);
+  assert.match(supplierPaymentsSource, /页面以付款汇总金额为准/);
+  assert.match(supplierPaymentsSource, /仅显示当前账号查询业务范围/);
 });
 
 test("mobile workbench uses a four-column phone app grid", () => {
@@ -174,8 +298,8 @@ test("mobile sales compares current sales and profit with the same period", () =
   assert.match(salesSource, /same_period_net_profit\?: number/);
   assert.match(salesSource, /priorLabel="同期销售"/);
   assert.match(salesSource, /priorLabel="同期毛利"/);
-  assert.match(salesSource, /同期销售 <span/);
-  assert.match(salesSource, /同期毛利 <span/);
+  assert.match(salesSource, /tenThousands\(priorSales\) : currency\(priorSales\)/);
+  assert.match(salesSource, /tenThousands\(priorProfit\) : currency\(priorProfit\)/);
   assert.match(salesSource, /priorProfit=\{row\.same_period_net_profit\}/);
 });
 
@@ -215,14 +339,17 @@ test("mobile sales keeps the duplicate date row collapsed until requested", () =
   assert.doesNotMatch(salesSource, /level !== "departments" \|\| dateFiltersOpen/);
 });
 
-test("compact sales cards place current and prior amounts side by side in ten-thousands", () => {
+test("mobile sales cards show three amount panels with current and prior values stacked", () => {
   const rowStart = salesSource.indexOf("function SummaryRow");
   const rowEnd = salesSource.indexOf("function ProductRow", rowStart);
   const rowSource = salesSource.slice(rowStart, rowEnd);
 
   assert.match(salesSource, /const tenThousands =/);
-  assert.match(rowSource, /grid grid-cols-2 gap-2[\s\S]*?本期[\s\S]*?tenThousands\(sales\)[\s\S]*?同期[\s\S]*?tenThousands\(priorSales\)/);
-  assert.match(rowSource, /grid grid-cols-2 gap-2[\s\S]*?本期[\s\S]*?tenThousands\(profit\)[\s\S]*?同期[\s\S]*?tenThousands\(priorProfit\)/);
+  assert.match(rowSource, /grid grid-cols-3 gap-1\.5/);
+  assert.match(rowSource, /销售收入[\s\S]*?本期[\s\S]*?tenThousands\(sales\)[\s\S]*?同期[\s\S]*?tenThousands\(priorSales\)/);
+  assert.match(rowSource, /净毛利[\s\S]*?本期[\s\S]*?tenThousands\(profit\)[\s\S]*?同期[\s\S]*?tenThousands\(priorProfit\)/);
+  assert.match(rowSource, /本财务月销售额[\s\S]*?本期[\s\S]*?financialMonthSales\?\.effective_sales[\s\S]*?同期[\s\S]*?financialMonthSales\?\.same_period_effective_sales/);
+  assert.match(rowSource, /if \(value == null\) return "—"/);
   assert.match(rowSource, /text-\[11px\] font-semibold[\s\S]*?tenThousands\(sales\)/);
   assert.match(rowSource, /dense \? "text-\[10px\]" : "text-\[9px\]"/);
   assert.match(rowSource, /销售收入[\s\S]*?currency\(sales\)/);

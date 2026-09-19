@@ -38,7 +38,9 @@ test("page and navigation use the exact report name", async () => {
   assert.match(page, /门店其他业务收入/);
   assert.match(page, /门店口径/);
   assert.match(page, /部门口径/);
-  assert.doesNotMatch(page, /<Label>截止会计期间<\/Label>/);
+  assert.match(page, /<Label>截止会计期间<\/Label>/);
+  assert.match(page, /length: 12/);
+  assert.match(page, /endPeriod: Number\(value\)/);
   assert.doesNotMatch(page, /report\.summary\.current/);
   assert.match(navigation, /store-other-business-income/);
   assert.match(navigation, /门店其他业务收入/);

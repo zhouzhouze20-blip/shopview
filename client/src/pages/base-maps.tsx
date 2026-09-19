@@ -297,6 +297,7 @@ export default function BaseMapsPage() {
                 onChange={(e) => setBaseMapCode(e.target.value)}
                 placeholder="BASE_1F_2026_V1"
               />
+              <p className="text-xs text-muted-foreground">编码须在所有门店、楼层中唯一，建议包含门店和楼层，例如 602-1F-底图；文件名可以不同。</p>
             </div>
           </div>
 

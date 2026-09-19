@@ -67,6 +67,43 @@ def test_daily_followup_query_binds_filters_and_permission_scope():
     assert params["allowed_departments"] == ["6030117"]
 
 
+def test_daily_followup_query_pushes_selected_store_into_sales_prefilter():
+    sql, _params = build_daily_followup_query(
+        date(2026, 1, 1),
+        date(2026, 12, 31),
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+        "departments",
+        TrustedScopeSql(""),
+        {},
+        selected_store="602",
+    )
+
+    filtered_sales_sql, enriched_sales_sql = sql.split("area_category_dedup AS", 1)
+    store_predicate = "s.sglmarket::text = :selected_store"
+    assert store_predicate in filtered_sales_sql
+    assert store_predicate not in enriched_sales_sql
+
+
+def test_monthly_query_can_use_sales_operation_method_without_contract_lateral():
+    sql, _params = build_daily_followup_query(
+        date(2026, 1, 1),
+        date(2026, 12, 31),
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+        "departments",
+        TrustedScopeSql(""),
+        {},
+        selected_store="601",
+        operation_method_source="sales",
+    )
+
+    compact = " ".join(sql.split())
+    assert "LEFT JOIN LATERAL" not in compact
+    assert "TRIM(BOTH FROM COALESCE(s.sglwmid, '')) AS operation_method_code" in compact
+    assert "s.sglwmid" in compact.split("area_category_dedup AS", 1)[0]
+
+
 def test_daily_followup_special_sales_query_matches_od0002_group_brand_scope():
     sql, _params = build_daily_followup_query(
         date(2026, 6, 29),

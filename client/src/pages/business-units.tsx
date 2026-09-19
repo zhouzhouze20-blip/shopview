@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,7 +29,7 @@ import {
 } from "@/hooks/useBusinessUnits";
 import { useUnitMapVersions, useAlignTransform } from "@/hooks/useUnitMapVersions";
 import { useGeoElements } from "@/hooks/useGeoElements";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { GripHorizontal, Plus, Pencil, Trash2, X } from "lucide-react";
 
 const STATUS_OPTIONS: { value: BusinessUnitStatus; label: string }[] = [
   { value: "ACTIVE", label: "经营中" },
@@ -102,6 +109,15 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
   const [selectedVersionId, setSelectedVersionId] = useState<number | undefined>(undefined);
   const [selectedGeoId, setSelectedGeoId] = useState<number | undefined>(undefined);
   const [mapEditOpen, setMapEditOpen] = useState(false);
+  const [mapEditPosition, setMapEditPosition] = useState<{ x: number; y: number } | null>(null);
+  const mapEditPanelRef = useRef<HTMLDivElement | null>(null);
+  const mapEditDragRef = useRef<{
+    pointerId: number;
+    pointerX: number;
+    pointerY: number;
+    panelX: number;
+    panelY: number;
+  } | null>(null);
   const [labelMode, setLabelMode] = useState<"NONE" | "PATH" | "UNIT">("UNIT");
   const [showPendingOnly, setShowPendingOnly] = useState(false);
 
@@ -226,6 +242,72 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
     setManualArea("");
     setParentUnitId("");
   };
+
+  const clampMapEditPosition = (x: number, y: number) => {
+    if (typeof window === "undefined") return { x, y };
+    const panelWidth = mapEditPanelRef.current?.offsetWidth ?? Math.min(620, window.innerWidth - 24);
+    const panelHeight = mapEditPanelRef.current?.offsetHeight ?? 520;
+    const margin = 12;
+    return {
+      x: Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - panelWidth - margin)),
+      y: Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - panelHeight - margin)),
+    };
+  };
+
+  const startMapEditDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    const panelRect = mapEditPanelRef.current?.getBoundingClientRect();
+    const position = mapEditPosition ?? {
+      x: panelRect?.left ?? 12,
+      y: panelRect?.top ?? 112,
+    };
+    mapEditDragRef.current = {
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      panelX: position.x,
+      panelY: position.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const moveMapEditPanel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = mapEditDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setMapEditPosition(
+      clampMapEditPosition(
+        drag.panelX + event.clientX - drag.pointerX,
+        drag.panelY + event.clientY - drag.pointerY,
+      ),
+    );
+  };
+
+  const stopMapEditDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (mapEditDragRef.current?.pointerId !== event.pointerId) return;
+    mapEditDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  useEffect(() => {
+    if (!mapEditOpen || typeof window === "undefined") return;
+    const placeOrClampPanel = () => {
+      const panelWidth = mapEditPanelRef.current?.offsetWidth ?? Math.min(620, window.innerWidth - 24);
+      setMapEditPosition((current) =>
+        current
+          ? clampMapEditPosition(current.x, current.y)
+          : clampMapEditPosition(window.innerWidth - panelWidth - 24, 112),
+      );
+    };
+    const animationFrame = window.requestAnimationFrame(placeOrClampPanel);
+    window.addEventListener("resize", placeOrClampPanel);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", placeOrClampPanel);
+    };
+  }, [mapEditOpen]);
 
   useEffect(() => {
     if (floorId && floorOptions.length && !visibleFloorOptions.some((f) => f.id === floorId)) {
@@ -562,14 +644,25 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
                           size="sm"
                           className="text-red-600 hover:text-red-700"
                           onClick={async () => {
-                            if (!window.confirm(`确定删除${deleteConfirmPrefix} ${r.unit_code} 吗？`)) return;
+                            if (
+                              !window.confirm(
+                                `确定删除${deleteConfirmPrefix} ${r.unit_code} 吗？\n\n历史收益和月结金额会保留，只解除与该${deleteConfirmPrefix}的关联。`,
+                              )
+                            ) return;
                             try {
                               const result = await deleteMutation.mutateAsync(r.id);
+                              const preservedMonthCloseRows = result.detached_month_close_adjustments ?? 0;
+                              const notices = [
+                                preservedMonthCloseRows > 0
+                                  ? `已保留 ${preservedMonthCloseRows} 条历史月结明细和金额。`
+                                  : "",
+                                result.detached_bindings
+                                  ? `已暂时解除 ${result.detached_bindings} 条柜组/合同绑定，后续可重新设置关联。`
+                                  : "",
+                              ].filter(Boolean);
                               toast({
                                 title: "删除成功",
-                                description: result.detached_bindings
-                                  ? `已暂时解除 ${result.detached_bindings} 条柜组/合同绑定，后续可重新设置关联。`
-                                  : undefined,
+                                description: notices.join(" ") || undefined,
                               });
                             } catch (e) {
                               toast({
@@ -798,12 +891,43 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
         </CardContent>
       </Card>
 
-      <Dialog open={mapEditOpen} onOpenChange={setMapEditOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{mapEditTitle}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
+      {mapEditOpen ? (
+        <div
+          ref={mapEditPanelRef}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="map-edit-panel-title"
+          className="fixed z-50 flex max-h-[calc(100vh-1.5rem)] w-[min(620px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-lg border bg-white shadow-2xl"
+          style={mapEditPosition
+            ? { left: mapEditPosition.x, top: mapEditPosition.y }
+            : { right: 24, top: 112 }}
+        >
+          <div
+            className="flex touch-none select-none items-center gap-3 border-b bg-slate-50 px-5 py-4 cursor-grab active:cursor-grabbing"
+            onPointerDown={startMapEditDrag}
+            onPointerMove={moveMapEditPanel}
+            onPointerUp={stopMapEditDrag}
+            onPointerCancel={stopMapEditDrag}
+          >
+            <GripHorizontal className="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div id="map-edit-panel-title" className="text-lg font-semibold leading-none tracking-tight">
+                {mapEditTitle}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">拖动此处移动，可边看图边编辑</div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label="关闭编辑窗口"
+              onClick={() => setMapEditOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="space-y-4 overflow-y-auto p-5">
             <div className="text-xs text-muted-foreground">
               {selectedGeo
                 ? `path: ${selectedGeo.svg_element_id || selectedGeo.id}，unit_id=${selectedGeo.unit_id}`
@@ -869,8 +993,8 @@ export default function BusinessUnitsPage({ mode = "business-units" }: BusinessU
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
     </div>
   );
 }

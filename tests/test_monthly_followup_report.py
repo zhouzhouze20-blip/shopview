@@ -8,6 +8,7 @@ from python_app.services.monthly_followup_report import (
     financial_month_period,
     financial_year_period,
 )
+from python_app.services.od0002_report import TrustedScopeSql
 
 
 def test_financial_year_contains_twelve_financial_months():
@@ -174,6 +175,44 @@ def test_current_financial_month_and_prior_are_both_cut_off_at_same_day():
     assert report["months"][7]["comparison_end"] == "2026-07-30"
     assert report["months"][7]["prior_comparison_end"] == "2025-07-30"
     assert report["months"][8]["comparison_end"] is None
+
+
+def test_monthly_report_batches_all_store_query_by_active_store(monkeypatch):
+    from python_app.services import monthly_followup_report as monthly
+
+    class EmptyRows:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class FakeDb:
+        def __init__(self):
+            self.selected_stores = []
+
+        def execute(self, _statement, params=None):
+            if params and params.get("selected_store"):
+                self.selected_stores.append(params["selected_store"])
+            return EmptyRows()
+
+    db = FakeDb()
+    monkeypatch.setattr(
+        monthly,
+        "_load_active_store_codes",
+        lambda _db: ["601", "602", "603"],
+    )
+
+    report = monthly.load_monthly_followup_report(
+        db,
+        TrustedScopeSql(""),
+        {},
+        financial_year=2026,
+        dimension="departments",
+    )
+
+    assert db.selected_stores == ["601", "602", "603"]
+    assert report["selected_store"] is None
 
 
 def test_od0004_endpoint_uses_independent_permission_and_scope(monkeypatch):

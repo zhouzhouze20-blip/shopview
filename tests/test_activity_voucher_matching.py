@@ -2,7 +2,13 @@ import unittest
 
 from routers.activity_analysis import (
     CREDIT_BUY_MATCH_TYPE_NAME,
+    _backend_coupon_recharge_condition_sql,
+    _coupon_initial_issue_condition_sql,
     _voucher_match_flow_exclusion_sql,
+    coupon_payment_allocation_sql,
+    coupon_summary_source_code_sql,
+    coupon_summary_source_name_sql,
+    coupon_source_name_sql,
     confirmed_voucher_match_movement_sql,
     finance_voucher_amount_filter_sql,
     front_buy_actual_amount_sql,
@@ -55,6 +61,46 @@ class ActivityVoucherMatchingTest(unittest.TestCase):
         self.assertIn("= '0000'", sql)
         self.assertNotIn("l.tcflsource, '')) = '8'", sql)
 
+    def test_backend_coupon_recharge_source_reuses_voucher_match_identification(self):
+        condition_sql = _backend_coupon_recharge_condition_sql("l")
+        source_name_sql = coupon_source_name_sql("l")
+
+        self.assertIn("l.tcflzy IN ('M', 'N')", condition_sql)
+        self.assertIn("COALESCE(l.tcflsource, '')", condition_sql)
+        self.assertIn("COALESCE(l.tcflsyjid, '')", condition_sql)
+        self.assertIn("COALESCE(l.tcflinvno, '')", condition_sql)
+        self.assertIn("= '2'", condition_sql)
+        self.assertIn("= '0000'", condition_sql)
+        self.assertIn(condition_sql, source_name_sql)
+        self.assertIn("THEN '后台充券'", source_name_sql)
+        self.assertIn("WHEN l.tcflsource = '2' THEN '前台买券'", source_name_sql)
+
+    def test_coupon_summary_source_only_uses_initial_issue_actions(self):
+        condition_sql = _coupon_initial_issue_condition_sql("l")
+        source_code_sql = coupon_summary_source_code_sql("l")
+        source_name_sql = coupon_summary_source_name_sql("l")
+
+        self.assertEqual(
+            condition_sql,
+            "l.tcflzy IN ('F', 'm', 'M', 'Q', 'I', 'B', 'Z', 'b', 'X')",
+        )
+        self.assertIn(condition_sql, source_code_sql)
+        self.assertIn("THEN l.tcflsource", source_code_sql)
+        self.assertIn("ELSE NULL", source_code_sql)
+        self.assertIn(condition_sql, source_name_sql)
+        self.assertIn(coupon_source_name_sql("l"), source_name_sql)
+        self.assertIn("ELSE NULL", source_name_sql)
+
+    def test_coupon_payment_is_allocated_once_across_same_ticket_batch_logs(self):
+        sql = coupon_payment_allocation_sql("l", "cp", "h")
+
+        self.assertIn("WHEN l.tcflzy = 'O'", sql)
+        self.assertIn("COALESCE(cp.coupon_pay_amount, 0)", sql)
+        self.assertIn("ABS(COALESCE(l.tcflmoney, 0))", sql)
+        self.assertIn("SUM(CASE WHEN l.tcflzy = 'O'", sql)
+        self.assertIn("PARTITION BY h.billno, l.tcflsyjtrace::varchar", sql)
+        self.assertIn("NULLIF", sql)
+
     def test_debit_use_business_amount_deducts_coupon_overage_once_per_ticket(self):
         sql = voucher_business_rows_ctes_sql()
 
@@ -63,7 +109,8 @@ class ActivityVoucherMatchingTest(unittest.TestCase):
         self.assertIn("invoice_no", sql)
         self.assertIn("spg.spgsqyy", sql)
         self.assertIn("spg.spgpmtype = '5'", sql)
-        self.assertIn("gross_business_amount - COALESCE(uo.overage_amount, 0)", sql)
+        self.assertIn("COALESCE(uo.overage_amount, 0)", sql)
+        self.assertIn("COALESCE(uf.fallback_overage_amount, 0)", sql)
         self.assertIn("IN ('2', '4')", sql)
 
     def test_debit_use_overage_falls_back_to_unique_goods_ticket_when_salehead_is_missing(self):
@@ -78,6 +125,18 @@ class ActivityVoucherMatchingTest(unittest.TestCase):
         self.assertIn("COALESCE(ticket_head.billno, goods_fallback.billno)", sql)
         self.assertIn("SUM(use_amount) < 0 AS is_return", sql)
         self.assertIn("HAVING ABS(SUM(use_amount)) > 0.005", sql)
+
+    def test_debit_use_overage_falls_back_to_sale_payments_when_allocation_is_missing(self):
+        sql = voucher_business_rows_ctes_sql()
+
+        self.assertIn("FROM salepay p", sql)
+        self.assertIn("fallback_overage_amount", sql)
+        self.assertIn("p.idno", sql)
+        self.assertIn("p.memo", sql)
+        self.assertIn("payments.target_coupon_payment", sql)
+        self.assertIn("ticket_head.ysje", sql)
+        self.assertIn("NOT EXISTS", sql)
+        self.assertIn("COALESCE(uf.fallback_overage_amount, 0)", sql)
 
     def test_confirmed_match_sync_uses_front_actual_amount_and_targets_match_ids(self):
         sql = confirmed_voucher_match_movement_sql()

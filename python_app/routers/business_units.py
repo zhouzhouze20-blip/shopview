@@ -127,6 +127,27 @@ def _has_contract_mode_column(db: Session) -> bool:
     return "contract_mode" in _get_table_columns(db, "business_units")
 
 
+def _detach_month_close_adjustments(
+    db: Session,
+    *,
+    unit_id: int,
+    unit_code: str,
+) -> int:
+    """保留月结快照及金额，只解除即将删除的经营单元主数据关联。"""
+    result = db.execute(
+        text(
+            """
+            UPDATE revenue_month_close_adjustments
+            SET unit_code = COALESCE(NULLIF(TRIM(unit_code), ''), :unit_code),
+                unit_id = NULL
+            WHERE unit_id = :id
+            """
+        ),
+        {"id": unit_id, "unit_code": unit_code},
+    )
+    return max(result.rowcount or 0, 0)
+
+
 def _serialize_business_unit(row) -> dict:
     return {
         "id": row.id,
@@ -427,6 +448,14 @@ async def delete_business_unit(
                     {"id": unit_id},
                 )
 
+        detached_month_close_adjustments = 0
+        if _table_exists(db, "revenue_month_close_adjustments"):
+            detached_month_close_adjustments = _detach_month_close_adjustments(
+                db,
+                unit_id=unit_id,
+                unit_code=str(row.unit_code),
+            )
+
         db.execute(
             text("UPDATE business_units SET parent_unit_id = NULL WHERE parent_unit_id = :id"),
             {"id": unit_id},
@@ -439,6 +468,7 @@ async def delete_business_unit(
             "id": unit_id,
             "deleted_geo_elements": max(geo_result.rowcount or 0, 0),
             "detached_bindings": detached_binding_count,
+            "detached_month_close_adjustments": detached_month_close_adjustments,
         }
     except HTTPException:
         raise
@@ -446,7 +476,7 @@ async def delete_business_unit(
         db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"经营单元仍被其它业务数据引用，不能直接删除: {str(e.orig)}",
+            detail="经营单元仍被其它业务数据引用，不能直接删除；请先解除相关业务引用，或改为“失效”状态保留历史记录",
         )
     except Exception as e:
         db.rollback()

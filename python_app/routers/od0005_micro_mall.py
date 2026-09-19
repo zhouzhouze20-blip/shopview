@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from models.database import get_db
@@ -22,11 +23,32 @@ from routers.sales import (
 )
 from services.od0002_report import TrustedScopeSql
 from services.od0005_micro_mall_excel import build_od0005_workbook_file
-from services.od0005_micro_mall_report import MICRO_MALL_CASHIER_BY_STORE, load_od0005_report
+from services.od0005_micro_mall_report import MICRO_MALL_STORES, load_od0005_report
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
 PERMISSION_CODE = "sales.od0005.view"
+
+
+def _execute_od0005_report(
+    db: Session,
+    *,
+    report_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        return load_od0005_report(db, **report_kwargs)
+    except OperationalError as exc:
+        db.rollback()
+        if (
+            getattr(exc.orig, "pgcode", None) == "57014"
+            or "statement timeout" in str(exc).lower()
+            or "querycanceled" in str(exc).lower()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="OD0005查询超时，请缩短日期范围后重试。",
+            ) from exc
+        raise
 
 
 def _load_report_for_request(
@@ -37,12 +59,14 @@ def _load_report_for_request(
     department_id: str | None,
     db: Session,
     current_user: User,
+    include_daily: bool = True,
+    include_brand_yoy: bool = True,
 ) -> dict[str, Any]:
     selected_store = str(store_id or "").strip()
     selected_department = str(department_id or "").strip() or None
     if not selected_store:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择门店")
-    if selected_store not in MICRO_MALL_CASHIER_BY_STORE:
+    if selected_store not in MICRO_MALL_STORES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OD0005仅支持购物中心、百货大楼和新世纪三店",
@@ -86,14 +110,18 @@ def _load_report_for_request(
         category_name_expr="ac.category_name",
         floor_expr="mf.mflc",
     )
-    report = load_od0005_report(
+    report = _execute_od0005_report(
         db,
-        start_date=start_date,
-        end_date=end_date,
-        selected_store=selected_store,
-        selected_department=selected_department,
-        scope_filter_sql=TrustedScopeSql(scope_filter_sql),
-        scope_params=scope_params,
+        report_kwargs={
+            "start_date": start_date,
+            "end_date": end_date,
+            "selected_store": selected_store,
+            "selected_department": selected_department,
+            "scope_filter_sql": TrustedScopeSql(scope_filter_sql),
+            "scope_params": scope_params,
+            "include_daily": include_daily,
+            "include_brand_yoy": include_brand_yoy,
+        },
     )
     report["scope_description"] = _od0002_scope_description(scope)
     return report
@@ -113,7 +141,7 @@ async def od0005_stores(
     return [
         store
         for store in stores
-        if str(store.get("store_code") or "").strip() in MICRO_MALL_CASHIER_BY_STORE
+        if str(store.get("store_code") or "").strip() in MICRO_MALL_STORES
     ]
 
 
@@ -138,6 +166,7 @@ async def od0005_report(
     end_date: date = Query(...),
     store_id: str = Query(..., min_length=1),
     department_id: str | None = None,
+    sheet: Literal["brand", "department", "daily", "daily_yoy", "brand_yoy"] = "brand",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -148,6 +177,8 @@ async def od0005_report(
         department_id=department_id,
         db=db,
         current_user=current_user,
+        include_daily=sheet in ("daily", "daily_yoy"),
+        include_brand_yoy=sheet == "brand_yoy",
     )
 
 

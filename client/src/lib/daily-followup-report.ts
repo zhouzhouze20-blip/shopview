@@ -167,3 +167,10 @@ export function financialMonthLabel(financialMonth: string): string {
   const [year, month] = financialMonth.split("-");
   return `${year}年${Number(month)}月财务月（${range.start.slice(5)}—${range.end.slice(5)}）`;
 }
+export function dailyFollowupExportErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk .* failed/i.test(message)) {
+    return "Excel 导出模块加载失败，可能是页面版本已更新或网络中断。请刷新页面后重新查询并导出。";
+  }
+  return "Excel 导出失败，请检查网络后重试。若仍失败，请联系管理员查看错误日志。";
+}

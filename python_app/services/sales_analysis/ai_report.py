@@ -18,8 +18,15 @@ class AIOutputTruncatedError(ValueError):
     pass
 
 
-def generate_ai_report(payload: dict[str, Any], instructions: str | None = None) -> dict[str, Any]:
+def generate_ai_report(
+    payload: dict[str, Any],
+    instructions: str | None = None,
+    *,
+    min_output_tokens: int | None = None,
+) -> dict[str, Any]:
     config = _load_ai_config()
+    if min_output_tokens is not None:
+        config["max_output_tokens"] = max(config["max_output_tokens"], min_output_tokens)
     if not config["api_key"]:
         return {
             "enabled": True,

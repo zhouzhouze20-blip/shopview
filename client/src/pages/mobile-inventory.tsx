@@ -20,6 +20,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MobileInventoryDepartment, type DepartmentInventoryRow } from "@/components/mobile-inventory-department";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModuleAccessLog } from "@/hooks/use-module-access-log";
@@ -108,6 +109,7 @@ export default function MobileInventoryPage() {
   const [selectedGroup, setSelectedGroup] = useState<InventoryFilterOption | null>(null);
   const [submittedGroup, setSubmittedGroup] = useState<InventoryFilterOption | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
+  const [fromDepartment, setFromDepartment] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanStarting, setScanStarting] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -221,6 +223,18 @@ export default function MobileInventoryPage() {
     [groupQuery.data?.pages],
   );
   const groupSummary = groupQuery.data?.pages[0]?.summary;
+  const openDepartmentGroup = (row: DepartmentInventoryRow) => {
+    const option = { value: row.group_code, code: row.group_code, name: row.group_name, label: row.group_display };
+    setSelectedGroup(option);
+    setGroupInput(option.label);
+    setGroupError(null);
+    setFromDepartment(true);
+    setActiveTab("group");
+    recordQuery({ query_type: "group_inventory", group_code: row.group_code, source: "department_inventory" });
+    if (submittedGroup?.value === option.value) void groupQuery.refetch();
+    else setSubmittedGroup(option);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const groupSupplierGroups = useMemo(() => {
     const groups = new Map<string, { supplier: string; rows: InventoryRow[]; quantity: number }>();
     groupRows.forEach((row) => {
@@ -389,11 +403,22 @@ export default function MobileInventoryPage() {
             if (value !== "product") setCameraOpen(false);
           }}
         >
-          <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl bg-slate-200 p-1">
-            <TabsTrigger value="product" className="h-10 rounded-xl">单品查询</TabsTrigger>
-            <TabsTrigger value="supplier" className="h-10 rounded-xl">供应商查询</TabsTrigger>
-            <TabsTrigger value="group" className="h-10 rounded-xl">柜组查询</TabsTrigger>
+          <TabsList className="grid h-12 w-full grid-cols-4 rounded-2xl bg-slate-200 p-1">
+            <TabsTrigger value="product" className="h-10 rounded-xl px-1 text-xs data-[state=active]:bg-white data-[state=active]:text-teal-800 sm:text-sm">单品查询</TabsTrigger>
+            <TabsTrigger value="supplier" className="h-10 rounded-xl px-1 text-xs data-[state=active]:bg-white data-[state=active]:text-teal-800 sm:text-sm">供应商查询</TabsTrigger>
+            <TabsTrigger value="group" className="h-10 rounded-xl px-1 text-xs data-[state=active]:bg-white data-[state=active]:text-teal-800 sm:text-sm">柜组查询</TabsTrigger>
+            <TabsTrigger value="department" className="h-10 rounded-xl px-1 text-xs data-[state=active]:bg-white data-[state=active]:text-teal-800 sm:text-sm">部门查询</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="department" forceMount className="data-[state=inactive]:hidden">
+            <MobileInventoryDepartment
+              key={menuUser?.user_id}
+              active={activeTab === "department" && hasAccess}
+              userId={menuUser?.user_id}
+              onDrilldown={openDepartmentGroup}
+              onQuery={(department) => recordQuery({ query_type: "department_inventory", department_code: department.value, department_name: department.name })}
+            />
+          </TabsContent>
 
           <TabsContent value="product" className="space-y-4">
             <Card className="rounded-3xl border-0 shadow-md">
@@ -628,6 +653,11 @@ export default function MobileInventoryPage() {
           </TabsContent>
 
           <TabsContent value="group" className="space-y-4">
+            {fromDepartment && (
+              <Button variant="ghost" className="h-9 px-1 text-teal-800" onClick={() => { setActiveTab("department"); window.scrollTo({ top: 0 }); }}>
+                <ArrowLeft className="mr-1 h-4 w-4" />返回部门库存列表
+              </Button>
+            )}
             <Card className="rounded-3xl border-0 shadow-md">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base"><LayoutGrid className="h-5 w-5 text-teal-700" />柜组库存</CardTitle>

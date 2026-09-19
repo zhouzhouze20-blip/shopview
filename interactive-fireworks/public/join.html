@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#080d2c" />
+  <title>发射我的祝福烟花</title>
+  <link rel="stylesheet" href="/shared.css" />
+  <link rel="stylesheet" href="/join.css" />
+</head>
+<body class="join-page">
+  <div class="mobile-stars" aria-hidden="true"></div>
+  <header class="mobile-header">
+    <div class="mini-brand">✦ <span id="brandName">星河心愿</span></div>
+    <div class="connection"><span id="statusDot" class="status-dot"></span><span id="connectionLabel">连接大屏中</span></div>
+  </header>
+
+  <main class="mobile-main">
+    <section class="mobile-intro">
+      <p class="eyebrow">SEND YOUR WISH TO THE SKY</p>
+      <h1 id="mobileTitle">写下此刻的祝福</h1>
+      <p id="mobileSubtitle">向上滑动，让心愿在现场大屏绽放</p>
+    </section>
+
+    <section class="wish-card glass">
+      <label class="field-label" for="wishText">我的祝福</label>
+      <div class="textarea-wrap">
+        <textarea id="wishText" rows="3" maxlength="28" placeholder="愿新的一年，心之所向皆如愿…"></textarea>
+        <span id="textCount">0/28</span>
+      </div>
+      <div id="templates" class="templates" aria-label="祝福语快捷选择">
+        <button type="button">万事顺遂，平安喜乐</button>
+        <button type="button">所愿皆所得，所行皆坦途</button>
+        <button type="button">新岁启封，好运常在</button>
+      </div>
+
+      <div class="form-row">
+        <label>
+          <span class="field-label">署名</span>
+          <input id="wishName" maxlength="8" placeholder="神秘来宾" autocomplete="nickname" />
+        </label>
+        <fieldset>
+          <legend class="field-label">烟花颜色</legend>
+          <div class="color-options">
+            <button class="color-dot selected" data-color="gold" aria-label="金色" type="button"></button>
+            <button class="color-dot" data-color="rose" aria-label="玫红" type="button"></button>
+            <button class="color-dot" data-color="cyan" aria-label="青蓝" type="button"></button>
+            <button class="color-dot" data-color="violet" aria-label="紫色" type="button"></button>
+            <button class="color-dot" data-color="emerald" aria-label="翠绿" type="button"></button>
+          </div>
+        </fieldset>
+      </div>
+
+      <fieldset class="shape-field">
+        <legend class="field-label">烟花形状</legend>
+        <div class="shape-options">
+          <button class="shape-option selected" data-shape="burst" type="button" aria-pressed="true">
+            <span class="shape-icon burst-icon">✦</span>
+            <span><b>圆形烟花</b><small>经典绽放</small></span>
+          </button>
+          <button class="shape-option" data-shape="heart" type="button" aria-pressed="false">
+            <span class="shape-icon heart-icon">♥</span>
+            <span><b>心形烟花</b><small>爱心绽放</small></span>
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset class="style-field">
+        <legend class="field-label">烟花风格</legend>
+        <div class="style-options">
+          <button class="style-option selected" data-style="velvet" type="button" aria-pressed="true">
+            <span class="style-swatch velvet-swatch">✦</span>
+            <span><b>丝绒金雨</b><small>细密柔和</small></span>
+          </button>
+          <button class="style-option" data-style="jewel" type="button" aria-pressed="false">
+            <span class="style-swatch jewel-swatch">✧</span>
+            <span><b>宝石星芒</b><small>明亮锐利</small></span>
+          </button>
+          <button class="style-option" data-style="willow" type="button" aria-pressed="false">
+            <span class="style-swatch willow-swatch">⌁</span>
+            <span><b>国风鎏金</b><small>长尾华丽</small></span>
+          </button>
+        </div>
+      </fieldset>
+    </section>
+
+    <section id="launcher" class="launcher" tabindex="0" role="button" aria-label="向上滑动发射祝福烟花">
+      <div class="launch-trail"><span>✦</span></div>
+      <div class="launch-copy">
+        <strong id="launcherTitle">向上滑动发射</strong>
+        <small id="launcherTip">也可以轻触这里</small>
+      </div>
+      <div class="swipe-arrows"><i></i><i></i><i></i></div>
+    </section>
+
+    <p class="privacy-note">祝福将公开显示在活动大屏，请勿填写个人敏感信息</p>
+  </main>
+
+  <div id="successOverlay" class="success-overlay" aria-live="assertive">
+    <div class="success-burst"><span>✦</span></div>
+    <p id="successTitle">发射成功</p>
+    <small id="successMessage">请抬头看大屏</small>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script type="module" src="/join.js"></script>
+</body>
+</html>

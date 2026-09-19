@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from unittest.mock import patch
 
 from python_app.routers import sales
@@ -96,6 +97,31 @@ def test_store_comparison_applies_both_optional_sales_exclusions_in_the_same_sca
     assert "'大楼信息'" in captured["sql"]
 
 
+def test_sales_summary_timeout_is_relaxed_only_for_cross_month_queries():
+    class FakeDb:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement):
+            self.statements.append(_compact(str(statement)))
+
+    single_month_db = FakeDb()
+    sales._configure_sales_summary_timeout(
+        single_month_db,
+        start_date="2026-08-01",
+        end_date="2026-08-21",
+    )
+    assert single_month_db.statements == []
+
+    cross_month_db = FakeDb()
+    sales._configure_sales_summary_timeout(
+        cross_month_db,
+        start_date="2026-01-01",
+        end_date="2026-08-21",
+    )
+    assert cross_month_db.statements == ["set local statement_timeout = '90s'"]
+
+
 def test_sales_date_index_migration_is_concurrent_and_date_first():
     migration = Path(
         "python_app/alembic/versions/q5e6f7a8b9c0_optimize_sales_store_summary.py"
@@ -105,3 +131,15 @@ def test_sales_date_index_migration_is_concurrent_and_date_first():
     assert "create index concurrently if not exists" in compact
     assert "on salegoodslist (sglhsrq, sglmarket, sglmfid, sglbillno)" in compact
     assert "autocommit_block" in compact
+
+
+def test_nginx_allows_sales_summary_to_finish_after_database_long_range_limit():
+    source = (Path(__file__).parents[1] / "config" / "nginx.conf").read_text()
+    match = re.search(
+        r"location \^~ /api/sales/summary/ \{(?P<body>.*?)\n\s*\}",
+        source,
+        re.DOTALL,
+    )
+
+    assert match is not None
+    assert "proxy_read_timeout 100s;" in match.group("body")

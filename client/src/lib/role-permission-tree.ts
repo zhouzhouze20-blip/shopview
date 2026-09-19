@@ -72,6 +72,17 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
         name: "活动分析",
         children: [
           { id: "activity-analysis", name: "通用活动分析", permissionCodes: ["activity_analysis.view"] },
+          { id: "coupon-campaigns", name: "活动建档与分析", permissionPrefixes: ["activity_analysis.campaign."] },
+          {
+            id: "new-century-campaign-analysis",
+            name: "新世纪活动分析",
+            permissionCodes: ["activity_analysis.new_century_campaign.view"],
+          },
+          {
+            id: "birthday-coupon-analysis",
+            name: "中心L/C券分析",
+            permissionCodes: ["activity_analysis.birthday_coupon.view"],
+          },
           { id: "points-activity-analysis", name: "积分活动核对", permissionPrefixes: ["activity_analysis.points."] },
           { id: "star-diamond-analysis", name: "中心星钻会员", permissionPrefixes: ["activity_analysis.star_diamond."] },
         ],
@@ -122,6 +133,11 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
             permissionCodes: ["sales.od0004.view"],
           },
           {
+            id: "new-century-payment-report",
+            name: "新世纪支付方式销售毛利报表",
+            permissionCodes: ["sales.new_century_payments.view"],
+          },
+          {
             id: "od0005-micro-mall-brand-sales",
             name: "OD0005 微商城品牌销售统计",
             permissionCodes: ["sales.od0005.view"],
@@ -154,6 +170,7 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
     id: "inventory-management",
     name: "库存管理",
     children: [
+      { id: "inventory-turnover", name: "商品周转财务月报", permissionCodes: ["sales.inventory_turnover.view"] },
       { id: "inventory-detail", name: "实时库存查询", permissionCodes: ["sales.inventory.view"] },
       {
         id: "historical-inventory-detail",
@@ -191,6 +208,21 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
         name: "收益看板",
         permissionCodes: ["mobile.revenue_dashboard.view"],
       },
+      {
+        id: "mobile-rental-receivables",
+        name: "租赁应收未收",
+        permissionCodes: ["mobile.rental_receivables.view"],
+      },
+      {
+        id: "mobile-coupon-followups",
+        name: "C券会员跟进",
+        permissionCodes: ["mobile.coupon_followup.view"],
+      },
+      {
+        id: "mobile-supplier-payments",
+        name: "供应商付款单",
+        permissionCodes: ["mobile.supplier_payments.view"],
+      },
     ],
   },
   {
@@ -218,7 +250,14 @@ const rolePermissionTreeConfig: RolePermissionTreeConfig[] = [
         ],
       },
       { id: "joint-renewal-revenue", name: "联营续签收益分析", permissionCodes: ["revenue.view"] },
-      { id: "joint-settlement", name: "联营结算单管理", moduleCodes: ["settlement"] },
+      { id: "cosmetics-payment-matching", name: "化妆品付款配票", permissionCodes: ["settlement.cosmetics_matching.view", "settlement.cosmetics_matching.create"] },
+      { id: "joint-settlement", name: "联营结算单管理", permissionCodes: ["settlement.view"] },
+      {
+        id: "joint-payment-confirmation",
+        name: "联营付款单确认",
+        permissionCodes: ["settlement.joint_payment_confirmation.view"],
+      },
+      { id: "rental-receivables", name: "租赁应收未收", moduleCodes: ["settlement"] },
       {
         id: "activity-settlement",
         name: "活动结算",

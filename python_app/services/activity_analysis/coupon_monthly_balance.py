@@ -1,6 +1,9 @@
 from decimal import Decimal
 
 
+COUPON_MONTHLY_INITIAL_PERIOD = "2026-07"
+
+
 def normalize_period_month(period_month: str) -> str:
     value = period_month.strip()
     if len(value) != 7 or value[4] != "-":
@@ -15,15 +18,9 @@ def normalize_period_month(period_month: str) -> str:
 
 
 def month_bounds(period_month: str) -> tuple[str, str]:
+    """Return the half-open ShopView financial month: prior 29th to current 29th."""
     normalized = normalize_period_month(period_month)
-    year = int(normalized[:4])
-    month = int(normalized[5:7])
-    start_date = f"{year:04d}-{month:02d}-01"
-    if month == 12:
-        end_date = f"{year + 1:04d}-01-01"
-    else:
-        end_date = f"{year:04d}-{month + 1:02d}-01"
-    return start_date, end_date
+    return f"{previous_period_month(normalized)}-29", f"{normalized}-29"
 
 
 def previous_period_month(period_month: str) -> str:
@@ -33,6 +30,17 @@ def previous_period_month(period_month: str) -> str:
     if month == 1:
         return f"{year - 1:04d}-12"
     return f"{year:04d}-{month - 1:02d}"
+
+
+def opening_balance_source_period(
+    period_month: str,
+    initial_period: str = COUPON_MONTHLY_INITIAL_PERIOD,
+) -> str | None:
+    normalized_period = normalize_period_month(period_month)
+    normalized_initial_period = normalize_period_month(initial_period)
+    if normalized_period <= normalized_initial_period:
+        return None
+    return previous_period_month(normalized_period)
 
 
 def coupon_recharge_source_key(business_date: str, market_code: str, coupon_type: str) -> str:

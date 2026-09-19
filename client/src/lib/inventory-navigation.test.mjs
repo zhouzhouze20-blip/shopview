@@ -22,7 +22,7 @@ test("moves the inventory query into its own top-level inventory menu", () => {
   assert.equal(inventoryManagement.name, "库存管理");
   assert.deepEqual(
     inventoryManagement.subItems.map((item) => item.id),
-    ["inventory-detail", "historical-inventory-detail", "inventory-movement-detail"],
+    ["inventory-detail", "historical-inventory-detail", "inventory-movement-detail", "inventory-turnover"],
   );
   assert.equal(inventoryManagement.subItems[0].name, "实时库存查询");
   assert.equal(inventoryManagement.subItems[1].name, "历史库存明细报表");
@@ -143,4 +143,12 @@ test("shows the historical inventory report only with its own permission", () =>
     findNode(tree, "historical-inventory-detail").permissions.map((item) => item.id),
     [2],
   );
+});
+
+ test("turnover navigation requires its own permission", () => {
+  const visible = filterAccessibleModuleTree(navigationItems, {permission_codes: ["sales.inventory_turnover.view"]});
+  assert.ok(findNode(visible, "inventory-turnover"));
+  assert.equal(findNode(visible, "inventory-detail"), null);
+  const denied = filterAccessibleModuleTree(navigationItems, {permission_codes: ["sales.inventory.view"]});
+  assert.equal(findNode(denied, "inventory-turnover"), null);
 });

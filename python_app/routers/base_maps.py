@@ -267,6 +267,30 @@ async def list_base_maps(
         )
 
 
+def _duplicate_code_detail(db: Session, code: str, floor_id: int) -> str:
+    """说明全局编码冲突的来源，避免当前楼层空列表被误认为编码可用。"""
+    location = f"楼层ID {floor_id}"
+    floor_table = _get_base_maps_floor_fk_table(db) or "floors"
+    columns = _get_table_columns(db, floor_table)
+    if "id" in columns:
+        fields = [name for name in ("store_id", "store_code", "building_code", "floor_code", "name") if name in columns]
+        if fields:
+            floor = db.execute(
+                text(f"SELECT {', '.join(fields)} FROM {floor_table} WHERE id = :id"),
+                {"id": floor_id},
+            ).mappings().first()
+            if floor:
+                store = floor.get("store_code") or floor.get("store_id")
+                labels = [f"门店 {store}"] if store is not None else []
+                labels.extend(str(floor[name]) for name in ("building_code", "floor_code", "name") if floor.get(name))
+                if labels:
+                    location = " / ".join(labels)
+    return (
+        f"底图编码“{code}”已被 {location} 使用。底图编码在所有门店、楼层中必须唯一，"
+        "当前列表仅显示筛选范围内的底图；请更换编码后重新上传。"
+    )
+
+
 @router.post("/")
 async def create_base_map(
     body: BaseMapCreate,
@@ -291,11 +315,14 @@ async def create_base_map(
 
         # 3) base_map_code 唯一（给友好提示）
         code_exists = db.execute(
-            text("SELECT 1 FROM base_maps WHERE base_map_code = :code"),
+            text("SELECT floor_id FROM base_maps WHERE base_map_code = :code"),
             {"code": body.base_map_code},
         ).fetchone()
         if code_exists:
-            raise HTTPException(status_code=400, detail="base_map_code 已存在")
+            raise HTTPException(
+                status_code=400,
+                detail=_duplicate_code_detail(db, body.base_map_code, code_exists.floor_id),
+            )
 
         # 4) 若设为 active，先关闭同楼层其它 active
         if body.is_active:
@@ -414,11 +441,14 @@ async def update_base_map(
             raise HTTPException(status_code=400, detail="base_map_code 不能为空")
 
         code_exists = db.execute(
-            text("SELECT 1 FROM base_maps WHERE base_map_code = :code AND id <> :id"),
+            text("SELECT floor_id FROM base_maps WHERE base_map_code = :code AND id <> :id"),
             {"code": next_code, "id": base_map_id},
         ).fetchone()
         if code_exists:
-            raise HTTPException(status_code=400, detail="base_map_code 已存在")
+            raise HTTPException(
+                status_code=400,
+                detail=_duplicate_code_detail(db, next_code, code_exists.floor_id),
+            )
 
         next_is_active = updates.get("is_active", bool(existing.is_active))
         if next_is_active:

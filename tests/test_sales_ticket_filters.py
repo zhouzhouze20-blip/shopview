@@ -1,10 +1,13 @@
 import asyncio
+import inspect
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 
 import python_app.routers.sales as sales_router
 from python_app.routers.sales import (
+    TICKET_EXPORT_FETCH_LIMIT,
     _date_filter_sql,
     _department_detail_filter_sql,
     _group_level_sales_rows,
@@ -18,6 +21,11 @@ from python_app.services.department_display_order import department_display_sort
 
 
 class SalesTicketFilterTests(unittest.TestCase):
+    def test_ticket_query_allows_one_extra_row_for_complete_export_detection(self):
+        parameter = inspect.signature(sales_router.group_tickets).parameters["limit"]
+        self.assertEqual(parameter.default.default, 100)
+        self.assertTrue(any(getattr(item, "le", None) == TICKET_EXPORT_FETCH_LIMIT for item in parameter.default.metadata))
+
     def test_date_filter_uses_finance_accounting_date(self):
         params = {}
 
@@ -275,13 +283,15 @@ class SalesTicketFilterTests(unittest.TestCase):
     def test_group_tickets_sums_priced_sales_amount_by_billno(self):
         captured = {}
 
-        def fake_fetch(_db, sql, _params):
+        def fake_fetch(_db, sql, params):
             captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
             return []
 
         with (
             patch.object(sales_router, "require_permission", lambda *_args, **_kwargs: None),
             patch.object(sales_router, "load_business_scope", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "_configure_sales_summary_timeout", lambda *_args, **_kwargs: None),
             patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
             patch.object(
                 sales_router,
@@ -306,6 +316,7 @@ class SalesTicketFilterTests(unittest.TestCase):
                 exclude_rental=True,
                 exclude_backoffice_departments=True,
                 limit=100,
+                offset=0,
                 db=object(),
                 current_user=object(),
             )
@@ -327,6 +338,106 @@ class SalesTicketFilterTests(unittest.TestCase):
         self.assertIn("'香奈儿活动补发'", captured["sql"])
         self.assertIn("coalesce(s.sglwmid, '')", captured["sql"])
         self.assertIn("cg.department_name", captured["sql"])
+
+    def test_group_tickets_keeps_indexed_ticket_keys_for_enrichment_joins(self):
+        captured = {}
+
+        def fake_fetch(_db, sql, params):
+            captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
+            return []
+
+        with (
+            patch.object(sales_router, "require_permission", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "load_business_scope", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "_configure_sales_summary_timeout", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
+            patch.object(
+                sales_router,
+                "_table_exists",
+                lambda _db, table: table in {"manaframe", "order_point", "salehead", "salepay"},
+            ),
+            patch.object(
+                sales_router,
+                "_column_exists",
+                lambda _db, table, column: (table, column)
+                in {("order_point", "point_type"), ("salehead", "djlb"), ("salehead", "rqsj")},
+            ),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch),
+        ):
+            group_tickets(
+                "6010101030",
+                start_date="2025-10-29",
+                end_date="2025-12-01",
+                goods_code=None,
+                barcode=None,
+                supplier_code=None,
+                exclude_rental=False,
+                exclude_backoffice_departments=False,
+                limit=100,
+                offset=200,
+                db=object(),
+                current_user=object(),
+            )
+
+        sql = captured["sql"]
+        self.assertIn("s.sglbillno as billno", sql)
+        self.assertIn("p.billno in (select billno from ticket_rows)", sql)
+        self.assertIn("left join salehead sh on sh.billno = tr.billno", sql)
+        self.assertIn("order_id in (select billno::text from ticket_rows)", sql)
+        self.assertIn("trim(both from tr.billno::text) as billno", sql)
+        self.assertIn("limit :limit offset :offset", sql)
+        self.assertEqual(captured["params"]["limit"], 100)
+        self.assertEqual(captured["params"]["offset"], 200)
+        self.assertNotIn("trim(both from p.billno::text)", sql)
+        self.assertNotIn("sh.billno::text", sql)
+
+    def test_group_ticket_summary_counts_all_tickets_without_page_limit(self):
+        captured = {}
+
+        def fake_fetch(_db, sql, params):
+            captured["sql"] = " ".join(sql.lower().split())
+            captured["params"] = params
+            return [
+                {
+                    "group_code": "6010101030",
+                    "group_name": "GIVENCHY紀梵希厅",
+                    "department_code": "6010114",
+                    "department_name": "中心一部(化妆)",
+                    "store_id": "601",
+                    "ticket_count": 201,
+                    "priced_sales_amount": 268414,
+                    "effective_sales": 226925.4625,
+                    "net_profit": 16662.1925,
+                }
+            ]
+
+        with (
+            patch.object(sales_router, "require_permission", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "load_business_scope", lambda *_args, **_kwargs: object()),
+            patch.object(sales_router, "_configure_sales_summary_timeout", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "_salegoodslist_table", lambda _db: "salegoodslist"),
+            patch.object(sales_router, "_table_exists", lambda _db, table: table in {"manaframe", "stores"}),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch),
+            patch.object(sales_router, "_row_allowed", lambda *_args, **_kwargs: True),
+        ):
+            result = sales_router.group_tickets_summary(
+                "6010101030",
+                start_date="2025-10-29",
+                end_date="2025-12-01",
+                goods_code=None,
+                barcode=None,
+                supplier_code=None,
+                exclude_rental=False,
+                exclude_backoffice_departments=False,
+                db=object(),
+                current_user=object(),
+            )
+
+        self.assertEqual(result["ticket_count"], 201)
+        self.assertNotIn("limit", captured["sql"])
+        self.assertNotIn("offset", captured["sql"])
+        self.assertEqual(captured["params"]["group_code"], "6010101030")
 
     def test_ticket_detail_falls_back_to_goodsbase_name(self):
         def fake_table_exists(_db, table_name):
@@ -416,3 +527,29 @@ class SalesTicketFilterTests(unittest.TestCase):
         self.assertTrue(payment_queries)
         self.assertIn("left join paymode pm", payment_queries[0])
         self.assertIn("coalesce(nullif(pm.pmname, ''), nullif(p.payname, ''), p.payname) as payname", payment_queries[0])
+
+    def test_ticket_detail_keeps_numeric_billno_indexable(self):
+        captured_queries = []
+
+        def fake_fetch_mappings(_db, sql, params):
+            captured_queries.append((" ".join(sql.lower().split()), params))
+            return []
+
+        with (
+            patch.object(sales_router, "require_permission", lambda *_args, **_kwargs: None),
+            patch.object(sales_router, "load_business_scope", lambda *_args, **_kwargs: None),
+            patch.object(
+                sales_router,
+                "_table_exists",
+                lambda _db, table_name: table_name in {"salehead", "salegoods", "salepay"},
+            ),
+            patch.object(sales_router, "_fetch_mappings", fake_fetch_mappings),
+        ):
+            ticket_detail("13346167", db=object(), current_user=object())
+
+        bill_queries = [(sql, params) for sql, params in captured_queries if ":billno" in sql]
+        self.assertGreaterEqual(len(bill_queries), 4)
+        for sql, params in bill_queries:
+            self.assertNotIn("billno::varchar", sql)
+            self.assertRegex(sql, r"(?:g\.|p\.)?billno = :billno")
+            self.assertEqual(params["billno"], Decimal("13346167"))

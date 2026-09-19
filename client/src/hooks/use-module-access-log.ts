@@ -12,6 +12,7 @@ type ModuleAccessLogOptions = {
   moduleName: string;
   enabled?: boolean;
   clientType?: "mobile" | "desktop";
+  logEnter?: boolean;
   initialQueryConditions?: ModuleQueryConditions;
 };
 
@@ -20,6 +21,7 @@ export function useModuleAccessLog({
   moduleName,
   enabled = true,
   clientType,
+  logEnter = true,
   initialQueryConditions,
 }: ModuleAccessLogOptions) {
   const loggedRef = useRef(false);
@@ -41,9 +43,9 @@ export function useModuleAccessLog({
   useEffect(() => {
     if (!enabled || loggedRef.current) return;
     loggedRef.current = true;
-    postLog("enter");
+    if (logEnter) postLog("enter");
     if (initialQueryConditions) postLog("query", initialQueryConditions);
-  }, [enabled, initialQueryConditions, postLog]);
+  }, [enabled, initialQueryConditions, logEnter, postLog]);
 
   const recordQuery = useCallback((queryConditions: ModuleQueryConditions) => {
     postLog("query", queryConditions);

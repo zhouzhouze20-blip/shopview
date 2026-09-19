@@ -18,8 +18,16 @@ export function isWeComClient(userAgent?: string): boolean {
   return WECOM_USER_AGENT.test(value);
 }
 
-export function shouldUseMobileHome(pathname: string, signals: MobileClientSignals = {}): boolean {
+export function shouldUseMobileHome(
+  pathname: string,
+  signals: MobileClientSignals = {},
+  search: string = typeof window === "undefined" ? "" : window.location.search,
+): boolean {
   if (pathname === "/mobile") return true;
+  // A linked desktop module must not be replaced by the mobile home on narrow panels.
+  if ((pathname === "/" || pathname === "/dashboard") && new URLSearchParams(search).get("view")?.trim()) {
+    return false;
+  }
   return isMobileClient(signals) && (pathname === "/" || pathname === "/dashboard");
 }
 

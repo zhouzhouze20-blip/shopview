@@ -279,6 +279,22 @@ def build_monthly_followup_payload(
     }
 
 
+def _load_active_store_codes(db: Any) -> list[str]:
+    rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT TRIM(BOTH FROM store_code) AS store_code
+            FROM stores
+            WHERE is_active IS TRUE
+              AND NULLIF(TRIM(BOTH FROM store_code), '') IS NOT NULL
+            ORDER BY store_code
+            """
+        ),
+        {},
+    ).mappings().all()
+    return [str(row["store_code"]) for row in rows]
+
+
 def load_monthly_followup_report(
     db: Any,
     scope_filter_sql: TrustedScopeSql,
@@ -292,22 +308,30 @@ def load_monthly_followup_report(
 ) -> dict[str, Any]:
     start_date, end_date = financial_year_period(financial_year)
     prior_start_date, prior_end_date = financial_year_period(financial_year - 1)
-    sql, params = build_daily_followup_query(
-        start_date,
-        end_date,
-        prior_start_date,
-        prior_end_date,
-        dimension,
-        scope_filter_sql,
-        scope_params,
-        selected_store,
-        selected_department,
-    )
     db.execute(
         text(f"SET LOCAL statement_timeout = '{OD0002_QUERY_TIMEOUT_SECONDS}s'"),
         {},
     )
-    rows = db.execute(text(sql), params).mappings().all()
+    query_store_codes = (
+        [selected_store]
+        if selected_store is not None
+        else _load_active_store_codes(db)
+    )
+    rows: list[Mapping[str, Any]] = []
+    for query_store_code in query_store_codes:
+        sql, params = build_daily_followup_query(
+            start_date,
+            end_date,
+            prior_start_date,
+            prior_end_date,
+            dimension,
+            scope_filter_sql,
+            scope_params,
+            query_store_code,
+            selected_department,
+            operation_method_source="sales",
+        )
+        rows.extend(db.execute(text(sql), params).mappings().all())
     return build_monthly_followup_payload(
         rows,
         financial_year=financial_year,

@@ -80,9 +80,14 @@ def build_daily_followup_query(
     scope_params: Mapping[str, Any],
     selected_store: str | None = None,
     selected_department: str | None = None,
+    operation_method_source: Literal["contract", "sales"] = "contract",
 ) -> tuple[str, dict[str, Any]]:
     if dimension not in DAILY_FOLLOWUP_DIMENSIONS:
         raise ValueError(f"unsupported daily follow-up dimension: {dimension}")
+    if operation_method_source not in {"contract", "sales"}:
+        raise ValueError(
+            f"unsupported operation method source: {operation_method_source}"
+        )
 
     scope_sql = _trusted_scope_value(scope_filter_sql)
     params = dict(scope_params)
@@ -95,10 +100,10 @@ def build_daily_followup_query(
             "excluded_department_codes": sorted(EXCLUDED_DEPARTMENT_CODES),
         }
     )
-    selected_store_sql = ""
+    selected_store_sales_sql = ""
     if selected_store:
         params["selected_store"] = selected_store.strip()
-        selected_store_sql = " AND s.sglmarket::text = :selected_store"
+        selected_store_sales_sql = " AND s.sglmarket::text = :selected_store"
     selected_department_sql = ""
     if selected_department and selected_department.strip():
         params["selected_department"] = selected_department.strip()
@@ -136,6 +141,34 @@ LEFT JOIN codebrand cb
         brand_join_sql = ""
         special_sale_filter_sql = ""
 
+    if operation_method_source == "sales":
+        filtered_operation_method_select_sql = "    s.sglwmid,\n"
+        filtered_operation_method_group_sql = ",\n    s.sglwmid"
+        operation_method_code_sql = "TRIM(BOTH FROM COALESCE(s.sglwmid, ''))"
+        contract_join_sql = ""
+    else:
+        filtered_operation_method_select_sql = ""
+        filtered_operation_method_group_sql = ""
+        operation_method_code_sql = "TRIM(BOTH FROM COALESCE(contract.cmwmid, ''))"
+        contract_join_sql = """
+LEFT JOIN LATERAL (
+  SELECT cm.cmwmid
+  FROM contmanaframe cmf
+  JOIN contmain cm
+    ON UPPER(TRIM(COALESCE(cm.cmcontno, '')))
+     = UPPER(TRIM(COALESCE(cmf.cmfcontno, '')))
+  WHERE UPPER(TRIM(COALESCE(cmf.cmfmfid, '')))
+      = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+    AND TRIM(BOTH FROM COALESCE(cmf.cmfmarket, '')) = s.sglmarket::text
+    AND UPPER(TRIM(COALESCE(cm.cmsupid, '')))
+      = UPPER(TRIM(COALESCE(s.sglsupid, '')))
+    AND TRIM(BOTH FROM COALESCE(cm.cmjsmkt, '')) = s.sglmarket::text
+    AND s.sglhsrq::date BETWEEN cm.cmeffdate::date AND cm.cmlapdate::date
+  ORDER BY cm.cmeffdate DESC, cm.cmcontno DESC
+  LIMIT 1
+) contract ON TRUE
+"""
+
     sql = f"""
 WITH filtered_sales AS (
   SELECT
@@ -144,7 +177,7 @@ WITH filtered_sales AS (
     s.sglmfid,
     s.sglsupid,
     s.sglppcode,
-    SUM(COALESCE(s.sglxssr, 0)) AS sglxssr,
+{filtered_operation_method_select_sql}    SUM(COALESCE(s.sglxssr, 0)) AS sglxssr,
     SUM(COALESCE(s.sgln2, 0)) AS sgln2
   FROM salegoodslist s
   WHERE (
@@ -152,12 +185,13 @@ WITH filtered_sales AS (
        OR s.sglhsrq BETWEEN :prior_start_date AND :prior_end_date
   )
     AND (s.sglwmid IS NULL OR s.sglwmid <> '5')
+    {selected_store_sales_sql}
   GROUP BY
     s.sglhsrq::date,
     s.sglmarket,
     s.sglmfid,
     s.sglsupid,
-    s.sglppcode
+    s.sglppcode{filtered_operation_method_group_sql}
 ),
 area_category_dedup AS (
   SELECT DISTINCT ON (UPPER(TRIM(BOTH FROM category_code)))
@@ -178,7 +212,7 @@ SELECT
   COALESCE(NULLIF(TRIM(BOTH FROM ac.area_name), ''), '未匹配') AS area_name,
   COALESCE(NULLIF(TRIM(BOTH FROM ac.category_name), ''), '未匹配') AS category_name,
   TRIM(BOTH FROM COALESCE(mf.mflc, '')) AS floor_code,
-  TRIM(BOTH FROM COALESCE(contract.cmwmid, '')) AS operation_method_code,
+  {operation_method_code_sql} AS operation_method_code,
   COALESCE(kb.is_key_brand, FALSE) AS is_key_brand,
   COALESCE(NULLIF(TRIM(BOTH FROM cba.manager_name), ''), '') AS manager_name,
   {dimension_code_sql} AS dimension_code,
@@ -192,22 +226,7 @@ JOIN manaframe mf
   ON UPPER(TRIM(COALESCE(s.sglmfid, ''))) = UPPER(TRIM(COALESCE(mf.mfcode, '')))
 LEFT JOIN manaframe dept
   ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
-LEFT JOIN LATERAL (
-  SELECT cm.cmwmid
-  FROM contmanaframe cmf
-  JOIN contmain cm
-    ON UPPER(TRIM(COALESCE(cm.cmcontno, '')))
-     = UPPER(TRIM(COALESCE(cmf.cmfcontno, '')))
-  WHERE UPPER(TRIM(COALESCE(cmf.cmfmfid, '')))
-      = UPPER(TRIM(COALESCE(s.sglmfid, '')))
-    AND TRIM(BOTH FROM COALESCE(cmf.cmfmarket, '')) = s.sglmarket::text
-    AND UPPER(TRIM(COALESCE(cm.cmsupid, '')))
-      = UPPER(TRIM(COALESCE(s.sglsupid, '')))
-    AND TRIM(BOTH FROM COALESCE(cm.cmjsmkt, '')) = s.sglmarket::text
-    AND s.sglhsrq::date BETWEEN cm.cmeffdate::date AND cm.cmlapdate::date
-  ORDER BY cm.cmeffdate DESC, cm.cmcontno DESC
-  LIMIT 1
-) contract ON TRUE
+{contract_join_sql}
 LEFT JOIN area_category_dedup ac
   ON UPPER(TRIM(COALESCE(mf.mfchr1, ''))) = ac.normalized_category_code
 {brand_join_sql}
@@ -226,7 +245,6 @@ WHERE TRIM(BOTH FROM COALESCE(mf.mflc, '')) <> '00'
   AND TRIM(BOTH FROM COALESCE(ac.area_name, '')) <> '其他类别区域'
   {special_sale_filter_sql}
   {scope_sql}
-  {selected_store_sql}
   {selected_department_sql}
 GROUP BY
   s.sglhsrq::date,
@@ -237,7 +255,7 @@ GROUP BY
   COALESCE(NULLIF(TRIM(BOTH FROM ac.area_name), ''), '未匹配'),
   COALESCE(NULLIF(TRIM(BOTH FROM ac.category_name), ''), '未匹配'),
   TRIM(BOTH FROM COALESCE(mf.mflc, '')),
-  TRIM(BOTH FROM COALESCE(contract.cmwmid, '')),
+  {operation_method_code_sql},
   COALESCE(kb.is_key_brand, FALSE),
   COALESCE(NULLIF(TRIM(BOTH FROM cba.manager_name), ''), ''),
   {dimension_code_sql},

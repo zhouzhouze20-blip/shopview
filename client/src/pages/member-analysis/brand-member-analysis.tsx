@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
   BarChart3,
+  Building2,
   Check,
   ChevronDown,
+  ChevronRight,
   Download,
   Presentation,
   RefreshCw,
@@ -37,13 +39,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore } from "@/contexts/StoreContext";
 import { apiGet, apiPost } from "@/lib/api";
 import {
   BrandMemberFilters,
+  BrandMemberCrossShoppingReport,
+  BrandMemberCrossShoppingSort,
   BrandMemberGroupOption,
+  BrandMemberInflowSourcesReport,
   BrandMemberReport,
   brandMemberAiFallbackMessage,
+  brandMemberCrossShoppingRequest,
   brandMemberRequest,
   buildAiSnapshot,
   defaultBrandMemberDates,
@@ -54,6 +61,7 @@ import {
   formatBrandShare,
   previousPeriod,
   priorYearPeriod,
+  sortBrandMemberCrossShoppingRows,
 } from "@/lib/brand-member-analysis";
 import { cn } from "@/lib/utils";
 
@@ -139,6 +147,10 @@ export default function BrandMemberAnalysisPage() {
   });
   const [submitted, setSubmitted] = useState<BrandMemberFilters | null>(null);
   const [queryVersion, setQueryVersion] = useState(0);
+  const [activeAnalysisTab, setActiveAnalysisTab] = useState("overview");
+  const [crossShoppingSort, setCrossShoppingSort] = useState<BrandMemberCrossShoppingSort>("sales_revenue");
+  const [selectedCrossDepartmentCode, setSelectedCrossDepartmentCode] = useState("");
+  const [inflowSourcesRequested, setInflowSourcesRequested] = useState(false);
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [targetSearch, setTargetSearch] = useState("");
   const [competitorPickerOpen, setCompetitorPickerOpen] = useState(false);
@@ -163,8 +175,30 @@ export default function BrandMemberAnalysisPage() {
   const reportQuery = useQuery<BrandMemberReport>({
     queryKey: ["brand-member-report", submitted, queryVersion],
     queryFn: () => apiPost("/api/sales/brand-member-analysis/report", brandMemberRequest(submitted!)),
-    enabled: Boolean(submitted),
-    staleTime: 0,
+    enabled: Boolean(submitted) && activeAnalysisTab === "overview",
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const crossShoppingQuery = useQuery<BrandMemberCrossShoppingReport>({
+    queryKey: ["brand-member-cross-shopping", submitted, queryVersion],
+    queryFn: () => apiPost(
+      "/api/sales/brand-member-analysis/cross-shopping",
+      brandMemberCrossShoppingRequest(submitted!),
+    ),
+    enabled: Boolean(submitted) && activeAnalysisTab === "cross-shopping",
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const inflowSourcesQuery = useQuery<BrandMemberInflowSourcesReport>({
+    queryKey: ["brand-member-inflow-sources", submitted, queryVersion],
+    queryFn: () => apiPost(
+      "/api/sales/brand-member-analysis/inflow-sources",
+      brandMemberCrossShoppingRequest(submitted!),
+    ),
+    enabled: Boolean(submitted) && activeAnalysisTab === "overview" && inflowSourcesRequested,
+    staleTime: Infinity,
     retry: false,
   });
 
@@ -228,24 +262,40 @@ export default function BrandMemberAnalysisPage() {
 
   const submitQuery = () => {
     setExportError(null);
+    setInflowSourcesRequested(false);
     setSubmitted({ ...draft });
     setQueryVersion((version) => version + 1);
   };
 
   const report = reportQuery.data;
+  const crossShopping = crossShoppingQuery.data;
+  const inflowSources = inflowSourcesQuery.data?.inflow_sources || [];
   const current = report?.target.current;
   const prior = report?.target.prior;
   const selectedStoreName = stores.find((store) => store.storeCode === report?.scope.store_code)?.storeName
     || report?.scope.store_code
     || "所选门店";
+  const reportForExport = useMemo(() => {
+    if (!report || !inflowSourcesQuery.data) return report;
+    return {
+      ...report,
+      target: {
+        ...report.target,
+        current: {
+          ...report.target.current,
+          inflow_sources: inflowSourcesQuery.data.inflow_sources,
+        },
+      },
+    };
+  }, [inflowSourcesQuery.data, report]);
 
   const handleSupplierExport = async () => {
-    if (!report || isExporting) return;
+    if (!reportForExport || isExporting) return;
     setExportError(null);
     setIsExporting(true);
     try {
       const { exportSupplierWorkbook } = await import("@/lib/export-brand-member-supplier");
-      exportSupplierWorkbook(report, selectedStoreName, aiQuery.data?.conclusion);
+      exportSupplierWorkbook(reportForExport, selectedStoreName, aiQuery.data?.conclusion);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : "供应商沟通版生成失败，请稍后重试。");
     } finally {
@@ -254,12 +304,12 @@ export default function BrandMemberAnalysisPage() {
   };
 
   const handlePptExport = async () => {
-    if (!report || isExportingPpt) return;
+    if (!reportForExport || isExportingPpt) return;
     setExportError(null);
     setIsExportingPpt(true);
     try {
       const { exportSupplierPresentation } = await import("@/lib/export-brand-member-ppt");
-      await exportSupplierPresentation(report, selectedStoreName, aiQuery.data?.conclusion);
+      await exportSupplierPresentation(reportForExport, selectedStoreName, aiQuery.data?.conclusion);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : "PPT生成失败，请稍后重试。");
     } finally {
@@ -275,6 +325,20 @@ export default function BrandMemberAnalysisPage() {
         color: SEGMENT_COLORS[row.code],
       }))
     : [];
+  const sortedCrossDepartments = useMemo(
+    () => sortBrandMemberCrossShoppingRows(crossShopping?.departments || [], crossShoppingSort),
+    [crossShopping?.departments, crossShoppingSort],
+  );
+  const selectedCrossDepartment = sortedCrossDepartments.find(
+    (department) => department.department_code === selectedCrossDepartmentCode,
+  ) || sortedCrossDepartments[0];
+  const sortedCrossGroups = useMemo(
+    () => sortBrandMemberCrossShoppingRows(selectedCrossDepartment?.groups || [], crossShoppingSort),
+    [crossShoppingSort, selectedCrossDepartment?.groups],
+  );
+  const activeQueryFetching = activeAnalysisTab === "overview"
+    ? reportQuery.isFetching
+    : crossShoppingQuery.isFetching;
 
   return (
     <div className="min-h-full bg-slate-50/70 p-4 md:p-6">
@@ -286,9 +350,9 @@ export default function BrandMemberAnalysisPage() {
               面向品牌供应商的经营沟通视图
             </div>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 md:text-3xl">品牌会员经营分析</h1>
-            <p className="mt-2 text-sm text-slate-500">从经营结果、会员流入、老客回购和竞品表现四个方向讲清品牌故事。</p>
+            <p className="mt-2 text-sm text-slate-500">从经营结果、会员流入、跨部门消费、老客回购和竞品表现五个方向讲清品牌故事。</p>
           </div>
-          {report ? (
+          {report && activeAnalysisTab === "overview" ? (
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" disabled={isExporting || isExportingPpt} onClick={() => void handleSupplierExport()}>
@@ -447,8 +511,8 @@ export default function BrandMemberAnalysisPage() {
               </div>
 
               <div className="flex items-end">
-                <Button className="w-full bg-slate-950 text-white hover:bg-slate-800 hover:text-white disabled:bg-slate-500 disabled:text-white" disabled={!canQuery || reportQuery.isFetching} onClick={submitQuery}>
-                  {reportQuery.isFetching ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                <Button className="w-full bg-slate-950 text-white hover:bg-slate-800 hover:text-white disabled:bg-slate-500 disabled:text-white" disabled={!canQuery || activeQueryFetching} onClick={submitQuery}>
+                  {activeQueryFetching ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
                   查询分析
                 </Button>
               </div>
@@ -485,6 +549,13 @@ export default function BrandMemberAnalysisPage() {
           </CardContent>
         </Card>
 
+        <Tabs value={activeAnalysisTab} onValueChange={setActiveAnalysisTab}>
+          <TabsList className="grid h-auto w-full max-w-2xl grid-cols-2 rounded-xl border border-slate-200 bg-slate-100 p-1">
+            <TabsTrigger className="h-11 rounded-lg" value="overview">经营总览</TabsTrigger>
+            <TabsTrigger className="h-11 rounded-lg" value="cross-shopping">跨部门 / 跨品牌消费</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="mt-5 space-y-5">
         {reportQuery.error ? (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -736,13 +807,43 @@ export default function BrandMemberAnalysisPage() {
 
             <div className="grid gap-5 xl:grid-cols-2">
               <Card className="border-slate-200 shadow-sm">
-                <CardHeader><CardTitle className="text-base">内部流入来源</CardTitle></CardHeader>
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="text-base">内部流入来源</CardTitle>
+                    <Badge variant="outline" className="text-slate-500">按需加载</Badge>
+                  </div>
+                  <div className="text-xs leading-5 text-slate-500">
+                    需要追溯开始日期前的全部历史，已从主查询拆开，避免拖慢整页结果。
+                  </div>
+                </CardHeader>
                 <CardContent>
-                  {current.inflow_sources.length ? (
+                  {!inflowSourcesRequested ? (
+                    <div className="flex min-h-40 flex-col items-center justify-center text-center">
+                      <div className="text-sm text-slate-500">点击后单独计算每位内部流入会员的主要历史来源。</div>
+                      <Button type="button" variant="outline" className="mt-4" onClick={() => setInflowSourcesRequested(true)}>
+                        查询内部流入来源
+                      </Button>
+                    </div>
+                  ) : inflowSourcesQuery.isFetching ? (
+                    <div className="flex min-h-40 items-center justify-center text-sm text-slate-500">
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />正在追溯历史来源，此项可能需要较长时间…
+                    </div>
+                  ) : inflowSourcesQuery.error ? (
+                    <div className="flex min-h-40 flex-col items-center justify-center text-center">
+                      <div className="text-sm text-rose-600">
+                        {inflowSourcesQuery.error instanceof Error
+                          ? inflowSourcesQuery.error.message
+                          : "内部流入来源查询失败。"}
+                      </div>
+                      <Button type="button" variant="outline" className="mt-4" onClick={() => void inflowSourcesQuery.refetch()}>
+                        重新查询
+                      </Button>
+                    </div>
+                  ) : inflowSources.length ? (
                     <Table>
                       <TableHeader><TableRow><TableHead>类型</TableHead><TableHead>来源柜组</TableHead><TableHead>部门</TableHead><TableHead className="text-right">会员数</TableHead></TableRow></TableHeader>
                       <TableBody>
-                        {current.inflow_sources.map((row) => (
+                        {inflowSources.map((row) => (
                           <TableRow key={`${row.segment_code}-${row.group_code}`}>
                             <TableCell><Badge variant="outline">{row.segment_code === "same_department_inflow" ? "同部门" : "跨部门"}</Badge></TableCell>
                             <TableCell><div className="font-medium text-slate-800">{row.group_name}</div><div className="text-xs text-slate-400">{row.group_code}</div></TableCell>
@@ -800,6 +901,225 @@ export default function BrandMemberAnalysisPage() {
             </Card>
           </>
         ) : null}
+          </TabsContent>
+
+          <TabsContent value="cross-shopping" className="mt-5 space-y-5">
+            {crossShoppingQuery.error ? (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>跨部门消费查询失败</AlertTitle>
+                <AlertDescription>
+                  {crossShoppingQuery.error instanceof Error
+                    ? crossShoppingQuery.error.message
+                    : "请检查查询条件后重试。"}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {crossShoppingQuery.isFetching && !crossShopping ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-32 rounded-xl" />)}
+                <Skeleton className="h-96 rounded-xl md:col-span-3" />
+              </div>
+            ) : null}
+
+            {!submitted && !crossShopping ? (
+              <Card className="border-dashed border-slate-300 bg-white/60">
+                <CardContent className="flex min-h-64 flex-col items-center justify-center p-8 text-center">
+                  <div className="rounded-full bg-violet-50 p-4 text-violet-700"><Building2 className="h-8 w-8" /></div>
+                  <div className="mt-4 text-lg font-semibold text-slate-900">查询目标品牌会员的跨部门 / 本部门跨品牌消费</div>
+                  <div className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                    选择门店、目标柜组和本期时间后查询。系统会先按部门汇总，点击部门可查看其柜组排行。
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {crossShopping ? (
+              <>
+                <Card className="border-violet-200 bg-gradient-to-r from-violet-50 to-white shadow-sm">
+                  <CardContent className="flex flex-col justify-between gap-4 p-5 md:flex-row md:items-center">
+                    <div>
+                      <div className="text-xs font-medium text-violet-700">分析会员母集</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-950">
+                        {crossShopping.target.group_name}
+                        <span className="ml-2 text-sm font-normal text-slate-500">{crossShopping.target.group_code}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {crossShopping.period.start_date} 至 {crossShopping.period.end_date} · 含本部门跨品牌及跨部门消费，排除目标柜组自身
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">排序口径</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={crossShoppingSort === "sales_revenue" ? "default" : "outline"}
+                        onClick={() => setCrossShoppingSort("sales_revenue")}
+                      >
+                        按消费金额
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={crossShoppingSort === "buyer_count" ? "default" : "outline"}
+                        onClick={() => setCrossShoppingSort("buyer_count")}
+                      >
+                        按人数
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardContent className="p-5">
+                      <div className="text-sm text-slate-500">目标品牌购买会员</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">
+                        {formatBrandNumber(crossShopping.target_member_count)} 人
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">本期目标柜组至少一笔正向购买</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardContent className="p-5">
+                      <div className="text-sm text-slate-500">跨部门消费会员</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">
+                        {formatBrandNumber(crossShopping.other_department_buyer_count)} 人
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">跨多个部门仍按会员去重</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardContent className="p-5">
+                      <div className="text-sm text-slate-500">跨部门消费金额</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">
+                        {formatBrandMoney(crossShopping.sales_revenue)}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">跨部门柜组销售收入正负数净额</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-violet-200 shadow-sm">
+                    <CardContent className="p-5">
+                      <div className="text-sm text-slate-500">本部门跨品牌消费会员</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">
+                        {formatBrandNumber(crossShopping.same_department_buyer_count)} 人
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">本部门其他柜组购买会员去重，与跨部门人数可能重叠</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-violet-200 shadow-sm">
+                    <CardContent className="p-5">
+                      <div className="text-sm text-slate-500">本部门跨品牌消费金额</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-950">
+                        {formatBrandMoney(crossShopping.same_department_sales_revenue)}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">本部门其他柜组销售收入正负数净额，排除目标柜组</div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {sortedCrossDepartments.length ? (
+                  <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+                    <Card className="border-slate-200 shadow-sm">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Building2 className="h-4 w-4 text-violet-700" />部门排行
+                        </CardTitle>
+                        <div className="text-xs text-slate-500">点击部门查看柜组明细；同一会员跨柜组消费时，部门人数只计一次。</div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-14">排名</TableHead>
+                                <TableHead>部门</TableHead>
+                                <TableHead className="text-right">消费人数</TableHead>
+                                <TableHead className="text-right">消费金额</TableHead>
+                                <TableHead className="w-8" />
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {sortedCrossDepartments.map((department, index) => {
+                                const selected = department.department_code === selectedCrossDepartment?.department_code;
+                                return (
+                                  <TableRow key={department.department_code} className={cn(selected && "bg-violet-50/70")}>
+                                    <TableCell className="font-medium text-slate-500">{index + 1}</TableCell>
+                                    <TableCell>
+                                      <button
+                                        type="button"
+                                        className="text-left font-medium text-slate-800 hover:text-violet-700 hover:underline"
+                                        onClick={() => setSelectedCrossDepartmentCode(department.department_code)}
+                                      >
+                                        {department.department_name}
+                                        {department.department_code === crossShopping.target.department_code ? "（本部门跨品牌）" : ""}
+                                        <span className="mt-0.5 block text-xs font-normal text-slate-400">{department.department_code}</span>
+                                      </button>
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium">{formatBrandNumber(department.buyer_count)}</TableCell>
+                                    <TableCell className="text-right font-semibold">{formatBrandMoney(department.sales_revenue)}</TableCell>
+                                    <TableCell><ChevronRight className={cn("h-4 w-4", selected ? "text-violet-700" : "text-slate-300")} /></TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-slate-200 shadow-sm">
+                      <CardHeader>
+                        <CardTitle className="text-base">{selectedCrossDepartment?.department_name} · 柜组排行</CardTitle>
+                        <div className="text-xs text-slate-500">人数在每个柜组内按会员去重，跨柜组人数不可直接相加。</div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-14">排名</TableHead>
+                                <TableHead>柜组 / 品牌</TableHead>
+                                <TableHead className="text-right">消费人数</TableHead>
+                                <TableHead className="text-right">消费金额</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {sortedCrossGroups.map((group, index) => (
+                                <TableRow key={group.group_code}>
+                                  <TableCell className="font-medium text-slate-500">{index + 1}</TableCell>
+                                  <TableCell>
+                                    <div className="font-medium text-slate-800">{group.group_name}</div>
+                                    <div className="text-xs text-slate-400">{group.group_code}</div>
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">{formatBrandNumber(group.buyer_count)}</TableCell>
+                                  <TableCell className="text-right font-semibold">{formatBrandMoney(group.sales_revenue)}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : (
+                  <Card className="border-dashed border-slate-300 bg-white/60">
+                    <CardContent className="flex min-h-56 flex-col items-center justify-center p-8 text-center">
+                      <Store className="h-8 w-8 text-slate-300" />
+                      <div className="mt-3 text-sm font-medium text-slate-700">本期没有关联消费记录</div>
+                      <div className="mt-1 text-xs text-slate-400">目标品牌购买会员未在本门店其他柜组发生正向购买。</div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
+                  统计口径：{crossShopping.definitions.buyer_count}；消费金额为{crossShopping.definitions.sales_revenue.replace("上述会员在对应部门或柜组的 ", "")}。
+                </div>
+              </>
+            ) : null}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

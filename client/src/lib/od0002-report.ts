@@ -85,6 +85,7 @@ export const OD0002_TABS: ReadonlyArray<{
 ];
 
 export const OD0002_HIERARCHY_COLUMNS = ["store", "department", "area", "category"] as const;
+export const OD0002_METRIC_GROUP_LABELS = ["销售收入", "毛利", "毛利率", "来客数", "客单"] as const;
 
 export function isOd0002DepartmentCategoryTab(tab: Od0002DimensionKey): boolean {
   return tab === "department_categories";

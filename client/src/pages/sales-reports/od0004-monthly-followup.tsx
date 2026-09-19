@@ -23,6 +23,7 @@ import {
 import {
   buildMonthlyFollowupParams,
   currentFinancialYear,
+  isMonthlyFollowupQueryReady,
   type MonthlyFollowupDimension,
   type MonthlyFollowupMetric,
   type MonthlyFollowupResponse,
@@ -172,9 +173,16 @@ export default function Od0004MonthlyFollowupPage() {
     () => buildMonthlyFollowupParams(submitted).toString(),
     [submitted],
   );
+  const reportQueryEnabled = isMonthlyFollowupQueryReady({
+    selectedGlobalStoreId: selectedStoreId,
+    resolvedGlobalStoreCode: globalStoreCode,
+    submittedStoreId: submitted.storeId,
+    hasManualFilters: draftDirty,
+  });
   const reportQuery = useQuery<MonthlyFollowupResponse>({
     queryKey: ["/api/sales/reports/od0004", submitted],
     queryFn: () => apiGet(`/api/sales/reports/od0004?${queryString}`),
+    enabled: reportQueryEnabled,
   });
   const report = reportQuery.data;
   const filteredRows = useMemo(() => filterRows(report, keyword), [keyword, report]);

@@ -15,6 +15,8 @@ from routers.authz import DataScope, load_business_scope, require_permission, sc
 from services.brand_member_analysis import (
     build_rule_conclusion,
     list_group_options,
+    load_brand_member_cross_shopping,
+    load_brand_member_inflow_sources,
     load_group_meta,
     load_brand_member_analysis,
     normalize_ai_conclusion_terms,
@@ -61,6 +63,21 @@ class BrandMemberAnalysisRequest(BaseModel):
 
 class BrandMemberConclusionRequest(BaseModel):
     snapshot: dict[str, Any]
+
+
+class BrandMemberCrossShoppingRequest(BaseModel):
+    store_code: str = Field(..., min_length=1, max_length=20)
+    target_group_code: str = Field(..., min_length=1, max_length=20)
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "BrandMemberCrossShoppingRequest":
+        if self.end_date < self.start_date:
+            raise ValueError("结束日期不能早于开始日期")
+        self.store_code = self.store_code.strip()
+        self.target_group_code = self.target_group_code.strip().upper()
+        return self
 
 
 def _target_group_allowed(scope: DataScope, group: dict[str, Any]) -> bool:
@@ -158,6 +175,66 @@ async def brand_member_report(
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="品牌会员分析查询超时，请缩短日期范围后重试。",
+            ) from exc
+        raise
+
+
+@router.post("/cross-shopping")
+async def brand_member_cross_shopping(
+    request: BrandMemberCrossShoppingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_permission(db, current_user, BRAND_MEMBER_ANALYSIS_PERMISSION)
+    target = load_group_meta(db, request.store_code, request.target_group_code)
+    if target is not None:
+        scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+        _require_target_group_scope(scope, target)
+    try:
+        return load_brand_member_cross_shopping(
+            db,
+            store_code=request.store_code,
+            target_group_code=request.target_group_code,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except OperationalError as exc:
+        if getattr(exc.orig, "pgcode", None) == "57014":
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="跨部门消费查询超时，请缩短日期范围后重试。",
+            ) from exc
+        raise
+
+
+@router.post("/inflow-sources")
+async def brand_member_inflow_sources(
+    request: BrandMemberCrossShoppingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_permission(db, current_user, BRAND_MEMBER_ANALYSIS_PERMISSION)
+    target = load_group_meta(db, request.store_code, request.target_group_code)
+    if target is not None:
+        scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+        _require_target_group_scope(scope, target)
+    try:
+        return load_brand_member_inflow_sources(
+            db,
+            store_code=request.store_code,
+            target_group_code=request.target_group_code,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except OperationalError as exc:
+        if getattr(exc.orig, "pgcode", None) == "57014":
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="内部流入来源查询超时，请缩短日期范围后重试。",
             ) from exc
         raise
 

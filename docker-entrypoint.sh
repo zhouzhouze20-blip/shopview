@@ -8,7 +8,7 @@ export PYTHONPATH="${app_root}/python_app:${app_root}:${PYTHONPATH:-}"
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   echo "Applying database migrations..."
   migration_attempt=1
-  migration_max_attempts="${MIGRATION_MAX_ATTEMPTS:-12}"
+  migration_max_attempts="${MIGRATION_MAX_ATTEMPTS:-60}"
   migration_retry_delay="${MIGRATION_RETRY_DELAY_SECONDS:-5}"
 
   while :; do
@@ -23,7 +23,7 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
       printf '%s\n' "$migration_output" >&2
 
       if ! printf '%s\n' "$migration_output" | grep -Eqi \
-        'too many clients|could not connect to server|connection refused|connection timed out|timeout expired'; then
+        'too many clients|could not connect to server|connection refused|connection timed out|timeout expired|database system is not yet accepting connections|database system is starting up|consistent recovery state.*not.*reached|cannot connect now'; then
         echo "Database migration failed with a non-retryable error." >&2
         exit "$migration_status"
       fi

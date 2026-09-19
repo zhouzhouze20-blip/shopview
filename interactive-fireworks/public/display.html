@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>烟花祝福互动大屏</title>
+  <link rel="stylesheet" href="/shared.css" />
+  <link rel="stylesheet" href="/display.css" />
+</head>
+<body class="display-page">
+  <canvas id="fireworks" aria-hidden="true"></canvas>
+  <canvas id="fireworks3d" aria-hidden="true" hidden></canvas>
+  <div class="aurora aurora-one"></div>
+  <div class="aurora aurora-two"></div>
+  <div class="stars" aria-hidden="true"></div>
+
+  <header class="display-header">
+    <div class="brand-mark"><span>✦</span> <b id="brandName">星河心愿</b></div>
+    <div class="event-title">
+      <p id="displayKicker" class="eyebrow">MAKE A WISH · LIGHT THE NIGHT</p>
+      <h1 id="displayTitle">让每一句祝福，都在星空绽放</h1>
+    </div>
+    <div class="live-pill"><span id="statusDot" class="status-dot"></span><span id="connectionLabel">连接中</span></div>
+  </header>
+
+  <main class="display-main">
+    <section class="qr-panel glass" aria-label="参与二维码">
+      <p class="qr-kicker">扫码参与</p>
+      <div class="qr-shell"><img id="qrCode" alt="手机扫码加入活动" /></div>
+      <p class="qr-tip">输入祝福 · 向上滑动发射</p>
+      <div class="room-line">活动场次 <strong id="roomLabel"></strong></div>
+    </section>
+
+    <section class="stage-copy" aria-live="polite">
+      <div id="idleCopy" class="idle-copy">
+        <span class="spark">✦</span>
+        <p id="idleTitle">此刻，星空正在等待你的心愿</p>
+        <small id="idleSubtitle">扫描左侧二维码，发射专属烟花</small>
+      </div>
+    </section>
+
+    <aside class="history-panel glass" aria-hidden="true" hidden>
+      <div class="history-heading">
+        <div>
+          <p class="eyebrow">WISH WALL</p>
+          <h2>星光祝福墙</h2>
+        </div>
+        <span id="wishCount">0 条</span>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </aside>
+  </main>
+
+  <footer class="display-footer">
+    <span><b id="participantCount">0</b> 位参与者在线</span>
+    <span class="divider"></span>
+    <span>大屏实时联动</span>
+    <span class="footer-stars">✦ · ✧ · ✦</span>
+  </footer>
+
+  <div class="city" aria-hidden="true">
+    <span class="building b1"></span><span class="building b2"></span><span class="building b3"></span>
+    <span class="building b4"></span><span class="building b5"></span><span class="building b6"></span>
+    <span class="building b7"></span><span class="building b8"></span><span class="building b9"></span>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/display.js"></script>
+</body>
+</html>

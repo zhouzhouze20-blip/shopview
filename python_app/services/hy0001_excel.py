@@ -148,10 +148,19 @@ def _write_manager_summary(workbook: Workbook, report: dict[str, Any]) -> None:
     sheet = workbook.create_sheet("主管汇总")
     sheet.sheet_view.showGridLines = False
     sheet.freeze_panes = "A2"
-    headers = ("品类主管", "重点品牌数", "本期黑金+黑钻销售", "同期黑金+黑钻销售", "同比")
+    headers = (
+        "品类主管",
+        "重点品牌数",
+        "本期黑金+黑钻人数",
+        "同期黑金+黑钻人数",
+        "人数同比",
+        "本期黑金+黑钻销售",
+        "同期黑金+黑钻销售",
+        "销售同比",
+    )
     for col, label in enumerate(headers, 1):
         _style_header(sheet.cell(1, col, label))
-    for col, width in enumerate((16, 14, 22, 22, 12), 1):
+    for col, width in enumerate((16, 14, 20, 20, 12, 22, 22, 12), 1):
         sheet.column_dimensions[get_column_letter(col)].width = width
 
     detail_last_row = max(4, 3 + len(report.get("rows", [])))
@@ -162,33 +171,53 @@ def _write_manager_summary(workbook: Workbook, report: dict[str, Any]) -> None:
         sheet.cell(
             row_index,
             3,
+            f'=SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$P$4:$P${detail_last_row})+'
+            f'SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$S$4:$S${detail_last_row})',
+        )
+        sheet.cell(
+            row_index,
+            4,
+            f'=SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$Q$4:$Q${detail_last_row})+'
+            f'SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$T$4:$T${detail_last_row})',
+        )
+        sheet.cell(row_index, 5, f'=IFERROR(C{row_index}/D{row_index}-1,"")')
+        sheet.cell(
+            row_index,
+            6,
             f'=SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$D$4:$D${detail_last_row})+'
             f'SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$G$4:$G${detail_last_row})',
         )
         sheet.cell(
             row_index,
-            4,
+            7,
             f'=SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$E$4:$E${detail_last_row})+'
             f'SUMIF(\'明细\'!$A$4:$A${detail_last_row},A{row_index},\'明细\'!$H$4:$H${detail_last_row})',
         )
-        sheet.cell(row_index, 5, f'=IFERROR(C{row_index}/D{row_index}-1,"")')
+        sheet.cell(row_index, 8, f'=IFERROR(F{row_index}/G{row_index}-1,"")')
         for cell in sheet[row_index]:
             cell.border = BORDER
             cell.font = Font(name="微软雅黑", size=9)
             cell.alignment = Alignment(horizontal="right" if cell.column > 1 else "left")
         sheet.cell(row_index, 2).number_format = "0"
-        sheet.cell(row_index, 3).number_format = "0.00"
-        sheet.cell(row_index, 4).number_format = "0.00"
+        sheet.cell(row_index, 3).number_format = "0"
+        sheet.cell(row_index, 4).number_format = "0"
         sheet.cell(row_index, 5).number_format = "0.00%"
-        color = _yoy_color(summary.get("premium_sales_yoy"))
-        if color is not None:
-            sheet.cell(row_index, 5).font = Font(
-                name="微软雅黑", size=9, color=color
-            )
+        sheet.cell(row_index, 6).number_format = "0.00"
+        sheet.cell(row_index, 7).number_format = "0.00"
+        sheet.cell(row_index, 8).number_format = "0.00%"
+        for column, value in (
+            (5, summary.get("premium_buyer_yoy")),
+            (8, summary.get("premium_sales_yoy")),
+        ):
+            color = _yoy_color(value)
+            if color is not None:
+                sheet.cell(row_index, column).font = Font(
+                    name="微软雅黑", size=9, color=color
+                )
     if report.get("manager_summary"):
-        _add_yoy_conditional_formatting(
-            sheet, f"E2:E{1 + len(report.get('manager_summary', []))}"
-        )
+        last_row = 1 + len(report.get("manager_summary", []))
+        for column in ("E", "H"):
+            _add_yoy_conditional_formatting(sheet, f"{column}2:{column}{last_row}")
 
 
 def _write_notes(workbook: Workbook, report: dict[str, Any]) -> None:
@@ -208,6 +237,7 @@ def _write_notes(workbook: Workbook, report: dict[str, Any]) -> None:
         ("会员等级", "取 salehead.custtype：01银星、02金星、03黑金、04黑钻。"),
         ("销售", "按等级内、期间内至少有一笔正向购买的会员汇总销售收入净额 sglxssr；退货净额保留。"),
         ("人数", "按会员等级和柜组对非空会员卡号去重，仅计期间内至少有一笔正向购买的会员。"),
+        ("主管人数汇总", "汇总主管名下各重点品牌的黑金、黑钻人数；同一会员跨重点品牌消费时按品牌分别计数。"),
         ("同比", "本期÷同期－1；同期为0时留空，不强行显示为100%；上升显示红色，下跌显示绿色。"),
         ("权限范围", report.get("scope_description") or "以当前账号销售数据权限为准。"),
     ]

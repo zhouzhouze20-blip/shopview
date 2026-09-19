@@ -40,6 +40,12 @@ const permissions = [
   { id: 31, permission_code: "sales.non_rental_monthly_revenue.view", permission_name: "查看非租赁品牌月度收益表", module_code: "sales", action_code: "non_rental_monthly_revenue_view" },
   { id: 32, permission_code: "sales.hy0001.view", permission_name: "查看HY0001重点品牌会员消费情况", module_code: "sales", action_code: "hy0001_view" },
   { id: 33, permission_code: "sales.od0005.view", permission_name: "查看OD0005微商城品牌销售统计", module_code: "sales", action_code: "od0005_view" },
+  { id: 34, permission_code: "activity_analysis.birthday_coupon.view", permission_name: "查看中心L/C券分析", module_code: "activity_analysis", action_code: "birthday_coupon_view" },
+  { id: 35, permission_code: "activity_analysis.star_diamond.view", permission_name: "查看中心星钻会员", module_code: "activity_analysis", action_code: "star_diamond_view" },
+  { id: 36, permission_code: "settlement.joint_payment_confirmation.view", permission_name: "查看联营付款单确认", module_code: "settlement", action_code: "joint_payment_confirmation_view" },
+  { id: 37, permission_code: "mobile.rental_receivables.view", permission_name: "查看手机端租赁应收未收", module_code: "mobile", action_code: "rental_receivables_view" },
+  { id: 38, permission_code: "mobile.coupon_followup.view", permission_name: "查看手机端C券会员跟进", module_code: "mobile", action_code: "coupon_followup_view" },
+  { id: 39, permission_code: "mobile.supplier_payments.view", permission_name: "查看手机端供应商付款单", module_code: "mobile", action_code: "supplier_payments_view" },
 ];
 
 function findNode(nodes, id) {
@@ -64,6 +70,7 @@ test("builds financial management as folder, submodule, action permission hierar
     "merchant-planning",
     "revenue-management",
     "joint-settlement",
+    "joint-payment-confirmation",
     "activity-settlement",
   ]);
   assert.ok(revenueManagement);
@@ -98,6 +105,7 @@ test("groups mobile modules as independent role permissions", () => {
   const mobileContracts = findNode(tree, "mobile-contracts");
   const mobileInventory = findNode(tree, "mobile-inventory");
   const mobileRevenue = findNode(tree, "mobile-revenue-dashboard");
+  const mobileSupplierPayments = findNode(tree, "mobile-supplier-payments");
 
   assert.ok(mobileWorkbench);
   assert.equal(mobileWorkbench.name, "手机端");
@@ -106,12 +114,16 @@ test("groups mobile modules as independent role permissions", () => {
     "mobile-contracts",
     "mobile-inventory",
     "mobile-revenue-dashboard",
+    "mobile-rental-receivables",
+    "mobile-coupon-followups",
+    "mobile-supplier-payments",
   ]);
-  assert.deepEqual(collectPermissionTreeIds(mobileWorkbench), [26, 27, 28, 29]);
+  assert.deepEqual(collectPermissionTreeIds(mobileWorkbench), [26, 27, 28, 29, 37, 38, 39]);
   assert.deepEqual((mobileSales.permissions ?? []).map((permission) => permission.permission_code), ["mobile.sales.view"]);
   assert.deepEqual((mobileContracts.permissions ?? []).map((permission) => permission.permission_code), ["mobile.contracts.view"]);
   assert.deepEqual((mobileInventory.permissions ?? []).map((permission) => permission.permission_code), ["mobile.inventory.view"]);
   assert.deepEqual((mobileRevenue.permissions ?? []).map((permission) => permission.permission_code), ["mobile.revenue_dashboard.view"]);
+  assert.deepEqual((mobileSupplierPayments.permissions ?? []).map((permission) => permission.permission_code), ["mobile.supplier_payments.view"]);
 });
 
 test("collects descendant permission ids and reports indeterminate folder state", () => {
@@ -119,22 +131,31 @@ test("collects descendant permission ids and reports indeterminate folder state"
   const financialManagement = findNode(tree, "financial-management");
   assert.ok(financialManagement);
 
-  assert.deepEqual(collectPermissionTreeIds(financialManagement), [1, 2, 3, 21, 4, 5, 6, 7, 12, 8, 9, 10, 11]);
+  assert.deepEqual(collectPermissionTreeIds(financialManagement), [1, 2, 3, 21, 4, 36, 5, 6, 7, 12, 8, 9, 10, 11]);
   assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3])), "indeterminate");
-  assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21])), true);
+  assert.equal(getPermissionTreeNodeState(financialManagement, new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 36])), true);
   assert.equal(getPermissionTreeNodeState(financialManagement, new Set()), false);
 });
 
 test("groups activity analysis permissions by page", () => {
   const tree = buildRolePermissionTree(permissions);
   const activityAnalysisGroup = findNode(tree, "activity-analysis-group");
+  const birthdayCoupon = findNode(tree, "birthday-coupon-analysis");
   const pointsAnalysis = findNode(tree, "points-activity-analysis");
 
   assert.ok(activityAnalysisGroup);
   assert.deepEqual((activityAnalysisGroup.children ?? []).map((node) => node.id), [
     "activity-analysis",
+    "birthday-coupon-analysis",
     "points-activity-analysis",
+    "star-diamond-analysis",
   ]);
+
+  assert.ok(birthdayCoupon);
+  assert.deepEqual(
+    (birthdayCoupon.permissions ?? []).map((permission) => permission.permission_code),
+    ["activity_analysis.birthday_coupon.view"],
+  );
 
   assert.ok(pointsAnalysis);
   assert.deepEqual(

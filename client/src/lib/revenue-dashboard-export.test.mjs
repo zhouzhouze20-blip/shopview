@@ -14,6 +14,13 @@ const rows = [
     group_name: "测试柜组",
     unit_codes: "A001",
     unit_count: 1,
+    raw_sales_gross_profit_amount: 100,
+    raw_fee_amount: 55,
+    raw_extra_amount: 12,
+    sales_adjustment_amount: 0,
+    fee_adjustment_amount: -5,
+    extra_adjustment_amount: -2,
+    close_adjustment_amount: -7,
     sales_gross_profit_amount: 100,
     fee_amount: 50,
     extra_amount: 10,
@@ -33,6 +40,13 @@ const rows = [
     group_name: "另一个柜组",
     unit_codes: "B001",
     unit_count: 1,
+    raw_sales_gross_profit_amount: 200,
+    raw_fee_amount: 15,
+    raw_extra_amount: 0,
+    sales_adjustment_amount: 0,
+    fee_adjustment_amount: 0,
+    extra_adjustment_amount: 0,
+    close_adjustment_amount: 0,
     sales_gross_profit_amount: 200,
     fee_amount: 15,
     extra_amount: 0,
@@ -100,16 +114,16 @@ const extraRows = [
   },
 ];
 
-test("revenue dashboard export expands every untaxed fee type into its own column", () => {
+test("revenue dashboard export expands every fee type using the active dashboard basis", () => {
   const data = buildRevenueDashboardExportData(rows, "2026-07-01", "2026-07-28");
   const header = data.summaryRows[0];
 
   assert.deepEqual(data.feeColumns, ["01 广告服务费", "02 物业管理费"]);
-  assert.equal(header.includes("去税收费汇总"), true);
-  assert.equal(header.includes("01 广告服务费（不含税）"), true);
-  assert.equal(header.includes("02 物业管理费（不含税）"), true);
-  assert.equal(data.summaryRows[1][header.indexOf("01 广告服务费（不含税）")], 20);
-  assert.equal(data.summaryRows[1][header.indexOf("02 物业管理费（不含税）")], 30);
+  assert.equal(header.includes("富基收费（调整前）"), true);
+  assert.equal(header.includes("01 广告服务费（看板口径）"), true);
+  assert.equal(header.includes("02 物业管理费（看板口径）"), true);
+  assert.equal(data.summaryRows[1][header.indexOf("01 广告服务费（看板口径）")], 20);
+  assert.equal(data.summaryRows[1][header.indexOf("02 物业管理费（看板口径）")], 30);
   assert.equal(data.summaryRows[1][header.indexOf("收费分类校验差额")], 0);
 });
 
@@ -122,14 +136,26 @@ test("revenue dashboard export includes hierarchy, fee detail and grand totals",
   assert.equal(data.summaryRows[1][header.indexOf("部门")], "中心一部");
   assert.equal(data.summaryRows[1][header.indexOf("柜组")], "测试柜组");
   assert.equal(total[header.indexOf("销售毛利（不含税）")], 300);
-  assert.equal(total[header.indexOf("去税收费汇总")], 65);
-  assert.equal(total[header.indexOf("其他收益")], 10);
+  assert.equal(total[header.indexOf("富基收费（调整前）")], 70);
+  assert.equal(total[header.indexOf("富基收费对应月结调整")], -5);
+  assert.equal(total[header.indexOf("富基收费（调整后）")], 65);
+  assert.equal(total[header.indexOf("NC非富基收费（调整前）")], 12);
+  assert.equal(total[header.indexOf("NC非富基对应月结调整")], -2);
+  assert.equal(total[header.indexOf("NC非富基收费（调整后）")], 10);
+  assert.equal(total[header.indexOf("月结调整合计")], -7);
+  assert.equal(
+    data.summaryRows[1][header.indexOf("总收益")],
+    data.summaryRows[1][header.indexOf("销售毛利（不含税）")]
+      + data.summaryRows[1][header.indexOf("富基收费（调整前）")]
+      + data.summaryRows[1][header.indexOf("NC非富基收费（调整前）")]
+      + data.summaryRows[1][header.indexOf("月结调整合计")],
+  );
   assert.equal(data.feeDetailRows.length, 4);
   assert.equal(
     data.notesRows.some(
       (row) =>
         row[0] === "日期口径"
-        && row[1] === "销售毛利按财务日期；收费按付款日期；其他收益按确认收益日期",
+        && row[1] === "销售毛利按财务日期；收费按付款日期且剔除票减及保证金；其他收益按财务期间",
     ),
     true,
   );

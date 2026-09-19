@@ -396,6 +396,9 @@ const templateImagesPromises = new Map<SupplierPptTemplateVariant, Promise<Suppl
 export function supplierPptTemplateVariant(report: BrandMemberReport, storeName: string): SupplierPptTemplateVariant {
   const normalizedStoreName = storeName.replace(/\s+/g, "");
   const normalizedDepartmentName = (report.target.department_name || "").replace(/\s+/g, "");
+  const isCosmeticsDepartment = /化妆|美妆|护肤|彩妆/.test(normalizedDepartmentName);
+  if (isCosmeticsDepartment) return "default";
+
   const isShoppingCenterLuxury = normalizedStoreName.includes("购物中心")
     && /一部/.test(normalizedDepartmentName);
   const isNewCenturyLuxury = normalizedStoreName.includes("新世纪")

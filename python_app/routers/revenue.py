@@ -3,19 +3,23 @@
 """
 
 import logging
+import unicodedata
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from models.database import get_db
 from models.models import User
 from routers.auth import get_current_user
 from routers.authz import load_business_scope, require_permission, scope_allows_business
+from services.department_display_order import department_display_sort_key
+from services.monthly_followup_report import financial_month_period, financial_year_period
+from services.store_other_business_income_report import FINANCE_STORE_CODE_SQL
 
 
 router = APIRouter(prefix="/api/revenue-map", tags=["revenue"])
@@ -23,6 +27,39 @@ logger = logging.getLogger(__name__)
 
 LOSS_BEARING_FEE_NAME_PREFIX = "损失承担"
 LOSS_BEARING_TAX_DIVISOR = "1.13"
+REVENUE_DASHBOARD_QUERY_TIMEOUT_SECONDS = 90
+REVENUE_MONTHLY_QUERY_TIMEOUT_SECONDS = 90
+FUJI_NON_MATCHABLE_FEE_CODES = frozenset({"18", "37", "38", "61", "69", "94", "95"})
+FUJI_NON_MATCHABLE_FEE_NAME_KEYWORDS = (
+    "保证金",
+    "质保金",
+    "代扣代缴保险费",
+    "旅通",
+    "瑞祥",
+)
+NON_FUJI_MONTH_CLOSE_DEPARTMENTS = {
+    "601": frozenset({"210303", "2112", "2113", "2125"}),
+    "602": frozenset({"220303", "2212", "2225"}),
+    "603": frozenset({"310303", "3112", "3128"}),
+}
+HISTORICAL_NON_FUJI_MONTH_CLOSE_DEPARTMENTS = {
+    # 2025年1月至2026年6月新世纪营运部的NC费用全部属于非富基费用，
+    # 不进入富基费用匹配；2026年7月起继续沿用当月月结规则。
+    "603": frozenset({"3125"}),
+}
+REVENUE_GROUP_DEPARTMENT_OVERRIDES = {
+    # Goodyear/华瑶租金 is carried under Fuji's broader property department,
+    # while NC posts the same supplier and amount to 210303. Keep this as a
+    # cabinet-level exception so other 6010205 rows are not reassigned.
+    ("601", "6012050002"): ("6010115", "中心物业服务部"),
+    ("603", "6030104082"): ("6030116", "新世纪十部(特业)"),
+    ("603", "6030104101"): ("6030116", "新世纪十部(特业)"),
+    ("603", "6030104096"): ("6030116", "新世纪十部(特业)"),
+    ("603", "6030104095"): ("6030116", "新世纪十部(特业)"),
+}
+REVENUE_GROUP_NC_DEPARTMENT_OVERRIDES = {
+    ("601", "6012050002"): "210303",
+}
 
 # ODS_CODECHARGE.CCNUM3 fallback snapshot, verified from PAPI on 2026-07-27.
 # A valid locally synchronized CODECHARGE.CCNUM3 value takes precedence.
@@ -99,6 +136,234 @@ FEE_TAX_RATE_FALLBACKS = {
     "81": "0.06",
     "ZN": "0.06",
 }
+
+# NC and Fuji use different department codes for the same New Century
+# departments. Keep the NC code on source/month-close rows for audit, while
+# resolving dashboard display and permission scope to Fuji's department code.
+REVENUE_DEPARTMENT_ALIASES = (
+    ("601", "210303", "6010115", "中心物业服务部"),
+    ("601", "2112", "6010108", "中心企划执行部"),
+    ("601", "2125", "6010110", "中心营运部"),
+    ("601", "2106", "6010117", "中心三部(女装)"),
+    ("601", "2107", "6010118", "中心五部(运休)"),
+    ("601", "2113", "6010109", "中心企划客服部"),
+    ("601", "2116", "6010101", "中心一部(名品)"),
+    ("601", "2117", "6010102", "中心四部(男装)"),
+    ("601", "2118", "6010103", "中心六部(儿童)"),
+    ("601", "2119", "6010104", "中心BF部(超市)"),
+    ("601", "2120", "6010112", "中心八部(特业)"),
+    ("601", "2121", "6010113", "中心二部(女装)"),
+    ("601", "2122", "6010114", "中心一部(化妆)"),
+    ("601", "2124", "6010116", "中心七部(家居)"),
+    ("602", "2212", "6020105", "大楼市场部"),
+    ("602", "2217", "6020101", "营运一部"),
+    ("602", "2220", "6020110", "营运二部"),
+    ("603", "310303", "6030205", "新世纪物业服务部"),
+    ("603", "3117", "6030104", "新世纪九部(超市)"),
+    ("603", "3125", "6030109", "新世纪营运部"),
+    ("603", "3130", "6030112", "新世纪三部"),
+    ("603", "3131", "6030117", "新世纪一部(名品)"),
+    ("603", "3132", "6030102", "新世纪二部"),
+    ("603", "3133", "6030103", "新世纪六部(男装)"),
+    ("603", "3135", "6030106", "新世纪八部(儿童)"),
+    ("603", "3137", "6030116", "新世纪十部(特业)"),
+    ("603", "3150", "6030113", "新世纪四部"),
+    ("603", "3151", "6030114", "新世纪五部(运休)"),
+    ("603", "3152", "6030115", "新世纪七部(家居)"),
+    ("603", "3153", "6030101", "新世纪一部(化妆)"),
+)
+REVENUE_DEPARTMENT_ALIAS_LOOKUP = {
+    (store_code, source_code): (canonical_code, canonical_name)
+    for store_code, source_code, canonical_code, canonical_name
+    in REVENUE_DEPARTMENT_ALIASES
+}
+
+# Audited NC 6051 subject-to-Fuji fee bridge used by the July 2026
+# reconciliation workbook. Keep the source rows on both sides visible in the
+# pending-binding view; the mapping only selects comparable Fuji detail and
+# never changes either source amount.
+REVENUE_SUBJECT_FEE_CODES = {
+    "605104": ("01", "04", "60"),
+    "605106": ("08", "47"),
+    "605108": ("71", "73"),
+    "605110": ("02", "06", "07"),
+    "605111": ("19", "20", "22"),
+    "605112": ("23", "43"),
+    "605113": ("16", "75"),
+    "605114": ("15", "45"),
+    "605116": ("09", "10", "11"),
+    "605117": ("12", "13", "14"),
+    "60515002": ("72", "74", "81"),
+    "60515006": ("77",),
+    "60515007": ("25", "29", "76", "79"),
+    "60515008": ("24",),
+    "60515009": ("26",),
+    "60515099": ("30", "44"),
+}
+
+
+def _fuji_fee_codes(value: object) -> list[str]:
+    return [
+        fee_code.strip()
+        for fee_code in str(value or "").split(",")
+        if fee_code.strip()
+    ]
+
+
+def _is_fuji_sales_fee_codes(value: object) -> bool:
+    """Return whether every Fuji code in a month-close row belongs to sales."""
+    fee_codes = _fuji_fee_codes(value)
+    return bool(fee_codes) and all(fee_code.startswith("00") for fee_code in fee_codes)
+
+
+def _is_fuji_non_matchable_fee_row(
+    fee_type_code: object,
+    fee_type_name: object,
+) -> bool:
+    """Return whether a Fuji month-close row contains only excluded fee types."""
+    fee_codes = _fuji_fee_codes(fee_type_code)
+    if fee_codes:
+        return all(
+            fee_code.startswith("00") or fee_code in FUJI_NON_MATCHABLE_FEE_CODES
+            for fee_code in fee_codes
+        )
+    normalized_name = str(fee_type_name or "").strip()
+    return bool(normalized_name) and any(
+        keyword in normalized_name
+        for keyword in FUJI_NON_MATCHABLE_FEE_NAME_KEYWORDS
+    )
+
+
+def _is_non_fuji_month_close_department(row: dict) -> bool:
+    """Return whether a month-close row belongs to a non-Fuji department."""
+    store_code = str(row.get("store_code") or "").strip()
+    department_code = str(row.get("source_department_code") or "").strip()
+    if department_code in NON_FUJI_MONTH_CLOSE_DEPARTMENTS.get(
+        store_code,
+        frozenset(),
+    ):
+        return True
+    period_month = str(row.get("period_month") or "").strip()
+    return (
+        "2025-01" <= period_month <= "2026-06"
+        and department_code
+        in HISTORICAL_NON_FUJI_MONTH_CLOSE_DEPARTMENTS.get(
+            store_code,
+            frozenset(),
+        )
+    )
+
+
+def _month_close_fuji_department(
+    store_code: object,
+    group_code: object,
+    department_code: object,
+    department_name: object,
+) -> tuple[str, str]:
+    """Return the audited cabinet-level department used for NC matching."""
+    normalized_store_code = str(store_code or "").strip()
+    normalized_group_code = str(group_code or "").strip()
+    override = REVENUE_GROUP_DEPARTMENT_OVERRIDES.get(
+        (normalized_store_code, normalized_group_code)
+    )
+    if override:
+        return override
+    return (
+        str(department_code or "").strip(),
+        str(department_name or "").strip(),
+    )
+
+
+def _month_close_adjustment_fuji_department(adjustment: dict) -> str:
+    """Resolve the Fuji department used to attach source detail to an adjustment."""
+    department_code = str(adjustment.get("department_code") or "").strip()
+    if department_code:
+        return department_code
+    override, _override_name = _month_close_fuji_department(
+        adjustment.get("store_code"),
+        adjustment.get("source_group_code"),
+        "",
+        "",
+    )
+    return override
+
+
+def _month_close_nc_department_sql() -> str:
+    """Return the NC department key, including audited cabinet-level exceptions."""
+    clauses = [
+        (
+            "WHEN TRIM(store.store_code) = "
+            f"'{store_code}' AND TRIM(adjustment.source_group_code) = "
+            f"'{group_code}' THEN '{department_code}'"
+        )
+        for (store_code, group_code), department_code
+        in REVENUE_GROUP_NC_DEPARTMENT_OVERRIDES.items()
+    ]
+    return (
+        "CASE "
+        + " ".join(clauses)
+        + " ELSE NULLIF(TRIM(adjustment.source_department_code), '') END"
+    )
+
+
+def _collapse_legacy_mapped_fuji_rows(rows: list[dict]) -> list[dict]:
+    """Drop stale unmapped Fuji rows claimed by a mapped NC subject row.
+
+    Older imported workbooks retain one Fuji-only adjustment per source row.
+    When a fee-to-subject bridge is added later, the mapped NC adjustment owns
+    those Fuji details for reconciliation. Suppress the legacy adjustment only
+    inside the same month close and source department, and only when every fee
+    code on it is covered by that mapped subject.
+    """
+    mapped_targets: set[tuple[int, str, str]] = set()
+    for row in rows:
+        subject_code = str(row.get("source_subject_code") or "").strip()
+        for fee_code in REVENUE_SUBJECT_FEE_CODES.get(subject_code, ()):
+            mapped_targets.add(
+                (
+                    int(row["month_close_id"]),
+                    str(row.get("source_department_code") or "").strip(),
+                    fee_code,
+                )
+            )
+
+    filtered_rows = []
+    for row in rows:
+        subject_code = str(row.get("source_subject_code") or "").strip()
+        fee_codes = _fuji_fee_codes(row.get("fee_type_code"))
+        scope = (
+            int(row["month_close_id"]),
+            str(row.get("source_department_code") or "").strip(),
+        )
+        is_legacy_mapped_row = (
+            subject_code in {"", "未映射"}
+            and bool(fee_codes)
+            and all((*scope, fee_code) in mapped_targets for fee_code in fee_codes)
+        )
+        if not is_legacy_mapped_row:
+            filtered_rows.append(row)
+    return filtered_rows
+
+
+def _revenue_department_aliases_cte() -> str:
+    """Return the audited NC-to-Fuji department bridge used by revenue views."""
+    values = ",\n".join(
+        "              "
+        f"('{store_code}', '{source_code}', '{canonical_code}', '{canonical_name}')"
+        for store_code, source_code, canonical_code, canonical_name
+        in REVENUE_DEPARTMENT_ALIASES
+    )
+    return f"""
+        revenue_department_aliases(
+          store_code,
+          source_department_code,
+          canonical_department_code,
+          canonical_department_name
+        ) AS MATERIALIZED (
+          VALUES
+{values}
+        )
+    """
 
 
 def _loss_bearing_fee_condition(alias: str = "fee") -> str:
@@ -207,9 +472,10 @@ def _live_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") -> st
               sales_by_group.source_operation_mode,
               mf.mfcname AS source_group_name,
               COALESCE(
-                NULLIF(mf.mfjyfs, ''),
+                NULLIF(sales_by_group.source_operation_mode, ''),
+                NULLIF(candidate.contract_operation_mode, ''),
                 NULLIF(candidate.business_type, ''),
-                NULLIF(candidate.contract_operation_mode, '')
+                NULLIF(mf.mfjyfs, '')
               ) AS operation_mode,
               COALESCE(
                 NULLIF(candidate.supplier_id, ''),
@@ -357,15 +623,26 @@ def _unmatched_sales_ctes(sales_date_filter: str, sales_store_filter: str = "") 
                       AND cm.cmeffdate::date <= source.revenue_date
                       AND cm.cmlapdate::date >= source.revenue_date
             ) effective_contracts ON true
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM live_sales mapped
-                WHERE mapped.revenue_date = source.revenue_date
-                  AND mapped.store_code = source.store_code
-                  AND mapped.source_group_code = source.source_group_code
-                  AND mapped.source_supplier_code IS NOT DISTINCT FROM source.source_supplier_code
-                  AND mapped.source_operation_mode IS NOT DISTINCT FROM source.source_operation_mode
-            )
+            WHERE master_group.mfcode IS NULL
+               OR UPPER(TRIM(COALESCE(master_group.mfstatus, ''))) <> 'Y'
+               OR NOT EXISTS (
+                    SELECT 1
+                    FROM contract_group_bindings candidate
+                    WHERE candidate.store_code = source.store_code
+                      AND candidate.source_group_code_norm = UPPER(TRIM(source.source_group_code))
+                      AND candidate.contract_supplier_code_norm = UPPER(TRIM(source.source_supplier_code))
+                      AND candidate.contract_operation_mode_norm = TRIM(source.source_operation_mode)
+                      AND (
+                        candidate.binding_start_date IS NULL
+                        OR candidate.binding_start_date <= source.revenue_date
+                      )
+                      AND (
+                        candidate.binding_end_date IS NULL
+                        OR candidate.binding_end_date >= source.revenue_date
+                      )
+                      AND candidate.contract_start_date <= source.revenue_date
+                      AND candidate.contract_end_date >= source.revenue_date
+               )
         )
     """
 
@@ -507,6 +784,16 @@ def _live_fees_cte(
             LEFT JOIN codecharge charge
               ON TRIM(charge.cccode) = reference.fee_type_code
         ),
+        ticket_reduction_fee_keys AS MATERIALIZED (
+            SELECT DISTINCT
+              UPPER(TRIM(charge.sscpaybillno)) AS payment_bill_no_norm,
+              UPPER(TRIM(charge.sscmfid)) AS source_group_code_norm,
+              UPPER(TRIM(charge.ssccontno)) AS contract_code_norm,
+              UPPER(TRIM(charge.sscid)) AS fee_type_code_norm
+            FROM ods.erp_supsetcharge charge
+            WHERE TRIM(COALESCE(charge.person1, '')) = 'Y'
+              AND NULLIF(TRIM(charge.sscpaybillno), '') IS NOT NULL
+        ),
         {payment_reference_ctes}
         fee_source_rows AS MATERIALIZED (
             SELECT
@@ -519,7 +806,15 @@ def _live_fees_cte(
               fee_tax_rates.tax_rate AS reference_tax_rate,
               ROW_NUMBER() OVER (
                 PARTITION BY
+                  CASE
+                    WHEN NULLIF(TRIM(fee.source_doc_no), '') IS NOT NULL
+                     AND NULLIF(TRIM(fee.source_row_key), '') IS NOT NULL
+                      THEN ''
+                    ELSE fee.id
+                  END,
+                  fee.store_id,
                   fee.revenue_date,
+                  UPPER(TRIM(COALESCE(fee.source_type, ''))),
                   UPPER(TRIM(COALESCE(fee.source_group_code, ''))),
                   UPPER(TRIM(COALESCE(fee.contract_code, ''))),
                   UPPER(TRIM(COALESCE(fee.fee_type_code, ''))),
@@ -533,6 +828,19 @@ def _live_fees_cte(
             LEFT JOIN fee_tax_rates
               ON fee_tax_rates.fee_type_code = TRIM(fee.fee_type_code)
             WHERE {fee_source_filter}
+              AND TRIM(COALESCE(fee.fee_type_code, '')) NOT IN ('37', '61', '69')
+              AND TRIM(COALESCE(fee.fee_type_name, '')) NOT LIKE '%保证金%'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM ticket_reduction_fee_keys ticket
+                WHERE ticket.payment_bill_no_norm = UPPER(TRIM(fee.source_doc_no))
+                  AND ticket.source_group_code_norm = UPPER(TRIM(fee.source_group_code))
+                  AND ticket.fee_type_code_norm = UPPER(TRIM(fee.fee_type_code))
+                  AND (
+                    ticket.contract_code_norm IS NULL
+                    OR ticket.contract_code_norm = UPPER(TRIM(fee.contract_code))
+                  )
+              )
         ),
         live_fees AS (
             SELECT
@@ -616,8 +924,7 @@ def _live_fees_cte(
                  AND candidate.contract_end_date >= {binding_date_expression}
                 JOIN stores st
                   ON TRIM(st.store_code) = candidate.store_code
-                WHERE NOT ({loss_bearing_fee_condition})
-                   OR fee.exact_duplicate_rank = 1
+                WHERE fee.exact_duplicate_rank = 1
             ) resolved
             WHERE resolved.resolution_rank = 1
         )
@@ -645,6 +952,13 @@ def _live_revenue_source_ctes(
               unit_id,
               unit_code,
               revenue_date,
+              CASE
+                WHEN EXTRACT(MONTH FROM revenue_date) = 12 THEN TO_CHAR(revenue_date, 'YYYY-12')
+                WHEN EXTRACT(DAY FROM revenue_date) >= 29 THEN
+                  TO_CHAR(revenue_date, 'YYYY-')
+                  || LPAD((EXTRACT(MONTH FROM revenue_date)::integer + 1)::text, 2, '0')
+                ELSE TO_CHAR(revenue_date, 'YYYY-MM')
+              END AS financial_period_month,
               source_group_code,
               source_group_name,
               NULL::varchar AS source_department_code,
@@ -652,6 +966,9 @@ def _live_revenue_source_ctes(
               gross_profit_amount AS sales_amount,
               0::numeric AS fee_amount,
               0::numeric AS extra_amount,
+              gross_profit_amount AS close_basis_sales_amount,
+              0::numeric AS close_basis_fee_amount,
+              0::numeric AS close_basis_extra_amount,
               1::integer AS sales_count,
               0::integer AS fee_count,
               0::integer AS extra_count
@@ -663,6 +980,13 @@ def _live_revenue_source_ctes(
               fee.unit_id,
               fee.unit_code,
               fee.revenue_date,
+              CASE
+                WHEN EXTRACT(MONTH FROM fee.revenue_date) = 12 THEN TO_CHAR(fee.revenue_date, 'YYYY-12')
+                WHEN EXTRACT(DAY FROM fee.revenue_date) >= 29 THEN
+                  TO_CHAR(fee.revenue_date, 'YYYY-')
+                  || LPAD((EXTRACT(MONTH FROM fee.revenue_date)::integer + 1)::text, 2, '0')
+                ELSE TO_CHAR(fee.revenue_date, 'YYYY-MM')
+              END,
               fee.source_group_code,
               fee.source_group_name,
               NULL::varchar,
@@ -676,6 +1000,15 @@ def _live_revenue_source_ctes(
                 ELSE fee.tax_excluded_amount
               END,
               0::numeric,
+              CASE
+                WHEN {loss_bearing_fee_condition} THEN fee.tax_excluded_amount
+                ELSE 0::numeric
+              END,
+              CASE
+                WHEN {loss_bearing_fee_condition} THEN 0::numeric
+                ELSE fee.tax_included_amount
+              END,
+              0::numeric,
               CASE WHEN {loss_bearing_fee_condition} THEN 1::integer ELSE 0::integer END,
               CASE WHEN {loss_bearing_fee_condition} THEN 0::integer ELSE 1::integer END,
               0::integer
@@ -687,10 +1020,14 @@ def _live_revenue_source_ctes(
               bu.id,
               bu.unit_code,
               extra.revenue_date,
+              extra.revenue_month,
               extra.source_group_code,
               extra.source_group_name,
               extra.source_department_code,
               extra.source_department_name,
+              0::numeric,
+              0::numeric,
+              extra.amount,
               0::numeric,
               0::numeric,
               extra.amount,
@@ -708,7 +1045,178 @@ def _live_revenue_source_ctes(
     """
 
 
-def _nc_6051_extra_detail_ctes(extra_filter_sql: str = "") -> str:
+def _revenue_month_close_overlay_ctes(
+    close_filter: str = (
+        "close.period_start_date = :start_date "
+        "AND close.period_end_date = :end_date"
+    ),
+) -> str:
+    """Overlay confirmed month-close adjustments without mutating source rows."""
+    return """
+        confirmed_month_closes AS MATERIALIZED (
+          SELECT close.*
+          FROM revenue_month_closes close
+          WHERE close.status = 'CONFIRMED'
+            AND {close_filter}
+        ),
+        dashboard_live_rows AS (
+          SELECT
+            src.store_id,
+            src.floor_id,
+            src.unit_id,
+            src.unit_code,
+            src.revenue_date,
+            src.financial_period_month,
+            src.source_group_code,
+            src.source_group_name,
+            src.source_department_code,
+            src.source_department_name,
+            CASE
+              WHEN close.id IS NOT NULL THEN src.close_basis_sales_amount
+              ELSE src.sales_amount
+            END AS sales_amount,
+            CASE
+              WHEN close.id IS NOT NULL THEN src.close_basis_fee_amount
+              ELSE src.fee_amount
+            END AS fee_amount,
+            CASE
+              WHEN close.id IS NOT NULL THEN src.close_basis_extra_amount
+              ELSE src.extra_amount
+            END AS extra_amount,
+            0::numeric AS sales_adjustment_amount,
+            0::numeric AS fee_adjustment_amount,
+            0::numeric AS extra_adjustment_amount,
+            0::numeric AS tax_adjustment_amount,
+            src.sales_count,
+            src.fee_count,
+            src.extra_count
+          FROM source_rows src
+          LEFT JOIN confirmed_month_closes close
+            ON close.store_id = src.store_id
+           AND close.period_month = src.financial_period_month
+        ),
+        dashboard_adjustment_rows AS (
+          SELECT
+            close.store_id,
+            unit.floor_id,
+            adjustment.unit_id,
+            COALESCE(adjustment.unit_code, unit.unit_code) AS unit_code,
+            close.period_end_date AS revenue_date,
+            close.period_month AS financial_period_month,
+            adjustment.source_group_code,
+            adjustment.source_group_name,
+            adjustment.source_department_code,
+            adjustment.source_department_name,
+            0::numeric AS sales_amount,
+            CASE
+              WHEN adjustment.target_component = 'FEE'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS fee_amount,
+            CASE
+              WHEN adjustment.target_component = 'EXTRA'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS extra_amount,
+            0::numeric AS sales_adjustment_amount,
+            CASE
+              WHEN adjustment.target_component = 'FEE'
+               AND NOT (
+                 COALESCE(adjustment.raw_payload, '{{}}'::jsonb)
+                 ? 'manual_binding_source_line_key'
+               )
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS fee_adjustment_amount,
+            CASE
+              WHEN adjustment.target_component = 'EXTRA'
+               AND NOT (
+                 COALESCE(adjustment.raw_payload, '{{}}'::jsonb)
+                 ? 'manual_binding_source_line_key'
+               )
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS extra_adjustment_amount,
+            adjustment.accrued_tax_amount::numeric AS tax_adjustment_amount,
+            0::integer AS sales_count,
+            0::integer AS fee_count,
+            0::integer AS extra_count
+          FROM confirmed_month_closes close
+          JOIN revenue_month_close_adjustments adjustment
+            ON adjustment.month_close_id = close.id
+          LEFT JOIN business_units unit
+            ON unit.id = adjustment.unit_id
+          WHERE adjustment.adjustment_amount <> 0
+            AND adjustment.binding_status = 'BOUND'
+            AND COALESCE(TRIM(adjustment.fee_type_code), '') <> '37'
+            AND COALESCE(TRIM(adjustment.fee_type_name), '') <> '代付费用'
+        ),
+        dashboard_pending_adjustment_rows AS (
+          SELECT
+            close.store_id,
+            NULL::bigint AS floor_id,
+            NULL::bigint AS unit_id,
+            NULL::text AS unit_code,
+            close.period_end_date AS revenue_date,
+            close.period_month AS financial_period_month,
+            NULL::text AS source_group_code,
+            ('待人工绑定：' || COALESCE(adjustment.source_subject_name, adjustment.fee_type_name, '月结差异'))::text AS source_group_name,
+            adjustment.source_department_code,
+            adjustment.source_department_name,
+            0::numeric AS sales_amount,
+            CASE
+              WHEN adjustment.target_component = 'FEE'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS fee_amount,
+            CASE
+              WHEN adjustment.target_component = 'EXTRA'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS extra_amount,
+            0::numeric AS sales_adjustment_amount,
+            CASE
+              WHEN adjustment.target_component = 'FEE'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS fee_adjustment_amount,
+            CASE
+              WHEN adjustment.target_component = 'EXTRA'
+                THEN adjustment.adjustment_amount
+              ELSE 0::numeric
+            END AS extra_adjustment_amount,
+            adjustment.accrued_tax_amount::numeric AS tax_adjustment_amount,
+            0::integer AS sales_count,
+            0::integer AS fee_count,
+            0::integer AS extra_count
+          FROM confirmed_month_closes close
+          JOIN revenue_month_close_adjustments adjustment
+            ON adjustment.month_close_id = close.id
+          WHERE adjustment.adjustment_amount <> 0
+            AND adjustment.binding_status = 'PENDING'
+            AND ROUND(
+                  COALESCE(adjustment.adjustment_amount, 0)
+                  - COALESCE(adjustment.accrued_tax_amount, 0),
+                  2
+                ) <> 0
+            AND COALESCE(TRIM(adjustment.fee_type_code), '') <> '37'
+            AND COALESCE(TRIM(adjustment.fee_type_name), '') <> '代付费用'
+        ),
+        dashboard_source_rows AS (
+          SELECT * FROM dashboard_live_rows
+          UNION ALL
+          SELECT * FROM dashboard_adjustment_rows
+          UNION ALL
+          SELECT * FROM dashboard_pending_adjustment_rows
+        )
+    """.format(close_filter=close_filter)
+
+
+def _nc_6051_extra_detail_ctes(
+    extra_filter_sql: str = "",
+    *,
+    date_filter_sql: str = "extra.revenue_date BETWEEN :start_date AND :end_date",
+) -> str:
     """Build traceable NC6051 rows with the exact account name from PK_ACCSUBJ."""
     return f"""
         subject_names AS (
@@ -745,7 +1253,7 @@ def _nc_6051_extra_detail_ctes(extra_filter_sql: str = "") -> str:
           ) exact_subject ON true
           LEFT JOIN subject_names
             ON subject_names.subject_code = TRIM(extra.source_subject_code)
-          WHERE extra.revenue_date BETWEEN :start_date AND :end_date
+          WHERE {date_filter_sql}
             AND extra.status = 'CONFIRMED'
             AND extra.source_type = 'NC6051'
             {extra_filter_sql}
@@ -759,6 +1267,23 @@ def _money(value: object) -> float:
     if isinstance(value, Decimal):
         return float(value)
     return float(value)
+
+
+def _dashboard_non_tax_adjustment(row: dict) -> float:
+    """Return month-close variance after removing tax embedded in close rows."""
+    adjustment = sum(
+        (
+            Decimal(str(row.get(key) or 0))
+            for key in (
+                "sales_adjustment_amount",
+                "fee_adjustment_amount",
+                "extra_adjustment_amount",
+            )
+        ),
+        Decimal("0"),
+    )
+    accrued_tax = Decimal(str(row.get("tax_adjustment_amount") or 0))
+    return _money((adjustment - accrued_tax).quantize(Decimal("0.01")))
 
 
 def _dt(value: object) -> str | None:
@@ -780,8 +1305,243 @@ def _dashboard_row_allowed(scope, row: dict) -> bool:
     )
 
 
+def _canonical_revenue_department_values(
+    store_code: object,
+    department_code: object,
+    department_name: object,
+) -> tuple[str | None, str | None]:
+    normalized_store = str(store_code or "").strip()
+    normalized_code = str(department_code or "").strip()
+    normalized_name = str(department_name or "").strip()
+    canonical = REVENUE_DEPARTMENT_ALIAS_LOOKUP.get(
+        (normalized_store, normalized_code)
+    )
+    if canonical:
+        return canonical
+    return normalized_code or None, normalized_name or None
+
+
+def _load_nc_6051_dashboard_summary(
+    db: Session,
+    scope,
+    *,
+    financial_year: int | None,
+    financial_month: int | None,
+) -> dict:
+    """Return permission-scoped NC 6051 net-credit and accrued-tax totals."""
+    summary = {
+        "available": financial_year is not None,
+        "subject_prefix": "6051",
+        "amount_basis": "local_credit_minus_local_debit",
+        "tax_basis": "explanation_matches_accrual_tax",
+        "tax_period_basis": "confirmed_month_close_only",
+        "store_amounts": [],
+        "department_amounts": [],
+    }
+    if financial_year is None:
+        return summary
+
+    period_start = financial_month or 1
+    period_end = financial_month or 12
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+              st.store_id,
+              st.store_code,
+              TRIM(f.valuecode) AS department_code,
+              COALESCE(
+                NULLIF(TRIM(f.valuename), ''),
+                NULLIF(TRIM(f.valuecode), '')
+              ) AS department_name,
+              SUM(
+                COALESCE(f.localcreditamount, 0)
+                - COALESCE(f.localdebitamount, 0)
+              )::numeric AS nc_6051_amount,
+              SUM(
+                CASE
+                  WHEN COALESCE(f.explanation, '') ~ '计提.*(销项)?税|电费收入结转销项税'
+                   AND EXISTS (
+                     SELECT 1
+                     FROM revenue_month_closes tax_close
+                     WHERE tax_close.store_id = st.store_id
+                       AND tax_close.status = 'CONFIRMED'
+                       AND tax_close.period_month = (
+                         f.account_year::int::text
+                         || '-'
+                         || LPAD(f.account_period::int::text, 2, '0')
+                       )
+                   )
+                    THEN COALESCE(f.localcreditamount, 0)
+                         - COALESCE(f.localdebitamount, 0)
+                  ELSE 0
+                END
+              )::numeric AS nc_6051_tax_amount
+            FROM bh_dw_gl_detail_fact2 f
+            JOIN stores st
+              ON st.store_code = ({FINANCE_STORE_CODE_SQL})
+             AND st.is_active = TRUE
+            WHERE f.account_year::int = :financial_year
+              AND f.account_period::int BETWEEN :period_start AND :period_end
+              AND TRIM(f.subject_code) LIKE '6051%'
+              AND TRIM(COALESCE(f.valuecode, '')) NOT IN (
+                '210109', '220109', '310109', '330109'
+              )
+            GROUP BY
+              st.store_id,
+              st.store_code,
+              TRIM(f.valuecode),
+              COALESCE(
+                NULLIF(TRIM(f.valuename), ''),
+                NULLIF(TRIM(f.valuecode), '')
+              )
+            """
+        ),
+        {
+            "financial_year": financial_year,
+            "period_start": period_start,
+            "period_end": period_end,
+        },
+    ).mappings().all()
+
+    store_totals: dict[tuple[int, str], Decimal] = {}
+    store_tax_totals: dict[tuple[int, str], Decimal] = {}
+    department_totals: dict[tuple[int, str, str, str], Decimal] = {}
+    department_tax_totals: dict[tuple[int, str, str, str], Decimal] = {}
+    for source in rows:
+        department_code, department_name = _canonical_revenue_department_values(
+            source.get("store_code"),
+            source.get("department_code"),
+            source.get("department_name"),
+        )
+        scoped_row = {
+            "store_id": source.get("store_id"),
+            "department_code": department_code,
+            "department_name": department_name,
+            "group_code": None,
+        }
+        if not _dashboard_row_allowed(scope, scoped_row):
+            continue
+        amount = Decimal(str(source.get("nc_6051_amount") or 0))
+        tax_amount = Decimal(str(source.get("nc_6051_tax_amount") or 0))
+        store_key = (int(source["store_id"]), str(source["store_code"]).strip())
+        store_totals[store_key] = store_totals.get(store_key, Decimal("0")) + amount
+        store_tax_totals[store_key] = (
+            store_tax_totals.get(store_key, Decimal("0")) + tax_amount
+        )
+        department_key = (
+            store_key[0],
+            store_key[1],
+            department_code or "",
+            department_name or "未归属部门",
+        )
+        department_totals[department_key] = (
+            department_totals.get(department_key, Decimal("0")) + amount
+        )
+        department_tax_totals[department_key] = (
+            department_tax_totals.get(department_key, Decimal("0")) + tax_amount
+        )
+
+    summary["store_amounts"] = [
+        {
+            "store_id": store_id,
+            "store_code": store_code,
+            "amount": _money(amount),
+            "tax_amount": _money(store_tax_totals.get((store_id, store_code))),
+        }
+        for (store_id, store_code), amount in sorted(store_totals.items())
+    ]
+    summary["department_amounts"] = [
+        {
+            "store_id": store_id,
+            "store_code": store_code,
+            "department_code": department_code or None,
+            "department_name": department_name,
+            "amount": _money(amount),
+            "tax_amount": _money(
+                department_tax_totals.get(
+                    (store_id, store_code, department_code, department_name)
+                )
+            ),
+        }
+        for (
+            store_id,
+            store_code,
+            department_code,
+            department_name,
+        ), amount in sorted(department_totals.items())
+    ]
+    return summary
+
+
 def _month_from_date(value: date) -> str:
     return value.strftime("%Y-%m")
+
+
+def _dashboard_financial_period(
+    *,
+    start_date: date,
+    end_date: date,
+    financial_year: Optional[int],
+    financial_month: Optional[int],
+) -> dict:
+    """Validate an optional financial-year/month selection and build SQL filters."""
+    if financial_month is not None and financial_year is None:
+        raise HTTPException(status_code=400, detail="选择财务月时必须同时选择年份")
+    if financial_month is not None and not 1 <= financial_month <= 12:
+        raise HTTPException(status_code=400, detail="financial_month 必须为 1 至 12")
+
+    if financial_year is None:
+        return {
+            "fee_filter": "payment_ref.payment_date BETWEEN :start_date AND :end_date",
+            "extra_filter": "extra.revenue_date BETWEEN :start_date AND :end_date",
+            "close_filter": (
+                "close.period_start_date = :start_date "
+                "AND close.period_end_date = :end_date"
+            ),
+            "date_basis": "revenue_date",
+            "period_count": 1,
+        }
+
+    expected_start, expected_end = (
+        financial_month_period(financial_year, financial_month)
+        if financial_month is not None
+        else financial_year_period(financial_year)
+    )
+    if start_date != expected_start or end_date != expected_end:
+        label = f"{financial_year}年第{financial_month}财务月" if financial_month else f"{financial_year}全年"
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label}应为 {expected_start.isoformat()} 至 {expected_end.isoformat()}",
+        )
+
+    period_start = f"{financial_year:04d}-{financial_month or 1:02d}"
+    period_end = f"{financial_year:04d}-{financial_month or 12:02d}"
+    return {
+        "fee_filter": """
+            (
+              payment_ref.source_kind = 'JOINT'
+              AND payment_ref.payment_date BETWEEN :start_date AND :end_date
+            )
+            OR (
+              payment_ref.source_kind = 'RENTAL'
+              AND payment_ref.payment_date >= TO_DATE(
+                :period_month_start || '-01',
+                'YYYY-MM-DD'
+              )
+              AND payment_ref.payment_date < TO_DATE(
+                :period_month_end || '-01',
+                'YYYY-MM-DD'
+              ) + INTERVAL '1 month'
+            )
+        """,
+        "extra_filter": "extra.revenue_month BETWEEN :period_month_start AND :period_month_end",
+        "close_filter": "close.period_month BETWEEN :period_month_start AND :period_month_end",
+        "date_basis": "financial_period",
+        "period_month_start": period_start,
+        "period_month_end": period_end,
+        "period_count": 1 if financial_month is not None else 12,
+    }
 
 
 def _model_data(model: BaseModel) -> dict:
@@ -832,6 +1592,15 @@ class RevenueRecalculateRequest(BaseModel):
     start_date: date
     end_date: date
     unit_id: Optional[int] = None
+
+
+class RevenueMonthCloseBindingRequest(BaseModel):
+    unit_id: int = Field(gt=0)
+    source_group_code: str = Field(min_length=1, max_length=50)
+    source_line_key: str = Field(min_length=1, max_length=500)
+    target_component: str = Field(pattern=r"^(FEE|EXTRA)$")
+    adjustment_amount: Optional[Decimal] = None
+    note: Optional[str] = Field(default=None, max_length=500)
 
 
 def _normalize_unit_fields(db: Session, payload: dict) -> dict:
@@ -903,33 +1672,61 @@ def _receipt_to_dict(row) -> dict:
 async def revenue_dashboard(
     start_date: date,
     end_date: date,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Return permission-scoped revenue at store → department → cabinet grain.
 
-    Sales keep the finance-date basis; fee revenue uses the linked payment date.
+    Sales and joint fees keep the finance-period basis. Rental fees use the
+    linked payment date within the natural accounting month.
     """
     require_permission(db, current_user, "revenue.dashboard.view")
     if end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
 
     try:
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
         params = {
             "start_date": start_date,
             "end_date": end_date,
         }
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
         source_ctes = _live_revenue_source_ctes(
             "s.sglhsrq BETWEEN :start_date AND :end_date",
-            "payment_ref.payment_date BETWEEN :start_date AND :end_date",
-            "extra.revenue_date BETWEEN :start_date AND :end_date",
+            period["fee_filter"],
+            period["extra_filter"],
             fee_date_basis="payment",
         )
+        month_close_ctes = _revenue_month_close_overlay_ctes(period["close_filter"])
+        department_aliases_cte = _revenue_department_aliases_cte()
         loss_bearing_fee_condition = _loss_bearing_fee_condition("fee")
+        # A multi-month view reuses the same auditable source query as a month,
+        # but its payment and month-close joins legitimately exceed the global
+        # 30-second default. Keep the exception transaction-local and retain
+        # the stricter default for ordinary single-month requests.
+        if period["period_count"] > 1:
+            db.execute(
+                text(
+                    "SET LOCAL statement_timeout = "
+                    f"'{REVENUE_DASHBOARD_QUERY_TIMEOUT_SECONDS}s'"
+                ),
+                {},
+            )
         rows = db.execute(
             text(
                 f"""
                 WITH {source_ctes},
+                {month_close_ctes},
+                {department_aliases_cte},
                 fee_breakdown_rows AS (
                   SELECT
                     fee.store_id,
@@ -939,16 +1736,56 @@ async def revenue_dashboard(
                       NULLIF(TRIM(fee.fee_type_name), ''),
                       '未分类收费'
                     ) AS fee_type_name,
-                    COALESCE(SUM(fee.tax_excluded_amount), 0)::numeric AS tax_excluded_amount
+                    COALESCE(SUM(
+                      CASE
+                        WHEN close.id IS NOT NULL THEN fee.tax_included_amount
+                        ELSE fee.tax_excluded_amount
+                      END
+                    ), 0)::numeric AS tax_excluded_amount
                   FROM live_fees fee
+                  LEFT JOIN confirmed_month_closes close
+                    ON close.store_id = fee.store_id
+                   AND close.period_month = CASE
+                     WHEN EXTRACT(MONTH FROM fee.revenue_date) = 12 THEN TO_CHAR(fee.revenue_date, 'YYYY-12')
+                     WHEN EXTRACT(DAY FROM fee.revenue_date) >= 29 THEN
+                       TO_CHAR(fee.revenue_date, 'YYYY-')
+                       || LPAD((EXTRACT(MONTH FROM fee.revenue_date)::integer + 1)::text, 2, '0')
+                     ELSE TO_CHAR(fee.revenue_date, 'YYYY-MM')
+                   END
                   WHERE NOT ({loss_bearing_fee_condition})
                   GROUP BY
                     fee.store_id,
+                    close.id,
                     UPPER(TRIM(fee.source_group_code)),
                     NULLIF(TRIM(fee.fee_type_code), ''),
                     COALESCE(
                       NULLIF(TRIM(fee.fee_type_name), ''),
                       '未分类收费'
+                    )
+
+                  UNION ALL
+
+                  SELECT
+                    close.store_id,
+                    UPPER(TRIM(adjustment.source_group_code)) AS group_code_norm,
+                    COALESCE(NULLIF(TRIM(adjustment.fee_type_code), ''), 'MONTH_CLOSE'),
+                    COALESCE(
+                      NULLIF(TRIM(adjustment.fee_type_name), ''),
+                      '月结含税调整'
+                    ),
+                    COALESCE(SUM(adjustment.adjustment_amount), 0)::numeric
+                  FROM confirmed_month_closes close
+                  JOIN revenue_month_close_adjustments adjustment
+                    ON adjustment.month_close_id = close.id
+                   AND adjustment.target_component = 'FEE'
+                   AND adjustment.binding_status = 'BOUND'
+                  GROUP BY
+                    close.store_id,
+                    UPPER(TRIM(adjustment.source_group_code)),
+                    COALESCE(NULLIF(TRIM(adjustment.fee_type_code), ''), 'MONTH_CLOSE'),
+                    COALESCE(
+                      NULLIF(TRIM(adjustment.fee_type_name), ''),
+                      '月结含税调整'
                     )
                 ),
                 fee_breakdowns AS (
@@ -972,10 +1809,12 @@ async def revenue_dashboard(
                   st.store_name,
                   COALESCE(
                     NULLIF(TRIM(dept.mfcode), ''),
+                    department_alias.canonical_department_code,
                     NULLIF(TRIM(src.source_department_code), '')
                   ) AS department_code,
                   COALESCE(
                     NULLIF(TRIM(dept.mfcname), ''),
+                    department_alias.canonical_department_name,
                     NULLIF(TRIM(src.source_department_name), '')
                   ) AS department_name,
                   NULLIF(TRIM(src.source_group_code), '') AS group_code,
@@ -989,6 +1828,26 @@ async def revenue_dashboard(
                     ORDER BY NULLIF(TRIM(src.unit_code), '')
                   ) AS unit_codes,
                   COUNT(DISTINCT src.unit_id)::integer AS unit_count,
+                  COALESCE(
+                    SUM(src.sales_amount - src.sales_adjustment_amount),
+                    0
+                  )::numeric AS raw_sales_gross_profit_amount,
+                  COALESCE(
+                    SUM(src.fee_amount - src.fee_adjustment_amount),
+                    0
+                  )::numeric AS raw_fee_amount,
+                  COALESCE(
+                    SUM(src.extra_amount - src.extra_adjustment_amount),
+                    0
+                  )::numeric AS raw_extra_amount,
+                  COALESCE(SUM(src.sales_adjustment_amount), 0)::numeric
+                    AS sales_adjustment_amount,
+                  COALESCE(SUM(src.fee_adjustment_amount), 0)::numeric
+                    AS fee_adjustment_amount,
+                  COALESCE(SUM(src.extra_adjustment_amount), 0)::numeric
+                    AS extra_adjustment_amount,
+                  COALESCE(SUM(src.tax_adjustment_amount), 0)::numeric
+                    AS tax_adjustment_amount,
                   COALESCE(SUM(src.sales_amount), 0)::numeric AS sales_gross_profit_amount,
                   COALESCE(SUM(src.fee_amount), 0)::numeric AS fee_amount,
                   COALESCE(SUM(src.extra_amount), 0)::numeric AS extra_amount,
@@ -997,8 +1856,14 @@ async def revenue_dashboard(
                     0
                   )::numeric AS total_amount,
                   COALESCE(fee_breakdowns.fee_breakdown, '[]'::jsonb) AS fee_breakdown
-                FROM source_rows src
+                FROM dashboard_source_rows src
                 JOIN stores st ON st.store_id = src.store_id
+                LEFT JOIN revenue_department_aliases department_alias
+                  ON TRIM(department_alias.store_code) = TRIM(st.store_code)
+                 AND department_alias.source_department_code = NULLIF(
+                   TRIM(src.source_department_code),
+                   ''
+                 )
                 LEFT JOIN manaframe group_mf
                   ON UPPER(TRIM(group_mf.mfcode)) = UPPER(TRIM(src.source_group_code))
                 LEFT JOIN manaframe dept
@@ -1012,10 +1877,12 @@ async def revenue_dashboard(
                   st.store_name,
                   COALESCE(
                     NULLIF(TRIM(dept.mfcode), ''),
+                    department_alias.canonical_department_code,
                     NULLIF(TRIM(src.source_department_code), '')
                   ),
                   COALESCE(
                     NULLIF(TRIM(dept.mfcname), ''),
+                    department_alias.canonical_department_name,
                     NULLIF(TRIM(src.source_department_name), '')
                   ),
                   NULLIF(TRIM(src.source_group_code), ''),
@@ -1030,8 +1897,69 @@ async def revenue_dashboard(
             params,
         ).mappings().all()
 
+        close_rows = db.execute(
+            text(
+                f"""
+                SELECT
+                  close.id,
+                  close.store_id,
+                  st.store_code,
+                  st.store_name,
+                  close.period_month,
+                  close.period_start_date,
+                  close.period_end_date,
+                  close.version,
+                  close.nc_amount_before_tax,
+                  close.accrued_tax_amount,
+                  close.nc_control_amount,
+                  close.raw_fee_amount,
+                  close.raw_extra_amount,
+                  close.close_adjustment_amount,
+                  close.final_fee_extra_amount,
+                  close.source_snapshot_id,
+                  close.confirmed_at
+                FROM revenue_month_closes close
+                JOIN stores st ON st.store_id = close.store_id
+                WHERE close.status = 'CONFIRMED'
+                  AND {period["close_filter"]}
+                ORDER BY close.store_id
+                """
+            ),
+            params,
+        ).mappings().all()
+
         scope = load_business_scope(db, current_user, fallback_resource_code="revenue")
         allowed_rows = [dict(row) for row in rows if _dashboard_row_allowed(scope, dict(row))]
+        department_sort_orders: dict[tuple[int, str, str], int] = {}
+        departments_by_store: dict[int, dict[tuple[str, str], dict]] = {}
+        for row in allowed_rows:
+            store_id = int(row["store_id"])
+            department_code = str(row.get("department_code") or "")
+            department_name = str(row.get("department_name") or "未归属部门")
+            departments_by_store.setdefault(store_id, {})[
+                (department_code, department_name)
+            ] = {
+                "department_code": department_code,
+                "department_name": department_name,
+            }
+        for store_id, departments in departments_by_store.items():
+            for order, department in enumerate(
+                sorted(departments.values(), key=department_display_sort_key),
+                start=1,
+            ):
+                department_sort_orders[
+                    (
+                        store_id,
+                        str(department.get("department_code") or ""),
+                        str(department.get("department_name") or "未归属部门"),
+                    )
+                ] = order
+        nc_6051_summary = _load_nc_6051_dashboard_summary(
+            db,
+            scope,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
         items = [
             {
                 "store_id": int(row["store_id"]),
@@ -1039,10 +1967,25 @@ async def revenue_dashboard(
                 "store_name": row.get("store_name"),
                 "department_code": row.get("department_code"),
                 "department_name": row.get("department_name") or "未归属部门",
+                "department_sort_order": department_sort_orders.get(
+                    (
+                        int(row["store_id"]),
+                        str(row.get("department_code") or ""),
+                        str(row.get("department_name") or "未归属部门"),
+                    )
+                ),
                 "group_code": row.get("group_code"),
                 "group_name": row.get("group_name") or "未归属柜位",
                 "unit_codes": row.get("unit_codes"),
                 "unit_count": int(row.get("unit_count") or 0),
+                "raw_sales_gross_profit_amount": _money(row.get("raw_sales_gross_profit_amount")),
+                "raw_fee_amount": _money(row.get("raw_fee_amount")),
+                "raw_extra_amount": _money(row.get("raw_extra_amount")),
+                "sales_adjustment_amount": _money(row.get("sales_adjustment_amount")),
+                "fee_adjustment_amount": _money(row.get("fee_adjustment_amount")),
+                "extra_adjustment_amount": _money(row.get("extra_adjustment_amount")),
+                "tax_adjustment_amount": _money(row.get("tax_adjustment_amount")),
+                "close_adjustment_amount": _dashboard_non_tax_adjustment(row),
                 "sales_gross_profit_amount": _money(row.get("sales_gross_profit_amount")),
                 "fee_amount": _money(row.get("fee_amount")),
                 "extra_amount": _money(row.get("extra_amount")),
@@ -1058,6 +2001,45 @@ async def revenue_dashboard(
             }
             for row in allowed_rows
         ]
+        allowed_store_ids = {item["store_id"] for item in items}
+        month_closes = [
+            {
+                "id": int(row["id"]),
+                "store_id": int(row["store_id"]),
+                "store_code": row.get("store_code"),
+                "store_name": row.get("store_name"),
+                "period_month": row.get("period_month"),
+                "period_start_date": _dt(row.get("period_start_date")),
+                "period_end_date": _dt(row.get("period_end_date")),
+                "version": int(row.get("version") or 1),
+                "nc_amount_before_tax": _money(row.get("nc_amount_before_tax")),
+                "accrued_tax_amount": _money(row.get("accrued_tax_amount")),
+                "nc_control_amount": _money(row.get("nc_control_amount")),
+                "raw_fee_amount": _money(row.get("raw_fee_amount")),
+                "raw_extra_amount": _money(row.get("raw_extra_amount")),
+                "close_adjustment_amount": _money(row.get("close_adjustment_amount")),
+                "final_fee_extra_amount": _money(row.get("final_fee_extra_amount")),
+                "source_snapshot_id": row.get("source_snapshot_id"),
+                "confirmed_at": _dt(row.get("confirmed_at")),
+            }
+            for row in close_rows
+            if int(row["store_id"]) in allowed_store_ids
+        ]
+        close_counts_by_store: dict[int, int] = {}
+        for close in month_closes:
+            close_counts_by_store[close["store_id"]] = close_counts_by_store.get(close["store_id"], 0) + 1
+        visible_store_ids = {item["store_id"] for item in items}
+        fully_closed_store_ids = {
+            store_id
+            for store_id, count in close_counts_by_store.items()
+            if count >= period["period_count"]
+        }
+        if visible_store_ids and fully_closed_store_ids == visible_store_ids:
+            accounting_basis = "MONTH_CLOSED"
+        elif close_counts_by_store:
+            accounting_basis = "MIXED"
+        else:
+            accounting_basis = "REALTIME"
         return {
             "start_date": _dt(start_date),
             "end_date": _dt(end_date),
@@ -1066,9 +2048,13 @@ async def revenue_dashboard(
             "date_basis": {
                 "sales": "financial_date",
                 "fees": "payment_date",
-                "extra": "revenue_date",
+                "extra": period["date_basis"],
             },
-            "fee_scope_note": "收费仅统计已关联结算付款日期或租赁付款日期的数据",
+            "fee_scope_note": "联营收费按财务月付款日期、租赁收费按自然月付款日期统计；剔除票减及保证金，同一来源行只计一次",
+            "accounting_basis": accounting_basis,
+            "fully_closed_store_ids": sorted(fully_closed_store_ids),
+            "month_closes": month_closes,
+            "nc_6051_summary": nc_6051_summary,
             "items": items,
         }
     except HTTPException:
@@ -1085,12 +2071,1777 @@ async def revenue_dashboard(
         ) from exc
 
 
+def _load_month_close_side_details(
+    db: Session,
+    authorized_adjustments: list[dict],
+) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
+    """Load auditable NC and Fuji source rows for authorized pending differences."""
+    if not authorized_adjustments:
+        return {}, {}
+
+    adjustment_ids = [int(row["id"]) for row in authorized_adjustments]
+    id_params = {"adjustment_ids": adjustment_ids}
+    nc_department_sql = _month_close_nc_department_sql()
+    nc_rows = db.execute(
+        text(
+            f"""
+            WITH {_revenue_department_aliases_cte()}
+            SELECT
+              adjustment.id AS adjustment_id,
+              f.pk_detail,
+              f.pk_voucher,
+              TRIM(f.subject_code) AS subject_code,
+              f.explanation,
+              TRIM(f.valuecode) AS department_code,
+              NULLIF(TRIM(f.valuename), '') AS department_name,
+              COALESCE(f.localdebitamount, 0)::numeric AS debit_amount,
+              COALESCE(f.localcreditamount, 0)::numeric AS credit_amount,
+              (
+                COALESCE(f.localcreditamount, 0)
+                - COALESCE(f.localdebitamount, 0)
+              )::numeric AS amount,
+              (
+                COALESCE(f.explanation, '')
+                ~ '计提.*(销项)?税|电费收入结转销项税'
+              ) AS is_accrued_tax,
+              f.load_date
+            FROM revenue_month_close_adjustments adjustment
+            JOIN revenue_month_closes close ON close.id = adjustment.month_close_id
+            JOIN stores store ON store.store_id = close.store_id
+            JOIN bh_dw_gl_detail_fact2 f
+              ON TRIM(f.account_year) = LEFT(close.period_month, 4)
+             AND LPAD(TRIM(f.account_period), 2, '0') = RIGHT(close.period_month, 2)
+             AND TRIM(f.subject_code) = TRIM(adjustment.source_subject_code)
+             AND TRIM(f.valuecode) = ({nc_department_sql})
+             AND TRIM(store.store_code) = ({FINANCE_STORE_CODE_SQL})
+            WHERE adjustment.id IN :adjustment_ids
+            ORDER BY adjustment.id, f.pk_voucher, f.pk_detail, f.load_date
+            """
+        ).bindparams(bindparam("adjustment_ids", expanding=True)),
+        id_params,
+    ).mappings().all()
+
+    fee_type_codes = sorted(
+        {
+            fee_code
+            for fee_codes in REVENUE_SUBJECT_FEE_CODES.values()
+            for fee_code in fee_codes
+        }
+        | {
+            fee_code.strip()
+            for adjustment in authorized_adjustments
+            for fee_code in str(adjustment.get("fee_type_code") or "").split(",")
+            if fee_code.strip()
+        }
+    )
+    fuji_rows = db.execute(
+        text(
+            """
+            WITH selected_closes AS MATERIALIZED (
+              SELECT DISTINCT
+                close.id AS month_close_id,
+                close.period_month,
+                close.period_start_date,
+                close.period_end_date,
+                store.store_code
+              FROM revenue_month_close_adjustments adjustment
+              JOIN revenue_month_closes close ON close.id = adjustment.month_close_id
+              JOIN stores store ON store.store_id = close.store_id
+              WHERE adjustment.id IN :adjustment_ids
+            )
+            SELECT
+              close.month_close_id,
+              close.store_code,
+              u.business_type,
+              u.source_bill_no,
+              u.source_row_no,
+              u.payment_bill_no,
+              CASE
+                WHEN u.business_type = 'RENTAL'
+                  THEN COALESCE(rental_detail.detail_group_code, u.source_group_code)
+                ELSE u.source_group_code
+              END AS source_group_code,
+              COALESCE(group_frame.mfcname, u.source_group_name) AS source_group_name,
+              department_frame.mfcode AS fuji_department_code,
+              department_frame.mfcname AS fuji_department_name,
+              u.supplier_code,
+              u.supplier_name,
+              u.contract_code,
+              u.fee_type_code,
+              u.fee_type_name,
+              CASE
+                WHEN u.business_type = 'JOINT' THEN joint_payment.auditdate
+                ELSE rental_payment.auditdate
+              END AS audit_date,
+              COALESCE(u.tax_included_amount, 0)::numeric AS amount
+            FROM selected_closes close
+            JOIN dw.revenue_fee_unified u
+              ON TRIM(u.store_code) = TRIM(close.store_code)
+            LEFT JOIN ods.erp_suppayhead joint_payment
+              ON u.business_type = 'JOINT'
+             AND joint_payment.sphbillno = u.payment_bill_no
+            LEFT JOIN ods.erp_mallsuppayhead rental_payment
+              ON u.business_type = 'RENTAL'
+             AND rental_payment.sphbillno = u.payment_bill_no
+            LEFT JOIN ods.erp_supsetcharge ticket_charge
+              ON u.business_type = 'JOINT'
+             AND ticket_charge.sscbillno = u.source_bill_no
+             AND ticket_charge.sscrowno = u.source_row_no
+            LEFT JOIN dw.revenue_fee_rental_detail rental_detail
+              ON u.business_type = 'RENTAL'
+             AND rental_detail.source_payment_bill_no = u.source_bill_no
+             AND rental_detail.source_payment_row_no = u.source_row_no
+            LEFT JOIN public.manaframe group_frame
+              ON group_frame.mfcode = CASE
+                WHEN u.business_type = 'RENTAL'
+                  THEN COALESCE(rental_detail.detail_group_code, u.source_group_code)
+                ELSE u.source_group_code
+              END
+            LEFT JOIN public.manaframe department_frame
+              ON department_frame.mfcode = group_frame.mfpcode
+            WHERE TRIM(u.fee_type_code) IN :fee_type_codes
+              AND COALESCE(TRIM(u.fee_type_code), '') NOT LIKE '00%'
+              AND COALESCE(TRIM(ticket_charge.person1), 'N') <> 'Y'
+              AND COALESCE(TRIM(u.fee_type_code), '') NOT IN ('18', '37', '38', '61', '69', '94', '95')
+              AND COALESCE(TRIM(u.fee_type_name), '') !~ '保证金|质保金|代扣代缴保险费'
+              AND COALESCE(TRIM(u.fee_type_name), '') !~ '旅通|瑞祥'
+              AND (
+                (
+                  u.business_type = 'JOINT'
+                  AND joint_payment.auditdate >= close.period_start_date
+                  AND joint_payment.auditdate < close.period_end_date + INTERVAL '1 day'
+                )
+                OR (
+                  u.business_type = 'RENTAL'
+                  AND rental_payment.auditdate >= TO_DATE(
+                    close.period_month || '-01',
+                    'YYYY-MM-DD'
+                  )
+                  AND rental_payment.auditdate < TO_DATE(
+                    close.period_month || '-01',
+                    'YYYY-MM-DD'
+                  ) + INTERVAL '1 month'
+                )
+              )
+            ORDER BY
+              close.month_close_id,
+              audit_date,
+              u.business_type,
+              u.source_bill_no,
+              u.source_row_no
+            """
+        ).bindparams(
+            bindparam("adjustment_ids", expanding=True),
+            bindparam("fee_type_codes", expanding=True),
+        ),
+        {**id_params, "fee_type_codes": fee_type_codes},
+    ).mappings().all()
+
+    nc_details: dict[int, list[dict]] = {}
+    for source in nc_rows:
+        adjustment_id = int(source["adjustment_id"])
+        nc_details.setdefault(adjustment_id, []).append(
+            {
+                "detail_id": source.get("pk_detail"),
+                "voucher_id": source.get("pk_voucher"),
+                "subject_code": source.get("subject_code"),
+                "department_code": source.get("department_code"),
+                "department_name": source.get("department_name"),
+                "explanation": source.get("explanation"),
+                "debit_amount": _money(source.get("debit_amount")),
+                "credit_amount": _money(source.get("credit_amount")),
+                "amount": _money(source.get("amount")),
+                "is_accrued_tax": bool(source.get("is_accrued_tax")),
+                "load_date": _dt(source.get("load_date")),
+            }
+        )
+
+    adjustments_by_close: dict[int, list[dict]] = {}
+    for adjustment in authorized_adjustments:
+        adjustments_by_close.setdefault(int(adjustment["month_close_id"]), []).append(
+            adjustment
+        )
+
+    fuji_details: dict[int, list[dict]] = {}
+    for source in fuji_rows:
+        source_fee_code = str(source.get("fee_type_code") or "").strip()
+        source_group_code = str(source.get("source_group_code") or "").strip()
+        source_supplier_code = str(source.get("supplier_code") or "").strip()
+        source_business_type = str(source.get("business_type") or "").strip()
+        source_department_code, source_department_name = (
+            _month_close_fuji_department(
+                source.get("store_code"),
+                source_group_code,
+                source.get("fuji_department_code"),
+                source.get("fuji_department_name"),
+            )
+        )
+        detail = {
+            "business_type": source.get("business_type"),
+            "source_bill_no": source.get("source_bill_no"),
+            "source_row_no": _dt(source.get("source_row_no")),
+            "payment_bill_no": source.get("payment_bill_no"),
+            "source_group_code": source.get("source_group_code"),
+            "source_group_name": source.get("source_group_name"),
+            "fuji_department_code": source_department_code,
+            "fuji_department_name": source_department_name,
+            "supplier_code": source.get("supplier_code"),
+            "supplier_name": source.get("supplier_name"),
+            "contract_code": source.get("contract_code"),
+            "fee_type_code": source.get("fee_type_code"),
+            "fee_type_name": source.get("fee_type_name"),
+            "audit_date": _dt(source.get("audit_date")),
+            "amount": _money(source.get("amount")),
+        }
+        for adjustment in adjustments_by_close.get(
+            int(source["month_close_id"]), []
+        ):
+            adjustment_department_code = _month_close_adjustment_fuji_department(
+                adjustment
+            )
+            mapped_fee_codes = set(
+                REVENUE_SUBJECT_FEE_CODES.get(
+                    str(adjustment.get("source_subject_code") or "").strip(),
+                    (),
+                )
+            )
+            explicit_fee_codes = {
+                value.strip()
+                for value in str(adjustment.get("fee_type_code") or "").split(",")
+                if value.strip()
+            }
+            adjustment_group_code = str(
+                adjustment.get("source_group_code") or ""
+            ).strip()
+            adjustment_supplier_code = str(
+                adjustment.get("supplier_code") or ""
+            ).strip()
+            adjustment_business_type = str(
+                adjustment.get("source_business_type") or ""
+            ).strip()
+            if source_department_code != adjustment_department_code:
+                continue
+            if source_fee_code not in mapped_fee_codes | explicit_fee_codes:
+                continue
+            if adjustment_group_code and source_group_code != adjustment_group_code:
+                continue
+            if (
+                adjustment_supplier_code
+                and source_supplier_code != adjustment_supplier_code
+            ):
+                continue
+            if (
+                adjustment_business_type in {"JOINT", "RENTAL"}
+                and source_business_type != adjustment_business_type
+            ):
+                continue
+            fuji_details.setdefault(int(adjustment["id"]), []).append(detail)
+    return nc_details, fuji_details
+
+
+def _month_close_match_text(value: object) -> str:
+    """Normalize supplier/explanation text for conservative exact-row matching."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(character for character in normalized if character.isalnum())
+
+
+def _month_close_supplier_tokens(value: object) -> set[str]:
+    """Return the full supplier name and a safe parent-company alias if applicable."""
+    full_name = _month_close_match_text(value)
+    if not full_name:
+        return set()
+    tokens = {full_name}
+    for company_marker in (
+        "有限责任公司",
+        "股份有限公司",
+        "有限公司",
+        "股份公司",
+    ):
+        marker_index = full_name.find(company_marker)
+        if marker_index < 0:
+            continue
+        marker_end = marker_index + len(company_marker)
+        branch_suffix = full_name[marker_end:]
+        if branch_suffix.endswith("分公司"):
+            parent_name = full_name[:marker_end]
+            if len(parent_name) >= 6:
+                tokens.add(parent_name)
+        break
+    return tokens
+
+
+def _month_close_supplier_match_tokens(value: object) -> set[str]:
+    """Return conservative supplier tokens that also tolerate NC name truncation."""
+    tokens: set[str] = set()
+    supplier_aliases = set(_month_close_supplier_tokens(value))
+    raw_name = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    individual_business_qualifier = "(个体工商户)"
+    if raw_name.endswith(individual_business_qualifier):
+        unqualified_name = raw_name[: -len(individual_business_qualifier)].strip()
+        if len(_month_close_match_text(unqualified_name)) >= 6:
+            supplier_aliases.update(
+                _month_close_supplier_tokens(unqualified_name)
+            )
+    for company_marker in (
+        "有限责任公司",
+        "股份有限公司",
+        "有限公司",
+        "股份公司",
+    ):
+        if not raw_name.endswith(company_marker):
+            continue
+        company_stem = raw_name[: -len(company_marker)]
+        if company_stem.endswith(")") and "(" in company_stem:
+            opening_index = company_stem.rfind("(")
+            location = company_stem[opening_index + 1 : -1]
+            if 1 <= len(location) <= 8:
+                supplier_aliases.update(
+                    _month_close_supplier_tokens(
+                        f"{company_stem[:opening_index]}{company_marker}"
+                    )
+                )
+        break
+    for supplier_alias in supplier_aliases:
+        tokens.add(supplier_alias)
+        for company_marker in (
+            "有限责任公司",
+            "股份有限公司",
+            "有限公司",
+            "股份公司",
+        ):
+            if not supplier_alias.endswith(company_marker):
+                continue
+            company_stem = supplier_alias[: -len(company_marker)]
+            if len(company_stem) >= 6:
+                tokens.add(company_stem)
+            break
+    # NC explanations have a fixed-width supplier segment and can lose one or
+    # two trailing characters. Prefix aliases remain conservative because the
+    # caller still requires the same store, department, subject/fee and cents.
+    for supplier_alias in tuple(tokens):
+        for trim_length in (1, 2):
+            if len(supplier_alias) - trim_length >= 8:
+                tokens.add(supplier_alias[:-trim_length])
+    return tokens
+
+
+def _month_close_supplier_matches_explanation(
+    supplier_name: object,
+    explanation: object,
+) -> bool:
+    """Match an NC explanation to a Fuji supplier without using amount alone.
+
+    NC sometimes keeps only the leading location-and-brand portion of a long
+    legal supplier name. Existing full-name/legal-suffix aliases are preferred;
+    otherwise require at least eight consecutive characters from the beginning
+    of the normalized supplier name. This is longer than a shared district such
+    as ``常州市新北区`` and avoids matching on generic company suffixes.
+    """
+    normalized_explanation = _month_close_match_text(explanation)
+    if not normalized_explanation:
+        return False
+
+    supplier_tokens = {
+        token
+        for token in _month_close_supplier_match_tokens(supplier_name)
+        if len(token) >= 4
+    }
+    if any(token in normalized_explanation for token in supplier_tokens):
+        return True
+
+    normalized_supplier = _month_close_match_text(supplier_name)
+    minimum_brand_prefix_length = 8
+    for prefix_length in range(
+        len(normalized_supplier),
+        minimum_brand_prefix_length - 1,
+        -1,
+    ):
+        if normalized_supplier[:prefix_length] in normalized_explanation:
+            return True
+    return False
+
+
+def _month_close_supplier_key(value: object) -> str:
+    aliases = _month_close_supplier_tokens(value)
+    return min(aliases, key=lambda token: (len(token), token)) if aliases else ""
+
+
+def _month_close_fuji_offset_scope(detail: dict) -> tuple[str, ...] | None:
+    """Return the conservative identity used for Fuji reversal offsetting."""
+    business_type = str(detail.get("business_type") or "").strip().upper()
+    source_bill_no = str(detail.get("source_bill_no") or "").strip().upper()
+    source_group_code = str(detail.get("source_group_code") or "").strip().upper()
+    supplier_key = str(detail.get("supplier_code") or "").strip().upper()
+    if not supplier_key:
+        supplier_key = _month_close_supplier_key(detail.get("supplier_name"))
+    fee_key = str(detail.get("fee_type_code") or "").strip().upper()
+    if not fee_key:
+        fee_key = _month_close_match_text(detail.get("fee_type_name"))
+    audit_date = str(detail.get("audit_date") or "").strip()
+    scope = (
+        business_type,
+        source_bill_no,
+        source_group_code,
+        supplier_key,
+        fee_key,
+        audit_date,
+    )
+    return scope if all(scope) else None
+
+
+def _offset_month_close_fuji_rows(
+    fuji_details: list[dict],
+) -> tuple[set[int], list[dict]]:
+    """Pair exact positive/negative Fuji reversals before matching against NC."""
+    candidates: dict[
+        tuple[str, ...],
+        dict[Decimal, dict[str, list[int]]],
+    ] = {}
+    for index, detail in enumerate(fuji_details):
+        scope = _month_close_fuji_offset_scope(detail)
+        amount = Decimal(str(detail.get("amount") or 0)).quantize(Decimal("0.01"))
+        if scope is None or amount == 0:
+            continue
+        sign = "positive" if amount > 0 else "negative"
+        candidates.setdefault(scope, {}).setdefault(
+            abs(amount),
+            {"positive": [], "negative": []},
+        )[sign].append(index)
+
+    matched_indexes: set[int] = set()
+    offset_matches: list[dict] = []
+    for amount_groups in candidates.values():
+        for sign_groups in amount_groups.values():
+            pair_count = min(
+                len(sign_groups["positive"]),
+                len(sign_groups["negative"]),
+            )
+            for pair_index in range(pair_count):
+                indexes = sorted(
+                    (
+                        sign_groups["positive"][pair_index],
+                        sign_groups["negative"][pair_index],
+                    )
+                )
+                matched_indexes.update(indexes)
+                details = [fuji_details[index] for index in indexes]
+                offset_matches.append(
+                    {
+                        "match_type": "FUJI_OFFSET",
+                        "amount": 0.0,
+                        "supplier_name": details[0].get("supplier_name"),
+                        "nc_detail_id": None,
+                        "nc_voucher_id": None,
+                        "fuji_source_bill_no": ",".join(
+                            str(detail.get("source_bill_no") or "")
+                            for detail in details
+                        ),
+                        "fuji_source_row_no": ",".join(
+                            str(detail.get("source_row_no") or "")
+                            for detail in details
+                        ),
+                        "source_group_code": details[0].get("source_group_code"),
+                    }
+                )
+    return matched_indexes, offset_matches
+
+
+def _reconcile_month_close_detail_rows(
+    nc_details: list[dict],
+    fuji_details: list[dict],
+) -> dict:
+    """Offset Fuji reversals, then remove exact NC/Fuji fee matches.
+
+    The enclosing adjustment has already fixed the store, department and subject-to-fee
+    scope. Exact positive/negative Fuji rows first offset only inside the same business,
+    source document, group, supplier, fee item and audit date. Supplier stems then
+    tolerate NC's truncated legal suffixes, while equal cents and unambiguous supplier
+    grouping prevent amount-only coincidences. A single NC row may match multiple Fuji
+    rows when their supplier total is equal. Accrued-tax rows remain separate because
+    they do not have a Fuji fee counterpart.
+    """
+    tax_details = [detail for detail in nc_details if detail.get("is_accrued_tax")]
+    nc_fee_details = [
+        detail for detail in nc_details if not detail.get("is_accrued_tax")
+    ]
+    matched_nc_indexes: set[int] = set()
+    matched_fuji_indexes, fuji_offset_matches = _offset_month_close_fuji_rows(
+        fuji_details
+    )
+    auto_matches: list[dict] = list(fuji_offset_matches)
+
+    for fuji_index, fuji_detail in enumerate(fuji_details):
+        if fuji_index in matched_fuji_indexes:
+            continue
+        supplier_name = str(fuji_detail.get("supplier_name") or "").strip()
+        fuji_amount = Decimal(str(fuji_detail.get("amount") or 0)).quantize(
+            Decimal("0.01")
+        )
+        for nc_index, nc_detail in enumerate(nc_fee_details):
+            if nc_index in matched_nc_indexes:
+                continue
+            nc_amount = Decimal(str(nc_detail.get("amount") or 0)).quantize(
+                Decimal("0.01")
+            )
+            if nc_amount != fuji_amount:
+                continue
+            if not _month_close_supplier_matches_explanation(
+                supplier_name,
+                nc_detail.get("explanation"),
+            ):
+                continue
+            matched_nc_indexes.add(nc_index)
+            matched_fuji_indexes.add(fuji_index)
+            auto_matches.append(
+                {
+                    "amount": _money(fuji_amount),
+                    "supplier_name": supplier_name,
+                    "nc_detail_id": nc_detail.get("detail_id"),
+                    "nc_voucher_id": nc_detail.get("voucher_id"),
+                    "fuji_source_bill_no": fuji_detail.get("source_bill_no"),
+                    "fuji_source_row_no": fuji_detail.get("source_row_no"),
+                    "source_group_code": fuji_detail.get("source_group_code"),
+                }
+            )
+            break
+
+    remaining_fuji_by_supplier: dict[str, list[int]] = {}
+    for fuji_index, fuji_detail in enumerate(fuji_details):
+        if fuji_index in matched_fuji_indexes:
+            continue
+        supplier_key = _month_close_supplier_key(fuji_detail.get("supplier_name"))
+        if supplier_key:
+            remaining_fuji_by_supplier.setdefault(supplier_key, []).append(fuji_index)
+
+    for nc_index, nc_detail in enumerate(nc_fee_details):
+        if nc_index in matched_nc_indexes:
+            continue
+        nc_amount = Decimal(str(nc_detail.get("amount") or 0)).quantize(
+            Decimal("0.01")
+        )
+        aggregate_candidates: list[tuple[str, list[int], Decimal]] = []
+        for supplier_key, fuji_indexes in remaining_fuji_by_supplier.items():
+            if any(index in matched_fuji_indexes for index in fuji_indexes):
+                continue
+            supplier_name = fuji_details[fuji_indexes[0]].get("supplier_name")
+            if not _month_close_supplier_matches_explanation(
+                supplier_name,
+                nc_detail.get("explanation"),
+            ):
+                continue
+            supplier_amount = sum(
+                (
+                    Decimal(str(fuji_details[index].get("amount") or 0))
+                    for index in fuji_indexes
+                ),
+                Decimal("0"),
+            ).quantize(Decimal("0.01"))
+            if supplier_amount == nc_amount:
+                aggregate_candidates.append(
+                    (supplier_key, fuji_indexes, supplier_amount)
+                )
+        if len(aggregate_candidates) != 1:
+            continue
+        _supplier_key, fuji_indexes, supplier_amount = aggregate_candidates[0]
+        matched_nc_indexes.add(nc_index)
+        matched_fuji_indexes.update(fuji_indexes)
+        matched_fuji_details = [fuji_details[index] for index in fuji_indexes]
+        source_group_codes = {
+            str(detail.get("source_group_code") or "").strip()
+            for detail in matched_fuji_details
+            if str(detail.get("source_group_code") or "").strip()
+        }
+        auto_matches.append(
+            {
+                "amount": _money(supplier_amount),
+                "supplier_name": matched_fuji_details[0].get("supplier_name"),
+                "nc_detail_id": nc_detail.get("detail_id"),
+                "nc_voucher_id": nc_detail.get("voucher_id"),
+                "fuji_source_bill_no": ",".join(
+                    str(detail.get("source_bill_no") or "")
+                    for detail in matched_fuji_details
+                ),
+                "fuji_source_row_no": ",".join(
+                    str(detail.get("source_row_no") or "")
+                    for detail in matched_fuji_details
+                ),
+                "source_group_code": (
+                    next(iter(source_group_codes))
+                    if len(source_group_codes) == 1
+                    else None
+                ),
+            }
+        )
+
+    # Some suppliers are split into several NC rows and several Fuji rows. After
+    # exact-row and one-NC-to-many-Fuji matching, reconcile the remaining rows only
+    # when every NC explanation identifies one unambiguous supplier and both
+    # supplier totals agree to the cent.
+    remaining_supplier_groups = {
+        supplier_key: [
+            index for index in fuji_indexes if index not in matched_fuji_indexes
+        ]
+        for supplier_key, fuji_indexes in remaining_fuji_by_supplier.items()
+    }
+    remaining_supplier_groups = {
+        supplier_key: indexes
+        for supplier_key, indexes in remaining_supplier_groups.items()
+        if indexes
+    }
+    nc_supplier_candidates: dict[int, list[str]] = {}
+    for nc_index, nc_detail in enumerate(nc_fee_details):
+        if nc_index in matched_nc_indexes:
+            continue
+        candidate_keys = []
+        for supplier_key, fuji_indexes in remaining_supplier_groups.items():
+            supplier_name = fuji_details[fuji_indexes[0]].get("supplier_name")
+            if _month_close_supplier_matches_explanation(
+                supplier_name,
+                nc_detail.get("explanation"),
+            ):
+                candidate_keys.append(supplier_key)
+        nc_supplier_candidates[nc_index] = candidate_keys
+
+    for supplier_key, fuji_indexes in remaining_supplier_groups.items():
+        if any(index in matched_fuji_indexes for index in fuji_indexes):
+            continue
+        nc_indexes = [
+            nc_index
+            for nc_index, candidate_keys in nc_supplier_candidates.items()
+            if candidate_keys == [supplier_key]
+            and nc_index not in matched_nc_indexes
+        ]
+        if len(nc_indexes) < 2 or len(fuji_indexes) < 2:
+            continue
+        nc_total = sum(
+            (
+                Decimal(str(nc_fee_details[index].get("amount") or 0))
+                for index in nc_indexes
+            ),
+            Decimal("0"),
+        ).quantize(Decimal("0.01"))
+        fuji_total = sum(
+            (
+                Decimal(str(fuji_details[index].get("amount") or 0))
+                for index in fuji_indexes
+            ),
+            Decimal("0"),
+        ).quantize(Decimal("0.01"))
+        if nc_total != fuji_total:
+            continue
+        matched_nc_indexes.update(nc_indexes)
+        matched_fuji_indexes.update(fuji_indexes)
+        matched_fuji_details = [fuji_details[index] for index in fuji_indexes]
+        source_group_codes = {
+            str(detail.get("source_group_code") or "").strip()
+            for detail in matched_fuji_details
+            if str(detail.get("source_group_code") or "").strip()
+        }
+        auto_matches.append(
+            {
+                "amount": _money(fuji_total),
+                "supplier_name": matched_fuji_details[0].get("supplier_name"),
+                "nc_detail_id": ",".join(
+                    str(nc_fee_details[index].get("detail_id") or "")
+                    for index in nc_indexes
+                ),
+                "nc_voucher_id": ",".join(
+                    str(nc_fee_details[index].get("voucher_id") or "")
+                    for index in nc_indexes
+                ),
+                "fuji_source_bill_no": ",".join(
+                    str(detail.get("source_bill_no") or "")
+                    for detail in matched_fuji_details
+                ),
+                "fuji_source_row_no": ",".join(
+                    str(detail.get("source_row_no") or "")
+                    for detail in matched_fuji_details
+                ),
+                "source_group_code": (
+                    next(iter(source_group_codes))
+                    if len(source_group_codes) == 1
+                    else None
+                ),
+            }
+        )
+
+    return {
+        "nc_details": [
+            detail
+            for index, detail in enumerate(nc_fee_details)
+            if index not in matched_nc_indexes
+        ],
+        "tax_details": tax_details,
+        "tax_detail_count": len(tax_details),
+        "tax_detail_amount": _money(
+            sum(
+                (
+                    Decimal(str(detail.get("amount") or 0))
+                    for detail in tax_details
+                ),
+                Decimal("0"),
+            )
+        ),
+        "fuji_details": [
+            detail
+            for index, detail in enumerate(fuji_details)
+            if index not in matched_fuji_indexes
+        ],
+        "auto_matched_count": len(auto_matches),
+        "fuji_offset_count": len(fuji_offset_matches),
+        "fuji_offset_amount": 0.0,
+        "auto_matched_amount": _money(
+            sum(
+                (Decimal(str(item["amount"])) for item in auto_matches),
+                Decimal("0"),
+            )
+        ),
+        "auto_matches": auto_matches,
+    }
+
+
+def _month_close_binding_line_key(
+    source_type: str,
+    detail: dict,
+    index: int,
+) -> str:
+    """Build a stable, auditable key for one unmatched NC or Fuji source row."""
+    if source_type == "NC":
+        identity = (
+            detail.get("detail_id"),
+            detail.get("voucher_id"),
+        )
+    elif source_type == "FUJI":
+        identity = (
+            detail.get("business_type"),
+            detail.get("source_bill_no"),
+            detail.get("source_row_no"),
+        )
+    else:
+        identity = (detail.get("adjustment_id"),)
+    normalized_parts = [str(value or "").strip() for value in identity]
+    normalized = "|".join(normalized_parts)
+    suffix = normalized if any(normalized_parts) else f"missing-identity-{index}"
+    return f"{source_type}|{suffix}"
+
+
+def _month_close_unbound_source_details(
+    reconciled_details: dict,
+    bound_source_line_keys: set[str] | None = None,
+) -> dict:
+    """Hide source rows already consumed by an earlier partial binding."""
+    bound_source_line_keys = bound_source_line_keys or set()
+    result = dict(reconciled_details)
+    for source_type, detail_key in (("NC", "nc_details"), ("FUJI", "fuji_details")):
+        details = list(reconciled_details.get(detail_key) or [])
+        result[detail_key] = [
+            detail
+            for index, detail in enumerate(details)
+            if _month_close_binding_line_key(source_type, detail, index)
+            not in bound_source_line_keys
+        ]
+    return result
+
+
+def _month_close_bindable_decimal(row: dict) -> Decimal:
+    """Return the non-tax difference that still needs a cabinet assignment."""
+    adjustment_amount = Decimal(str(row.get("adjustment_amount") or 0))
+    accrued_tax_amount = Decimal(str(row.get("accrued_tax_amount") or 0))
+    return (adjustment_amount - accrued_tax_amount).quantize(Decimal("0.01"))
+
+
+def _month_close_bindable_amount(row: dict) -> float:
+    return _money(_month_close_bindable_decimal(row))
+
+
+def _month_close_binding_target_amount(row: dict) -> float:
+    """Return the NC/Fuji comparison target before accrued tax."""
+    final_amount = Decimal(str(row.get("final_amount") or 0))
+    accrued_tax_amount = Decimal(str(row.get("accrued_tax_amount") or 0))
+    return _money((final_amount - accrued_tax_amount).quantize(Decimal("0.01")))
+
+
+def _month_close_binding_lines(
+    row: dict,
+    reconciled_details: dict,
+    bound_source_line_keys: set[str] | None = None,
+) -> list[dict]:
+    """Split one pending adjustment into source-row binding operations.
+
+    The total suggested binding amount always equals the current pending adjustment.
+    NC/Fuji gross source amounts are only weights; the month-close adjustment itself
+    remains the amount posted to the selected cabinet and counter group.
+    """
+    bound_source_line_keys = bound_source_line_keys or set()
+    pending_amount = _month_close_bindable_decimal(row)
+    direction = str(row.get("difference_direction") or "OTHER").upper()
+    nc_details = list(reconciled_details.get("nc_details") or [])
+    fuji_details = list(reconciled_details.get("fuji_details") or [])
+
+    if direction == "NC_ONLY":
+        source_type, source_details = "NC", nc_details
+    elif direction == "FUJI_ONLY":
+        source_type, source_details = "FUJI", fuji_details
+    elif direction == "AMOUNT_DIFFERENCE":
+        if pending_amount >= 0:
+            source_type, source_details = "NC", nc_details
+        else:
+            source_type, source_details = "FUJI", fuji_details
+    elif nc_details:
+        source_type, source_details = "NC", nc_details
+    else:
+        source_type, source_details = "FUJI", fuji_details
+
+    if not source_details:
+        alternate_type = "FUJI" if source_type == "NC" else "NC"
+        alternate_details = fuji_details if alternate_type == "FUJI" else nc_details
+        if alternate_details:
+            source_type, source_details = alternate_type, alternate_details
+
+    candidates: list[dict] = []
+    for index, detail in enumerate(source_details):
+        source_line_key = _month_close_binding_line_key(source_type, detail, index)
+        if source_line_key in bound_source_line_keys:
+            continue
+        candidates.append(
+            {
+                "source_line_key": source_line_key,
+                "source_type": source_type,
+                "source_detail_id": detail.get("detail_id"),
+                "source_voucher_id": detail.get("voucher_id"),
+                "source_bill_no": detail.get("source_bill_no"),
+                "source_row_no": detail.get("source_row_no"),
+                "source_amount": _money(detail.get("amount")),
+            }
+        )
+
+    if not candidates:
+        fallback_detail = {"adjustment_id": row.get("id")}
+        fallback_key = _month_close_binding_line_key("ADJUSTMENT", fallback_detail, 0)
+        if fallback_key not in bound_source_line_keys:
+            candidates.append(
+                {
+                    "source_line_key": fallback_key,
+                    "source_type": "ADJUSTMENT",
+                    "source_detail_id": None,
+                    "source_voucher_id": None,
+                    "source_bill_no": None,
+                    "source_row_no": None,
+                    "source_amount": _money(pending_amount),
+                }
+            )
+
+    if not candidates:
+        return []
+
+    weights = [abs(Decimal(str(line.get("source_amount") or 0))) for line in candidates]
+    total_weight = sum(weights, Decimal("0"))
+    if total_weight == 0:
+        weights = [Decimal("1") for _line in candidates]
+        total_weight = Decimal(len(candidates))
+
+    allocated = Decimal("0")
+    for index, line in enumerate(candidates):
+        if index == len(candidates) - 1:
+            suggested_amount = pending_amount - allocated
+        else:
+            suggested_amount = (
+                pending_amount * weights[index] / total_weight
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            allocated += suggested_amount
+        line["suggested_binding_amount"] = _money(suggested_amount)
+    return candidates
+
+
+def _load_bound_month_close_source_line_keys(
+    db: Session,
+    adjustment_ids: list[int],
+) -> dict[int, set[str]]:
+    """Return source rows already consumed by earlier partial bindings."""
+    if not adjustment_ids:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT
+              parent_adjustment_id,
+              raw_payload ->> 'manual_binding_source_line_key' AS source_line_key
+            FROM revenue_month_close_adjustments
+            WHERE parent_adjustment_id IN :adjustment_ids
+              AND binding_status = 'BOUND'
+              AND NULLIF(
+                TRIM(raw_payload ->> 'manual_binding_source_line_key'),
+                ''
+              ) IS NOT NULL
+            """
+        ).bindparams(bindparam("adjustment_ids", expanding=True)),
+        {"adjustment_ids": adjustment_ids},
+    ).mappings().all()
+    result: dict[int, set[str]] = {}
+    for row in rows:
+        result.setdefault(int(row["parent_adjustment_id"]), set()).add(
+            str(row["source_line_key"])
+        )
+    return result
+
+
+def _filter_month_close_display_rows(
+    rows: list[dict],
+    reconciled_details_by_adjustment: dict[int, dict],
+) -> list[dict]:
+    """Hide tax detail and rows that have no remaining NC/Fuji fee variance."""
+    visible_rows: list[dict] = []
+    for row in rows:
+        adjustment_id = int(row["id"])
+        details = reconciled_details_by_adjustment.get(adjustment_id)
+        if _month_close_bindable_decimal(row) == 0:
+            continue
+        if details is None:
+            visible_rows.append(row)
+            continue
+        expected_tax = Decimal(str(row.get("accrued_tax_amount") or 0)).quantize(
+            Decimal("0.01")
+        )
+        source_tax = Decimal(str(details.get("tax_detail_amount") or 0)).quantize(
+            Decimal("0.01")
+        )
+        tax_detail_count = int(details.get("tax_detail_count") or 0)
+        tax_reconciled = expected_tax == source_tax
+        if tax_reconciled:
+            details["reconciled_tax_amount"] = _money(source_tax)
+        details["tax_details"] = []
+        details["tax_detail_count"] = 0
+        details["tax_detail_amount"] = 0.0
+        has_unmatched_fees = bool(
+            details.get("nc_details") or details.get("fuji_details")
+        )
+        has_reconciliation_evidence = bool(
+            details.get("auto_matched_count") or tax_detail_count
+        )
+        if (
+            not has_unmatched_fees
+            and has_reconciliation_evidence
+        ):
+            continue
+        visible_rows.append(row)
+    return visible_rows
+
+
+def _month_close_direction_summary(rows: list[dict]) -> dict[str, dict]:
+    summary = {}
+    for direction in ("NC_ONLY", "FUJI_ONLY", "AMOUNT_DIFFERENCE", "OTHER"):
+        direction_rows = [
+            row for row in rows if row.get("difference_direction") == direction
+        ]
+        summary[direction] = {
+            "count": len(direction_rows),
+            "amount": _money(
+                sum(
+                    (
+                        _month_close_bindable_decimal(row)
+                        for row in direction_rows
+                    ),
+                    Decimal("0"),
+                )
+            ),
+        }
+    return summary
+
+
+def _month_close_store_summaries(
+    visible_rows: list[dict],
+    allowed_rows: list[dict],
+    reconciled_details_by_adjustment: dict[int, dict],
+) -> list[dict]:
+    """Summarize unresolved and auto-matched month-close rows by store."""
+    visible_store_ids = sorted(
+        {int(row["store_id"]) for row in visible_rows},
+        key=lambda store_id: min(
+            str(row.get("store_code") or "")
+            for row in visible_rows
+            if int(row["store_id"]) == store_id
+        ),
+    )
+    summaries = []
+    for store_id in visible_store_ids:
+        store_visible_rows = [
+            row for row in visible_rows if int(row["store_id"]) == store_id
+        ]
+        store_allowed_rows = [
+            row for row in allowed_rows if int(row["store_id"]) == store_id
+        ]
+        first_row = store_visible_rows[0]
+        auto_matched_count = sum(
+            int(
+                reconciled_details_by_adjustment.get(int(row["id"]), {}).get(
+                    "auto_matched_count", 0
+                )
+                or 0
+            )
+            for row in store_allowed_rows
+        )
+        auto_matched_amount = _money(
+            sum(
+                (
+                    Decimal(
+                        str(
+                            reconciled_details_by_adjustment.get(
+                                int(row["id"]), {}
+                            ).get("auto_matched_amount", 0)
+                            or 0
+                        )
+                    )
+                    for row in store_allowed_rows
+                ),
+                Decimal("0"),
+            )
+        )
+        summaries.append(
+            {
+                "store_id": store_id,
+                "store_code": first_row.get("store_code"),
+                "store_name": first_row.get("store_name"),
+                "pending_count": len(store_visible_rows),
+                "pending_amount": _money(
+                    sum(
+                        (
+                            _month_close_bindable_decimal(row)
+                            for row in store_visible_rows
+                        ),
+                        Decimal("0"),
+                    )
+                ),
+                "auto_matched_count": auto_matched_count,
+                "auto_matched_amount": auto_matched_amount,
+                "direction_summary": _month_close_direction_summary(
+                    store_visible_rows
+                ),
+            }
+        )
+    return summaries
+
+
+@router.get("/dashboard/month-close-bindings")
+async def revenue_month_close_pending_bindings(
+    start_date: date,
+    end_date: date,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List every unresolved NC/Fuji month-close difference in both directions."""
+    require_permission(db, current_user, "revenue.dashboard.view")
+    period = _dashboard_financial_period(
+        start_date=start_date,
+        end_date=end_date,
+        financial_year=financial_year,
+        financial_month=financial_month,
+    )
+    params: dict = {"start_date": start_date, "end_date": end_date}
+    if period.get("period_month_start"):
+        params["period_month_start"] = period["period_month_start"]
+        params["period_month_end"] = period["period_month_end"]
+
+    rows = db.execute(
+        text(
+            f"""
+            WITH {_revenue_department_aliases_cte()}
+            SELECT
+              adjustment.id,
+              close.id AS month_close_id,
+              close.store_id,
+              store.store_code,
+              store.store_name,
+              close.period_month,
+              adjustment.target_component,
+              adjustment.adjustment_category,
+              COALESCE(
+                department_alias.canonical_department_code,
+                adjustment.source_department_code
+              ) AS department_code,
+              COALESCE(
+                department_alias.canonical_department_name,
+                adjustment.source_department_name
+              ) AS department_name,
+              adjustment.source_department_code,
+              adjustment.source_department_name,
+              adjustment.source_subject_code,
+              adjustment.source_subject_name,
+              adjustment.source_business_type,
+              adjustment.source_group_code,
+              adjustment.source_group_name,
+              CASE
+                WHEN adjustment.source_business_type = 'NC_EXTRA_DIFFERENCE'
+                  THEN 'NC_ONLY'
+                WHEN adjustment.source_business_type = 'FEE_DIFFERENCE'
+                  THEN 'AMOUNT_DIFFERENCE'
+                WHEN adjustment.source_business_type IN ('JOINT', 'RENTAL')
+                  THEN 'FUJI_ONLY'
+                ELSE 'OTHER'
+              END AS difference_direction,
+              adjustment.supplier_code,
+              adjustment.supplier_name,
+              adjustment.fee_type_code,
+              adjustment.fee_type_name,
+              adjustment.raw_amount,
+              adjustment.accrued_tax_amount,
+              adjustment.adjustment_amount,
+              adjustment.final_amount,
+              adjustment.adjustment_reason,
+              adjustment.allocation_basis,
+              adjustment.created_at
+            FROM revenue_month_closes close
+            JOIN stores store ON store.store_id = close.store_id
+            JOIN revenue_month_close_adjustments adjustment
+              ON adjustment.month_close_id = close.id
+             AND adjustment.binding_status = 'PENDING'
+            LEFT JOIN revenue_department_aliases department_alias
+              ON TRIM(department_alias.store_code) = TRIM(store.store_code)
+             AND department_alias.source_department_code = NULLIF(
+               TRIM(adjustment.source_department_code),
+               ''
+             )
+            WHERE close.status = 'CONFIRMED'
+              AND {period['close_filter']}
+            ORDER BY
+              store.store_code,
+              adjustment.source_department_code,
+              adjustment.source_subject_code,
+              ABS(adjustment.adjustment_amount) DESC,
+              adjustment.id
+            """
+        ),
+        params,
+    ).mappings().all()
+    scope = load_business_scope(db, current_user, fallback_resource_code="revenue")
+    allowed = _collapse_legacy_mapped_fuji_rows(
+        [
+            dict(row)
+            for row in rows
+            if _dashboard_row_allowed(scope, dict(row))
+            and not _is_fuji_non_matchable_fee_row(
+                row.get("fee_type_code"),
+                row.get("fee_type_name"),
+            )
+            and not _is_non_fuji_month_close_department(dict(row))
+        ]
+    )
+    nc_details_by_adjustment, fuji_details_by_adjustment = _load_month_close_side_details(
+        db,
+        allowed,
+    )
+    reconciled_details_by_adjustment = {
+        int(row["id"]): _reconcile_month_close_detail_rows(
+            nc_details_by_adjustment.get(int(row["id"]), []),
+            fuji_details_by_adjustment.get(int(row["id"]), []),
+        )
+        for row in allowed
+    }
+    bound_source_line_keys_by_adjustment = _load_bound_month_close_source_line_keys(
+        db,
+        [int(row["id"]) for row in allowed],
+    )
+    auto_matched_count = sum(
+        details["auto_matched_count"]
+        for details in reconciled_details_by_adjustment.values()
+    )
+    auto_matched_amount = _money(
+        sum(
+            (
+                Decimal(str(details["auto_matched_amount"]))
+                for details in reconciled_details_by_adjustment.values()
+            ),
+            Decimal("0"),
+        )
+    )
+    visible_rows = _filter_month_close_display_rows(
+        allowed,
+        reconciled_details_by_adjustment,
+    )
+    unbound_details_by_adjustment = {
+        int(row["id"]): _month_close_unbound_source_details(
+            reconciled_details_by_adjustment[int(row["id"])],
+            bound_source_line_keys_by_adjustment.get(int(row["id"]), set()),
+        )
+        for row in visible_rows
+    }
+    direction_summary = _month_close_direction_summary(visible_rows)
+    store_summaries = _month_close_store_summaries(
+        visible_rows,
+        allowed,
+        reconciled_details_by_adjustment,
+    )
+    store_ids = sorted({int(row["store_id"]) for row in visible_rows})
+    unit_options = []
+    if store_ids:
+        unit_rows = db.execute(
+            text(
+                """
+                SELECT DISTINCT
+                  store.store_id,
+                  unit.id AS unit_id,
+                  unit.unit_code,
+                  floor.name AS floor_name,
+                  COALESCE(binding.counter_group_id, legacy_group.group_id) AS group_id,
+                  NULLIF(TRIM(contract_group.cmfmfid), '') AS group_code,
+                  COALESCE(
+                    NULLIF(TRIM(group_frame.mfcname), ''),
+                    NULLIF(TRIM(legacy_group.group_name), ''),
+                    NULLIF(TRIM(contract_group.cmfmfid), '')
+                  ) AS group_name,
+                  NULLIF(TRIM(department_frame.mfcode), '') AS group_department_code,
+                  NULLIF(TRIM(department_frame.mfcname), '') AS group_department_name
+                FROM business_units unit
+                JOIN floors floor ON floor.id = unit.floor_id
+                JOIN stores store
+                  ON TRIM(store.store_code) = TRIM(floor.store_code)
+                LEFT JOIN business_unit_binding binding
+                  ON binding.shop_unit_id = unit.id
+                 AND COALESCE(binding.status, 'ACTIVE') = 'ACTIVE'
+                 AND COALESCE(binding.start_date, DATE '1900-01-01') <= :end_date
+                 AND COALESCE(binding.end_date, DATE '2999-12-31') >= :start_date
+                LEFT JOIN contmain contract
+                  ON UPPER(TRIM(contract.cmcontno)) = UPPER(TRIM(binding.contract_id))
+                 AND TRIM(contract.cmjsmkt) = TRIM(floor.store_code)
+                 AND COALESCE(contract.cmeffdate::date, DATE '1900-01-01') <= :end_date
+                 AND COALESCE(contract.cmlapdate::date, DATE '2999-12-31') >= :start_date
+                LEFT JOIN contmanaframe contract_group
+                  ON UPPER(TRIM(contract_group.cmfcontno)) = UPPER(TRIM(binding.contract_id))
+                 AND TRIM(contract_group.cmfmarket) = TRIM(floor.store_code)
+                 AND COALESCE(
+                       contract_group.cmfeffdate::date,
+                       contract.cmeffdate::date,
+                       DATE '1900-01-01'
+                     ) <= :end_date
+                LEFT JOIN manaframe group_frame
+                  ON TRIM(group_frame.mfcode) = TRIM(contract_group.cmfmfid)
+                LEFT JOIN manaframe department_frame
+                  ON TRIM(department_frame.mfcode) = TRIM(group_frame.mfpcode)
+                LEFT JOIN counter_groups legacy_group
+                  ON TRIM(legacy_group.group_code) = TRIM(contract_group.cmfmfid)
+                WHERE store.store_id IN :store_ids
+                  AND COALESCE(unit.status, 'ACTIVE') <> 'INACTIVE'
+                ORDER BY
+                  store.store_id,
+                  floor.name,
+                  unit.unit_code,
+                  group_code
+                """
+            ).bindparams(bindparam("store_ids", expanding=True)),
+            {
+                "store_ids": store_ids,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        ).mappings().all()
+        unit_option_map: dict[tuple[int, int], dict] = {}
+        for unit_row in unit_rows:
+            option_key = (int(unit_row["store_id"]), int(unit_row["unit_id"]))
+            option = unit_option_map.setdefault(
+                option_key,
+                {
+                    "store_id": option_key[0],
+                    "unit_id": option_key[1],
+                    "unit_code": unit_row.get("unit_code"),
+                    "floor_name": unit_row.get("floor_name"),
+                    "group_options": [],
+                },
+            )
+            if unit_row.get("group_code"):
+                option["group_options"].append(
+                    {
+                        "group_id": (
+                            int(unit_row["group_id"])
+                            if unit_row.get("group_id") is not None
+                            else None
+                        ),
+                        "group_code": unit_row.get("group_code"),
+                        "group_name": unit_row.get("group_name"),
+                        "department_code": unit_row.get("group_department_code"),
+                        "department_name": unit_row.get("group_department_name"),
+                    }
+                )
+        unit_options = list(unit_option_map.values())
+
+    return {
+        "start_date": _dt(start_date),
+        "end_date": _dt(end_date),
+        "pending_count": len(visible_rows),
+        "pending_amount": _money(
+            sum(
+                (
+                    _month_close_bindable_decimal(row)
+                    for row in visible_rows
+                ),
+                Decimal("0"),
+            )
+        ),
+        "auto_matched_count": auto_matched_count,
+        "auto_matched_amount": auto_matched_amount,
+        "direction_summary": direction_summary,
+        "store_summaries": store_summaries,
+        "items": [
+            {
+                **row,
+                "id": int(row["id"]),
+                "month_close_id": int(row["month_close_id"]),
+                "store_id": int(row["store_id"]),
+                "raw_amount": _money(row.get("raw_amount")),
+                "accrued_tax_amount": _money(row.get("accrued_tax_amount")),
+                "adjustment_amount": _month_close_bindable_amount(row),
+                "final_amount": _month_close_binding_target_amount(row),
+                "nc_details": unbound_details_by_adjustment[int(row["id"])][
+                    "nc_details"
+                ],
+                "nc_detail_count": len(
+                    unbound_details_by_adjustment[int(row["id"])]["nc_details"]
+                ),
+                "nc_detail_amount": _money(
+                    sum(
+                        (
+                            Decimal(str(detail["amount"]))
+                            for detail in unbound_details_by_adjustment[
+                                int(row["id"])
+                            ]["nc_details"]
+                        ),
+                        Decimal("0"),
+                    )
+                ),
+                "tax_details": reconciled_details_by_adjustment[int(row["id"])][
+                    "tax_details"
+                ],
+                "tax_detail_count": reconciled_details_by_adjustment[
+                    int(row["id"])
+                ]["tax_detail_count"],
+                "tax_detail_amount": reconciled_details_by_adjustment[
+                    int(row["id"])
+                ]["tax_detail_amount"],
+                "fuji_details": unbound_details_by_adjustment[int(row["id"])][
+                    "fuji_details"
+                ],
+                "fuji_detail_count": len(
+                    unbound_details_by_adjustment[int(row["id"])]["fuji_details"]
+                ),
+                "fuji_detail_amount": _money(
+                    sum(
+                        (
+                            Decimal(str(detail["amount"]))
+                            for detail in unbound_details_by_adjustment[
+                                int(row["id"])
+                            ]["fuji_details"]
+                        ),
+                        Decimal("0"),
+                    )
+                ),
+                "auto_matched_count": reconciled_details_by_adjustment[
+                    int(row["id"])
+                ]["auto_matched_count"],
+                "auto_matched_amount": reconciled_details_by_adjustment[
+                    int(row["id"])
+                ]["auto_matched_amount"],
+                "auto_matches": reconciled_details_by_adjustment[int(row["id"])][
+                    "auto_matches"
+                ],
+                "binding_lines": _month_close_binding_lines(
+                    row,
+                    unbound_details_by_adjustment[int(row["id"])],
+                ),
+                "created_at": _dt(row.get("created_at")),
+            }
+            for row in visible_rows
+        ],
+        "unit_options": unit_options,
+    }
+
+
+@router.post("/dashboard/month-close-bindings/{adjustment_id}/bind")
+async def bind_revenue_month_close_difference(
+    adjustment_id: int,
+    body: RevenueMonthCloseBindingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bind one unresolved NC/Fuji month-close difference to a cabinet."""
+    require_permission(db, current_user, "revenue.recalculate")
+    adjustment = db.execute(
+        text(
+            f"""
+            WITH {_revenue_department_aliases_cte()}
+            SELECT
+              adjustment.id,
+              adjustment.month_close_id,
+              adjustment.binding_status,
+              adjustment.raw_amount,
+              adjustment.accrued_tax_amount,
+              adjustment.adjustment_amount,
+              adjustment.final_amount,
+              adjustment.source_department_code,
+              adjustment.source_department_name,
+              adjustment.source_subject_code,
+              adjustment.source_subject_name,
+              adjustment.source_business_type,
+              adjustment.source_group_code,
+              adjustment.source_group_name,
+              adjustment.supplier_code,
+              adjustment.supplier_name,
+              adjustment.fee_type_code,
+              adjustment.fee_type_name,
+              COALESCE(
+                department_alias.canonical_department_code,
+                adjustment.source_department_code
+              ) AS department_code,
+              COALESCE(
+                department_alias.canonical_department_name,
+                adjustment.source_department_name
+              ) AS department_name,
+              close.store_id,
+              store.store_code,
+              close.period_month,
+              close.period_start_date,
+              close.period_end_date,
+              CASE
+                WHEN adjustment.source_business_type = 'NC_EXTRA_DIFFERENCE'
+                  THEN 'NC_ONLY'
+                WHEN adjustment.source_business_type = 'FEE_DIFFERENCE'
+                  THEN 'AMOUNT_DIFFERENCE'
+                WHEN adjustment.source_business_type IN ('JOINT', 'RENTAL')
+                  THEN 'FUJI_ONLY'
+                ELSE 'OTHER'
+              END AS difference_direction
+            FROM revenue_month_close_adjustments adjustment
+            JOIN revenue_month_closes close ON close.id = adjustment.month_close_id
+            JOIN stores store ON store.store_id = close.store_id
+            LEFT JOIN revenue_department_aliases department_alias
+              ON TRIM(department_alias.store_code) = TRIM(store.store_code)
+             AND department_alias.source_department_code = NULLIF(
+               TRIM(adjustment.source_department_code),
+               ''
+             )
+            WHERE adjustment.id = :adjustment_id
+              AND close.status = 'CONFIRMED'
+            FOR UPDATE OF adjustment
+            """
+        ),
+        {"adjustment_id": adjustment_id},
+    ).mappings().one_or_none()
+    if not adjustment:
+        raise HTTPException(status_code=404, detail="待绑定月结差异不存在")
+    if adjustment["binding_status"] != "PENDING":
+        raise HTTPException(status_code=409, detail="该月结差异已完成绑定")
+
+    scope = load_business_scope(db, current_user, fallback_resource_code="revenue")
+    if not _dashboard_row_allowed(scope, dict(adjustment)):
+        raise HTTPException(status_code=403, detail="无权处理该门店或部门的月结差异")
+
+    nc_details_by_adjustment, fuji_details_by_adjustment = _load_month_close_side_details(
+        db,
+        [dict(adjustment)],
+    )
+    reconciled_details = _reconcile_month_close_detail_rows(
+        nc_details_by_adjustment.get(adjustment_id, []),
+        fuji_details_by_adjustment.get(adjustment_id, []),
+    )
+    bound_source_line_keys = _load_bound_month_close_source_line_keys(
+        db,
+        [adjustment_id],
+    ).get(adjustment_id, set())
+    binding_lines = _month_close_binding_lines(
+        dict(adjustment),
+        reconciled_details,
+        bound_source_line_keys,
+    )
+    selected_line = next(
+        (
+            line
+            for line in binding_lines
+            if line["source_line_key"] == body.source_line_key
+        ),
+        None,
+    )
+    if selected_line is None:
+        raise HTTPException(status_code=409, detail="该来源明细已绑定或不属于当前差异")
+
+    unit = db.execute(
+        text(
+            """
+            SELECT
+              unit.id,
+              unit.unit_code,
+              store.store_id
+            FROM business_units unit
+            JOIN floors floor ON floor.id = unit.floor_id
+            JOIN stores store
+              ON TRIM(store.store_code) = TRIM(floor.store_code)
+            WHERE unit.id = :unit_id
+            """
+        ),
+        {"unit_id": body.unit_id},
+    ).mappings().one_or_none()
+    if not unit:
+        raise HTTPException(status_code=400, detail="选择的柜位不存在")
+    if int(unit["store_id"]) != int(adjustment["store_id"]):
+        raise HTTPException(status_code=400, detail="只能绑定到同一门店的柜位")
+
+    counter_group = db.execute(
+        text(
+            """
+            SELECT DISTINCT
+              COALESCE(binding.counter_group_id, legacy_group.group_id) AS group_id,
+              TRIM(contract_group.cmfmfid) AS group_code,
+              COALESCE(
+                NULLIF(TRIM(group_frame.mfcname), ''),
+                NULLIF(TRIM(legacy_group.group_name), ''),
+                TRIM(contract_group.cmfmfid)
+              ) AS group_name,
+              NULLIF(TRIM(department_frame.mfcode), '') AS department_code,
+              NULLIF(TRIM(department_frame.mfcname), '') AS department_name
+            FROM business_unit_binding binding
+            JOIN business_units unit ON unit.id = binding.shop_unit_id
+            JOIN floors floor ON floor.id = unit.floor_id
+            JOIN contmain contract
+              ON UPPER(TRIM(contract.cmcontno)) = UPPER(TRIM(binding.contract_id))
+             AND TRIM(contract.cmjsmkt) = TRIM(floor.store_code)
+            JOIN contmanaframe contract_group
+              ON UPPER(TRIM(contract_group.cmfcontno)) = UPPER(TRIM(binding.contract_id))
+             AND TRIM(contract_group.cmfmarket) = TRIM(floor.store_code)
+            LEFT JOIN manaframe group_frame
+              ON TRIM(group_frame.mfcode) = TRIM(contract_group.cmfmfid)
+            LEFT JOIN manaframe department_frame
+              ON TRIM(department_frame.mfcode) = TRIM(group_frame.mfpcode)
+            LEFT JOIN counter_groups legacy_group
+              ON TRIM(legacy_group.group_code) = TRIM(contract_group.cmfmfid)
+            WHERE binding.shop_unit_id = :unit_id
+              AND UPPER(TRIM(contract_group.cmfmfid)) = UPPER(TRIM(:source_group_code))
+              AND COALESCE(binding.status, 'ACTIVE') = 'ACTIVE'
+              AND COALESCE(binding.start_date, DATE '1900-01-01') <= :period_end_date
+              AND COALESCE(binding.end_date, DATE '2999-12-31') >= :period_start_date
+              AND COALESCE(contract.cmeffdate::date, DATE '1900-01-01') <= :period_end_date
+              AND COALESCE(contract.cmlapdate::date, DATE '2999-12-31') >= :period_start_date
+              AND COALESCE(
+                    contract_group.cmfeffdate::date,
+                    contract.cmeffdate::date,
+                    DATE '1900-01-01'
+                  ) <= :period_end_date
+            """
+        ),
+        {
+            "unit_id": body.unit_id,
+            "source_group_code": body.source_group_code,
+            "period_start_date": adjustment["period_start_date"],
+            "period_end_date": adjustment["period_end_date"],
+        },
+    ).mappings().one_or_none()
+    if not counter_group:
+        raise HTTPException(
+            status_code=400,
+            detail="所选柜组不是该柜位在本月有效的对应柜组",
+        )
+
+    pending_amount = _month_close_bindable_decimal(dict(adjustment))
+    accrued_tax_amount = Decimal(
+        str(adjustment.get("accrued_tax_amount") or 0)
+    ).quantize(Decimal("0.01"))
+    suggested_binding_amount = Decimal(
+        str(selected_line["suggested_binding_amount"])
+    ).quantize(Decimal("0.01"))
+    binding_amount = (
+        Decimal(str(body.adjustment_amount)).quantize(Decimal("0.01"))
+        if body.adjustment_amount is not None
+        else suggested_binding_amount
+    )
+    if binding_amount == 0:
+        raise HTTPException(status_code=400, detail="绑定金额不能为0")
+    if (pending_amount > 0) != (binding_amount > 0):
+        raise HTTPException(status_code=400, detail="绑定金额方向必须与待绑定差额一致")
+    if abs(binding_amount) > abs(pending_amount):
+        raise HTTPException(status_code=400, detail="绑定金额不能超过待绑定差额")
+    if binding_amount != suggested_binding_amount:
+        raise HTTPException(
+            status_code=400,
+            detail="本行绑定金额已变化，请刷新后按最新金额绑定",
+        )
+
+    update_params = {
+        "adjustment_id": adjustment_id,
+        "target_component": body.target_component,
+        "unit_id": int(unit["id"]),
+        "unit_code": unit.get("unit_code"),
+        "counter_group_id": (
+            int(counter_group["group_id"])
+            if counter_group.get("group_id") is not None
+            else None
+        ),
+        "source_group_code": counter_group.get("group_code"),
+        "source_group_name": counter_group.get("group_name"),
+        "source_line_key": body.source_line_key,
+        "source_line_type": selected_line.get("source_type"),
+        "source_detail_id": selected_line.get("source_detail_id"),
+        "source_voucher_id": selected_line.get("source_voucher_id"),
+        "source_bill_no": selected_line.get("source_bill_no"),
+        "source_row_no": selected_line.get("source_row_no"),
+        "bound_by": int(current_user.user_id),
+        "binding_note": body.note.strip() if body.note else None,
+        "binding_amount": binding_amount,
+        "accrued_tax_amount": accrued_tax_amount,
+        "remaining_bindable_amount": pending_amount - binding_amount,
+        "remaining_adjustment_amount": (
+            pending_amount - binding_amount + accrued_tax_amount
+        ),
+    }
+    if binding_amount == pending_amount and accrued_tax_amount == 0:
+        updated = db.execute(
+            text(
+                """
+                UPDATE revenue_month_close_adjustments
+                SET target_component = :target_component,
+                    unit_id = :unit_id,
+                    unit_code = :unit_code,
+                    source_group_code = COALESCE(:source_group_code, :unit_code),
+                    source_group_name = COALESCE(:source_group_name, :unit_code),
+                    binding_status = 'BOUND',
+                    bound_by = :bound_by,
+                    bound_at = NOW(),
+                    binding_note = :binding_note,
+                    raw_payload = COALESCE(raw_payload, '{}'::jsonb) || JSONB_BUILD_OBJECT(
+                      'manual_binding_counter_group_id', :counter_group_id,
+                      'manual_binding_target_component', :target_component,
+                      'manual_binding_source_line_key', :source_line_key,
+                      'manual_binding_source_line_type', :source_line_type,
+                      'manual_binding_source_detail_id', :source_detail_id,
+                      'manual_binding_source_voucher_id', :source_voucher_id,
+                      'manual_binding_source_bill_no', :source_bill_no,
+                      'manual_binding_source_row_no', :source_row_no
+                    )
+                WHERE id = :adjustment_id
+                  AND binding_status = 'PENDING'
+                RETURNING id, unit_id, unit_code, source_group_code, source_group_name,
+                          binding_status, adjustment_amount, bound_at
+                """
+            ),
+            update_params,
+        ).mappings().one()
+    else:
+        updated = db.execute(
+            text(
+                """
+                INSERT INTO revenue_month_close_adjustments (
+                  month_close_id, target_component, adjustment_category,
+                  unit_id, unit_code, source_group_code, source_group_name,
+                  source_department_code, source_department_name,
+                  source_subject_code, source_subject_name, source_business_type,
+                  supplier_code, supplier_name, fee_type_code, fee_type_name,
+                  raw_amount, accrued_tax_amount, adjustment_amount, final_amount,
+                  allocation_basis, adjustment_reason, source_row_key,
+                  binding_status, bound_by, bound_at, binding_note,
+                  parent_adjustment_id, raw_payload
+                )
+                SELECT
+                  source.month_close_id, :target_component, source.adjustment_category,
+                  :unit_id, :unit_code,
+                  COALESCE(:source_group_code, :unit_code),
+                  COALESCE(:source_group_name, :unit_code),
+                  source.source_department_code, source.source_department_name,
+                  source.source_subject_code, source.source_subject_name,
+                  source.source_business_type, source.supplier_code, source.supplier_name,
+                  source.fee_type_code, source.fee_type_name,
+                  0, 0, :binding_amount, :binding_amount,
+                  '人工绑定部分金额', source.adjustment_reason,
+                  LEFT(source.source_row_key || ':bound:' || source.id::text, 160),
+                  'BOUND', :bound_by, NOW(), :binding_note,
+                  source.id,
+                  COALESCE(source.raw_payload, '{}'::jsonb) || JSONB_BUILD_OBJECT(
+                    'manual_binding_amount', :binding_amount,
+                    'manual_binding_unit_id', :unit_id,
+                    'manual_binding_counter_group_id', :counter_group_id,
+                    'manual_binding_target_component', :target_component,
+                    'manual_binding_source_line_key', :source_line_key,
+                    'manual_binding_source_line_type', :source_line_type,
+                    'manual_binding_source_detail_id', :source_detail_id,
+                    'manual_binding_source_voucher_id', :source_voucher_id,
+                    'manual_binding_source_bill_no', :source_bill_no,
+                    'manual_binding_source_row_no', :source_row_no
+                  )
+                FROM revenue_month_close_adjustments source
+                WHERE source.id = :adjustment_id
+                  AND source.binding_status = 'PENDING'
+                RETURNING id, unit_id, unit_code, source_group_code, source_group_name,
+                          binding_status, adjustment_amount, bound_at
+                """
+            ),
+            update_params,
+        ).mappings().one()
+        if update_params["remaining_bindable_amount"] == 0:
+            db.execute(
+                text(
+                    """
+                    UPDATE revenue_month_close_adjustments
+                    SET adjustment_amount = :accrued_tax_amount,
+                        final_amount = raw_amount + :accrued_tax_amount,
+                        binding_status = 'BOUND',
+                        bound_by = :bound_by,
+                        bound_at = NOW(),
+                        allocation_basis = '计提税不参与柜位绑定',
+                        binding_note = CONCAT(
+                          COALESCE(binding_note || '；', ''),
+                          '非税差额已逐笔绑定；计提税不绑定柜位'
+                        ),
+                        raw_payload = raw_payload || JSONB_BUILD_OBJECT(
+                          'manual_binding_tax_only_remainder', TRUE
+                        )
+                    WHERE id = :adjustment_id
+                      AND binding_status = 'PENDING'
+                    """
+                ),
+                update_params,
+            )
+        else:
+            db.execute(
+                text(
+                    """
+                    UPDATE revenue_month_close_adjustments
+                    SET adjustment_amount = :remaining_adjustment_amount,
+                        final_amount = raw_amount + :remaining_adjustment_amount,
+                        binding_note = CONCAT(
+                          COALESCE(binding_note || '；', ''),
+                          '已人工绑定非税部分金额 ', CAST(:binding_amount AS TEXT)
+                        )
+                    WHERE id = :adjustment_id
+                      AND binding_status = 'PENDING'
+                    """
+                ),
+                update_params,
+            )
+    db.commit()
+    return {
+        "message": "月结差异已绑定到柜位",
+        "item": {
+            **dict(updated),
+            "id": int(updated["id"]),
+            "unit_id": int(updated["unit_id"]),
+            "counter_group_id": (
+                int(counter_group["group_id"])
+                if counter_group.get("group_id") is not None
+                else None
+            ),
+            "source_group_code": counter_group.get("group_code"),
+            "source_group_name": counter_group.get("group_name"),
+            "source_line_key": body.source_line_key,
+            "target_component": body.target_component,
+            "adjustment_amount": _money(updated.get("adjustment_amount")),
+            "bound_at": _dt(updated.get("bound_at")),
+        },
+    }
+
+
 @router.get("/dashboard/groups/{group_code}/details")
 async def revenue_dashboard_group_details(
     group_code: str,
     start_date: date,
     end_date: date,
     store_id: int,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     detail_type: str = Query("all", pattern=r"^(all|gross-profit|fees)$"),
     limit: int = Query(2000, ge=1, le=5000),
     db: Session = Depends(get_db),
@@ -1106,6 +3857,12 @@ async def revenue_dashboard_group_details(
         raise HTTPException(status_code=400, detail="柜位编码不能为空")
 
     try:
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
         scope_row = db.execute(
             text(
                 """
@@ -1149,12 +3906,15 @@ async def revenue_dashboard_group_details(
             "group_code": normalized_group_code,
             "limit": limit,
         }
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
         gross_profit_daily = []
         if detail_type in {"all", "gross-profit"}:
             source_ctes = _live_revenue_source_ctes(
                 "s.sglhsrq BETWEEN :start_date AND :end_date",
-                "payment_ref.payment_date BETWEEN :start_date AND :end_date",
-                "extra.revenue_date BETWEEN :start_date AND :end_date",
+                period["fee_filter"],
+                period["extra_filter"],
                 "AND s.sglmarket = :store_code",
                 fee_date_basis="payment",
             )
@@ -1182,7 +3942,7 @@ async def revenue_dashboard_group_details(
         fee_rows = []
         if detail_type in {"all", "fees"}:
             paid_fee_ctes = _live_fees_cte(
-                "payment_ref.payment_date BETWEEN :start_date AND :end_date",
+                period["fee_filter"],
                 date_basis="payment",
             )
             fee_ctes = (
@@ -1208,8 +3968,24 @@ async def revenue_dashboard_group_details(
                       fee.tax_excluded_amount,
                       fee.source_type,
                       COUNT(*) OVER ()::bigint AS total_count,
-                      COALESCE(SUM(fee.tax_excluded_amount) OVER (), 0)::numeric AS total_amount
+                      COALESCE(SUM(
+                        CASE
+                          WHEN month_close.id IS NOT NULL THEN fee.tax_included_amount
+                          ELSE fee.tax_excluded_amount
+                        END
+                      ) OVER (), 0)::numeric AS total_amount
                     FROM live_fees fee
+                    LEFT JOIN revenue_month_closes month_close
+                      ON month_close.store_id = fee.store_id
+                     AND month_close.status = 'CONFIRMED'
+                     AND month_close.period_month = CASE
+                       WHEN EXTRACT(MONTH FROM fee.revenue_date) = 12 THEN TO_CHAR(fee.revenue_date, 'YYYY-12')
+                       WHEN EXTRACT(DAY FROM fee.revenue_date) >= 29 THEN
+                         TO_CHAR(fee.revenue_date, 'YYYY-')
+                         || LPAD((EXTRACT(MONTH FROM fee.revenue_date)::integer + 1)::text, 2, '0')
+                       ELSE TO_CHAR(fee.revenue_date, 'YYYY-MM')
+                     END
+                     AND {period["close_filter"].replace("close.", "month_close.")}
                     WHERE fee.store_id = :store_id
                       AND UPPER(TRIM(fee.source_group_code)) = UPPER(:group_code)
                       AND NOT ({loss_bearing_fee_condition})
@@ -1219,6 +3995,37 @@ async def revenue_dashboard_group_details(
                 ),
                 params,
             ).mappings().all()
+
+        adjustment_rows = db.execute(
+            text(
+                f"""
+                SELECT
+                  adjustment.id,
+                  adjustment.adjustment_category,
+                  adjustment.source_subject_code,
+                  adjustment.source_subject_name,
+                  adjustment.fee_type_code,
+                  adjustment.fee_type_name,
+                  adjustment.raw_amount,
+                  adjustment.accrued_tax_amount,
+                  adjustment.adjustment_amount,
+                  adjustment.final_amount,
+                  adjustment.allocation_basis,
+                  adjustment.adjustment_reason
+                FROM revenue_month_closes month_close
+                JOIN revenue_month_close_adjustments adjustment
+                  ON adjustment.month_close_id = month_close.id
+                 AND adjustment.target_component = 'FEE'
+                 AND adjustment.binding_status = 'BOUND'
+                WHERE month_close.store_id = :store_id
+                  AND month_close.status = 'CONFIRMED'
+                  AND {period["close_filter"].replace("close.", "month_close.")}
+                  AND UPPER(TRIM(adjustment.source_group_code)) = UPPER(:group_code)
+                ORDER BY adjustment.source_subject_code, adjustment.fee_type_code, adjustment.id
+                """
+            ),
+            params,
+        ).mappings().all() if detail_type in {"all", "fees"} else []
 
         daily_items = [
             {
@@ -1246,7 +4053,25 @@ async def revenue_dashboard_group_details(
             for row in fee_rows
         ]
         fee_total_count = int(fee_rows[0].get("total_count") or 0) if fee_rows else 0
-        fee_total_amount = _money(fee_rows[0].get("total_amount")) if fee_rows else 0.0
+        fee_raw_total_amount = _money(fee_rows[0].get("total_amount")) if fee_rows else 0.0
+        fee_adjustment_amount = sum(_money(row.get("adjustment_amount")) for row in adjustment_rows)
+        adjustment_items = [
+            {
+                "id": int(row["id"]),
+                "adjustment_category": row.get("adjustment_category"),
+                "subject_code": row.get("source_subject_code"),
+                "subject_name": row.get("source_subject_name"),
+                "fee_type_code": row.get("fee_type_code"),
+                "fee_type_name": row.get("fee_type_name"),
+                "raw_amount": _money(row.get("raw_amount")),
+                "accrued_tax_amount": _money(row.get("accrued_tax_amount")),
+                "adjustment_amount": _money(row.get("adjustment_amount")),
+                "final_amount": _money(row.get("final_amount")),
+                "allocation_basis": row.get("allocation_basis"),
+                "adjustment_reason": row.get("adjustment_reason"),
+            }
+            for row in adjustment_rows
+        ]
         return {
             "store": {
                 "store_id": int(scope_row["store_id"]),
@@ -1272,7 +4097,10 @@ async def revenue_dashboard_group_details(
                 "total_count": fee_total_count,
                 "returned_count": len(fee_items),
                 "is_truncated": fee_total_count > len(fee_items),
-                "total_amount": fee_total_amount,
+                "raw_total_amount": fee_raw_total_amount,
+                "adjustment_amount": fee_adjustment_amount,
+                "total_amount": fee_raw_total_amount + fee_adjustment_amount,
+                "month_close_adjustments": adjustment_items,
                 "items": fee_items,
             },
         }
@@ -1297,6 +4125,8 @@ async def revenue_dashboard_extra_details(
     start_date: date,
     end_date: date,
     store_id: int,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     source_group_code: Optional[str] = None,
     source_group_name: Optional[str] = None,
     unit_code: Optional[str] = None,
@@ -1316,6 +4146,12 @@ async def revenue_dashboard_extra_details(
         raise HTTPException(status_code=400, detail="柜位编码或来源部门名称至少填写一个")
 
     try:
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
         store_row = db.execute(
             text(
                 """
@@ -1338,6 +4174,9 @@ async def revenue_dashboard_extra_details(
             "unit_code": normalized_unit_code,
             "limit": limit,
         }
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
         if normalized_group_code:
             row_filter = "AND UPPER(TRIM(extra.source_group_code)) = UPPER(:source_group_code)"
         else:
@@ -1348,7 +4187,10 @@ async def revenue_dashboard_extra_details(
         if normalized_unit_code:
             row_filter += " AND TRIM(extra.unit_code) = :unit_code"
         row_filter = "AND extra.store_id = :store_id " + row_filter
-        common_ctes = _nc_6051_extra_detail_ctes(row_filter)
+        common_ctes = _nc_6051_extra_detail_ctes(
+            row_filter,
+            date_filter_sql=period["extra_filter"],
+        )
 
         metadata = db.execute(
             text(
@@ -1431,6 +4273,47 @@ async def revenue_dashboard_extra_details(
             params,
         ).mappings().all()
 
+        if normalized_group_code:
+            adjustment_filter = (
+                "AND UPPER(TRIM(adjustment.source_group_code)) = UPPER(:source_group_code)"
+            )
+        else:
+            adjustment_filter = """
+              AND NULLIF(TRIM(adjustment.source_group_code), '') IS NULL
+              AND (
+                TRIM(adjustment.source_group_name) = :source_group_name
+                OR TRIM(adjustment.source_department_name) = :source_group_name
+              )
+            """
+        extra_adjustment_rows = db.execute(
+            text(
+                f"""
+                SELECT
+                  adjustment.id,
+                  adjustment.adjustment_category,
+                  adjustment.source_subject_code,
+                  adjustment.source_subject_name,
+                  adjustment.raw_amount,
+                  adjustment.accrued_tax_amount,
+                  adjustment.adjustment_amount,
+                  adjustment.final_amount,
+                  adjustment.allocation_basis,
+                  adjustment.adjustment_reason
+                FROM revenue_month_closes month_close
+                JOIN revenue_month_close_adjustments adjustment
+                  ON adjustment.month_close_id = month_close.id
+                 AND adjustment.target_component = 'EXTRA'
+                 AND adjustment.binding_status = 'BOUND'
+                WHERE month_close.store_id = :store_id
+                  AND month_close.status = 'CONFIRMED'
+                  AND {period["close_filter"].replace("close.", "month_close.")}
+                  {adjustment_filter}
+                ORDER BY adjustment.source_subject_code, adjustment.id
+                """
+            ),
+            params,
+        ).mappings().all()
+
         subject_items = [
             {
                 "subject_code": row.get("subject_code"),
@@ -1463,7 +4346,25 @@ async def revenue_dashboard_extra_details(
             for row in detail_rows
         ]
         total_count = int(detail_rows[0].get("total_count") or 0) if detail_rows else 0
-        total_amount = _money(detail_rows[0].get("total_amount")) if detail_rows else 0.0
+        raw_total_amount = _money(detail_rows[0].get("total_amount")) if detail_rows else 0.0
+        adjustment_amount = sum(
+            _money(row.get("adjustment_amount")) for row in extra_adjustment_rows
+        )
+        adjustment_items = [
+            {
+                "id": int(row["id"]),
+                "adjustment_category": row.get("adjustment_category"),
+                "subject_code": row.get("source_subject_code"),
+                "subject_name": row.get("source_subject_name"),
+                "raw_amount": _money(row.get("raw_amount")),
+                "accrued_tax_amount": _money(row.get("accrued_tax_amount")),
+                "adjustment_amount": _money(row.get("adjustment_amount")),
+                "final_amount": _money(row.get("final_amount")),
+                "allocation_basis": row.get("allocation_basis"),
+                "adjustment_reason": row.get("adjustment_reason"),
+            }
+            for row in extra_adjustment_rows
+        ]
         return {
             "store": {
                 "store_id": int(store_row["store_id"]),
@@ -1479,11 +4380,14 @@ async def revenue_dashboard_extra_details(
             },
             "start_date": _dt(start_date),
             "end_date": _dt(end_date),
-            "date_basis": "revenue_date",
+            "date_basis": period["date_basis"],
             "total_count": total_count,
             "returned_count": len(detail_items),
             "is_truncated": total_count > len(detail_items),
-            "total_amount": total_amount,
+            "raw_total_amount": raw_total_amount,
+            "adjustment_amount": adjustment_amount,
+            "total_amount": raw_total_amount + adjustment_amount,
+            "month_close_adjustments": adjustment_items,
             "subjects": subject_items,
             "items": detail_items,
         }
@@ -1508,6 +4412,8 @@ async def revenue_dashboard_extra_details(
 async def revenue_dashboard_extra_export_details(
     start_date: date,
     end_date: date,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     limit: int = Query(20000, ge=1, le=50000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1518,12 +4424,21 @@ async def revenue_dashboard_extra_export_details(
         raise HTTPException(status_code=400, detail="end_date 不能早于 start_date")
 
     try:
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
         params = {
             "start_date": start_date,
             "end_date": end_date,
             "scan_limit": 50001,
         }
-        common_ctes = _nc_6051_extra_detail_ctes()
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
+        common_ctes = _nc_6051_extra_detail_ctes(date_filter_sql=period["extra_filter"])
         rows = db.execute(
             text(
                 f"""
@@ -1633,6 +4548,8 @@ async def monthly_revenue(
     revenue_date: Optional[date] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     store_id: Optional[int] = None,
     floor_id: Optional[int] = None,
     metric: str = Query("total", regex=r"^(total|sales|fee|extra)$"),
@@ -1652,7 +4569,29 @@ async def monthly_revenue(
             params["end_date"] = end_date
             sales_date_filter = "s.sglhsrq BETWEEN :start_date AND :end_date"
             fee_date_filter = "fee.revenue_date BETWEEN :start_date AND :end_date"
-            extra_date_filter = "extra.revenue_date BETWEEN :start_date AND :end_date"
+            period = _dashboard_financial_period(
+                start_date=start_date,
+                end_date=end_date,
+                financial_year=financial_year,
+                financial_month=financial_month,
+            )
+            extra_date_filter = period["extra_filter"]
+            if period.get("period_month_start"):
+                params["period_month_start"] = period["period_month_start"]
+                params["period_month_end"] = period["period_month_end"]
+            # The store-level unmatched-sales check repeats the live-sales
+            # resolution work after the main aggregation. A full-year range
+            # currently completes in about 35 seconds on production data, so
+            # keep a transaction-local allowance for multi-month requests
+            # while preserving the global 30-second limit for normal months.
+            if period["period_count"] > 1:
+                db.execute(
+                    text(
+                        "SET LOCAL statement_timeout = "
+                        f"'{REVENUE_MONTHLY_QUERY_TIMEOUT_SECONDS}s'"
+                    ),
+                    {},
+                )
             effective_month = _month_from_date(start_date)
         elif revenue_date:
             params["revenue_date"] = revenue_date
@@ -1690,8 +4629,13 @@ async def monthly_revenue(
             extra_date_filter,
             sales_store_filter,
         )
+        source_relation = "source_rows"
+        overlay_ctes = ""
+        if start_date and end_date and financial_year is not None:
+            overlay_ctes = f",\n{_revenue_month_close_overlay_ctes(period['close_filter'])}"
+            source_relation = "dashboard_source_rows"
         sql = f"""
-            WITH {source_ctes}
+            WITH {source_ctes}{overlay_ctes}
             SELECT
               src.unit_id,
               src.unit_code,
@@ -1715,7 +4659,7 @@ async def monthly_revenue(
               COALESCE(SUM(src.sales_count), 0)::bigint AS sales_detail_count,
               COALESCE(SUM(src.fee_count), 0)::bigint AS fee_detail_count,
               COALESCE(SUM(src.extra_count), 0)::bigint AS extra_detail_count
-            FROM source_rows src
+            FROM {source_relation} src
             JOIN business_units bu ON bu.id = src.unit_id
             WHERE {" AND ".join(result_filters) if result_filters else "TRUE"}
             GROUP BY src.unit_id, src.unit_code, src.store_id, src.floor_id, bu.status
@@ -1932,6 +4876,8 @@ async def unit_revenue_detail(
     revenue_month: Optional[str] = Query(None, regex=r"^\d{4}-\d{2}$"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1948,7 +4894,16 @@ async def unit_revenue_detail(
         params = {"unit_id": unit_id, "start_date": start_date, "end_date": end_date}
         sales_date_filter = "s.sglhsrq BETWEEN :start_date AND :end_date"
         fee_date_filter = "fee.revenue_date BETWEEN :start_date AND :end_date"
-        extra_date_filter = "extra.revenue_date BETWEEN :start_date AND :end_date"
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
+        extra_date_filter = period["extra_filter"]
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
     else:
         raise HTTPException(status_code=400, detail="请传 revenue_month 或 start_date/end_date")
 
@@ -1976,11 +4931,16 @@ async def unit_revenue_detail(
             extra_date_filter,
             sales_store_filter,
         )
+        source_relation = "source_rows"
+        overlay_ctes = ""
+        if start_date and end_date and financial_year is not None:
+            overlay_ctes = f",\n{_revenue_month_close_overlay_ctes(period['close_filter'])}"
+            source_relation = "dashboard_source_rows"
 
         daily = db.execute(
             text(
                 f"""
-                WITH {source_ctes}
+                WITH {source_ctes}{overlay_ctes}
                 SELECT
                   src.revenue_date,
                   to_char(src.revenue_date, 'YYYY-MM') AS revenue_month,
@@ -1991,7 +4951,7 @@ async def unit_revenue_detail(
                   COALESCE(SUM(src.sales_count), 0)::bigint AS sales_detail_count,
                   COALESCE(SUM(src.fee_count), 0)::bigint AS fee_detail_count,
                   COALESCE(SUM(src.extra_count), 0)::bigint AS extra_detail_count
-                FROM source_rows src
+                FROM {source_relation} src
                 WHERE src.unit_id = :unit_id
                 GROUP BY src.revenue_date
                 ORDER BY src.revenue_date ASC
@@ -2086,6 +5046,39 @@ async def unit_revenue_detail(
             ),
             params,
         ).fetchall()
+        month_close_extra_details = []
+        if start_date and end_date and financial_year is not None:
+            month_close_extra_details = db.execute(
+                text(
+                    f"""
+                    SELECT
+                      adjustment.id,
+                      close.period_end_date AS revenue_date,
+                      close.period_month AS revenue_month,
+                      adjustment.source_subject_code,
+                      adjustment.source_subject_name,
+                      adjustment.source_group_code,
+                      adjustment.source_group_name,
+                      adjustment.adjustment_amount AS amount,
+                      adjustment.adjustment_reason,
+                      adjustment.raw_payload ->> 'manual_binding_source_bill_no'
+                        AS source_bill_no,
+                      adjustment.raw_payload ->> 'manual_binding_source_voucher_id'
+                        AS source_voucher_id
+                    FROM revenue_month_closes close
+                    JOIN revenue_month_close_adjustments adjustment
+                      ON adjustment.month_close_id = close.id
+                    WHERE close.status = 'CONFIRMED'
+                      AND {period["close_filter"]}
+                      AND adjustment.unit_id = :unit_id
+                      AND adjustment.target_component = 'EXTRA'
+                      AND adjustment.binding_status = 'BOUND'
+                      AND adjustment.adjustment_amount <> 0
+                    ORDER BY close.period_end_date DESC, adjustment.id DESC
+                    """
+                ),
+                params,
+            ).mappings().all()
 
         return {
             "unit": {
@@ -2172,6 +5165,24 @@ async def unit_revenue_detail(
                 for row in loss_bearing_fees
             ],
             "extra_receipts": [_receipt_to_dict(row) for row in extras],
+            "month_close_extra_details": [
+                {
+                    "id": int(row["id"]),
+                    "revenue_date": _dt(row.get("revenue_date")),
+                    "revenue_month": row.get("revenue_month"),
+                    "source_subject_code": row.get("source_subject_code"),
+                    "source_subject_name": row.get("source_subject_name"),
+                    "source_group_code": row.get("source_group_code"),
+                    "source_group_name": row.get("source_group_name"),
+                    "amount": _money(row.get("amount")),
+                    "adjustment_reason": row.get("adjustment_reason"),
+                    "source_bill_no": row.get("source_bill_no"),
+                    "source_voucher_id": row.get("source_voucher_id"),
+                    "source_type": "MONTH_CLOSE_BINDING",
+                    "match_status": "MATCHED",
+                }
+                for row in month_close_extra_details
+            ],
         }
     except HTTPException:
         raise
@@ -2185,6 +5196,8 @@ async def list_extra_receipts(
     revenue_date: Optional[date] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    financial_year: Optional[int] = Query(None, ge=2000, le=2100),
+    financial_month: Optional[int] = Query(None, ge=1, le=12),
     store_id: Optional[int] = None,
     floor_id: Optional[int] = None,
     unit_id: Optional[int] = None,
@@ -2199,9 +5212,18 @@ async def list_extra_receipts(
     params: dict = {}
     filters: list[str] = ["source_type = 'NC6051'"]
     if start_date and end_date:
-        filters.append("revenue_date BETWEEN :start_date AND :end_date")
         params["start_date"] = start_date
         params["end_date"] = end_date
+        period = _dashboard_financial_period(
+            start_date=start_date,
+            end_date=end_date,
+            financial_year=financial_year,
+            financial_month=financial_month,
+        )
+        filters.append(period["extra_filter"])
+        if period.get("period_month_start"):
+            params["period_month_start"] = period["period_month_start"]
+            params["period_month_end"] = period["period_month_end"]
     elif revenue_date:
         filters.append("revenue_date = :revenue_date")
         params["revenue_date"] = revenue_date
@@ -2227,7 +5249,7 @@ async def list_extra_receipts(
         params["kw"] = f"%{keyword.strip()}%"
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     rows = db.execute(
-        text(f"SELECT * FROM revenue_extra_receipts {where} ORDER BY revenue_date DESC, id DESC LIMIT 500"),
+        text(f"SELECT * FROM revenue_extra_receipts extra {where} ORDER BY revenue_date DESC, id DESC LIMIT 500"),
         params,
     ).fetchall()
     return [_receipt_to_dict(row) for row in rows]
@@ -2450,7 +5472,15 @@ async def recalculate_revenue(
                       fee.*,
                       ROW_NUMBER() OVER (
                         PARTITION BY
+                          CASE
+                            WHEN NULLIF(TRIM(fee.source_doc_no), '') IS NOT NULL
+                             AND NULLIF(TRIM(fee.source_row_key), '') IS NOT NULL
+                              THEN ''
+                            ELSE fee.id
+                          END,
+                          fee.store_id,
                           fee.revenue_date,
+                          UPPER(TRIM(COALESCE(fee.source_type, ''))),
                           UPPER(TRIM(COALESCE(fee.source_group_code, ''))),
                           UPPER(TRIM(COALESCE(fee.contract_code, ''))),
                           UPPER(TRIM(COALESCE(fee.fee_type_code, ''))),
@@ -2497,8 +5527,7 @@ async def recalculate_revenue(
                       0,
                       fee.etl_batch_id
                     FROM fee_source_rows fee
-                    WHERE NOT ({loss_bearing_recalc_condition})
-                       OR fee.exact_duplicate_rank = 1
+                    WHERE fee.exact_duplicate_rank = 1
                     UNION ALL
                     SELECT
                       store_id, floor_id, unit_id, unit_code, revenue_date,

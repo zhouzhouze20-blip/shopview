@@ -6,6 +6,7 @@ import { navigationItems } from "./navigation-items.ts";
 import { MODULE_PERMISSION_REQUIREMENTS } from "./module-permissions.ts";
 import {
   buildDailyFollowupParams,
+  dailyFollowupExportErrorMessage,
   financialMonthForDate,
   financialMonthLabel,
   financialMonthRange,
@@ -28,6 +29,19 @@ const dailyFollowupPageSource = readFileSync(
   new URL("../pages/sales-reports/daily-followup.tsx", import.meta.url),
   "utf8",
 );
+
+test("daily follow-up export explains stale or unavailable dynamic modules", () => {
+  for (const message of [
+    "Failed to fetch dynamically imported module: http://example.test/static/assets/export-daily-followup-excel-old.js",
+    "Importing a module script failed.",
+    "Loading chunk 42 failed.",
+  ]) {
+    assert.match(dailyFollowupExportErrorMessage(new TypeError(message)), /刷新页面后重新查询并导出/);
+  }
+  assert.doesNotMatch(dailyFollowupExportErrorMessage(new Error("HTTP 500")), /版本已更新/);
+  assert.doesNotMatch(dailyFollowupExportErrorMessage(null), /版本已更新/);
+  assert.match(dailyFollowupPageSource, /description: dailyFollowupExportErrorMessage\(error\)/);
+});
 
 function findNavigationItem(items, id) {
   for (const item of items) {

@@ -159,13 +159,13 @@ export default function CouponMonthlyBalancePage() {
     <div className="space-y-5 p-4 sm:p-6">
       <div className="max-w-3xl">
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">卡券月结</h1>
-        <p className="mt-1 text-sm text-muted-foreground">按已确认凭证匹配、每日收入占比和 NC 手工结转登记计算门店券种月末余额。</p>
+        <p className="mt-1 text-sm text-muted-foreground">按财务月（上月 29 日至本月 28 日）汇总；销售返券和返券扣回直接计入本月增加，其余按凭证匹配、收入占比和 NC 结转计算。</p>
       </div>
 
       <Card className="rounded-lg">
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6 lg:items-end">
           <div className="min-w-0">
-            <Label htmlFor="coupon-monthly-period">月份</Label>
+            <Label htmlFor="coupon-monthly-period">财务月份</Label>
             <Input id="coupon-monthly-period" className="mt-1" type="month" value={periodMonth} onChange={(event) => setPeriodMonth(event.target.value)} />
           </div>
           <div className="min-w-0">

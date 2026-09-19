@@ -51,6 +51,8 @@ from services.inventory_detail_report import (
     load_historical_inventory_detail_report,
     load_historical_inventory_filter_options,
     load_inventory_detail_report,
+    load_inventory_departments,
+    load_inventory_department_summary,
     load_inventory_filter_options,
     load_inventory_movement_detail_report,
     load_inventory_movement_filter_options,
@@ -58,6 +60,13 @@ from services.inventory_detail_report import (
 
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
+
+# 小票列表默认每页展示 100 行；单次接口仍保留上限，完整导出由前端分批分页拉取。
+TICKET_PAGE_SIZE = 100
+TICKET_EXPORT_BATCH_SIZE = 5_000
+TICKET_EXPORT_MAX_ROWS = 50_000
+TICKET_EXPORT_FETCH_LIMIT = TICKET_EXPORT_MAX_ROWS + 1
+SALES_SUMMARY_LONG_RANGE_TIMEOUT_SECONDS = 90
 
 COMMODITY_DETAIL_PERMISSION = "sales.commodity_detail.view"
 DAILY_FOLLOWUP_PERMISSION = "sales.od0001.view"
@@ -132,6 +141,30 @@ def _num(value: Any) -> float:
     if value is None:
         return 0
     return float(value)
+
+
+def _configure_sales_summary_timeout(
+    db: Session,
+    *,
+    start_date: str | None,
+    end_date: str | None,
+) -> None:
+    """Keep the 30-second default for short ranges; allow cross-month summaries to finish."""
+    if not start_date or not end_date:
+        return
+    try:
+        start = date.fromisoformat(start_date.strip())
+        end = date.fromisoformat(end_date.strip())
+    except ValueError:
+        return
+    if start > end or (start.year, start.month) == (end.year, end.month):
+        return
+    db.execute(
+        text(
+            "SET LOCAL statement_timeout = "
+            f"'{SALES_SUMMARY_LONG_RANGE_TIMEOUT_SECONDS}s'"
+        )
+    )
 
 
 def _fetch_mappings(db: Session, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2237,6 +2270,37 @@ def inventory_movement_detail_filter_options(
     }
 
 
+@router.get("/reports/inventory-departments")
+def inventory_departments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _scope, scope_sql, scope_params = _inventory_request_scope(db=db, current_user=current_user)
+    return {"options": load_inventory_departments(db, scope_sql=scope_sql, scope_params=scope_params)}
+
+
+@router.get("/reports/inventory-department-summary")
+def inventory_department_summary(
+    department_code: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _scope, scope_sql, scope_params = _inventory_request_scope(db=db, current_user=current_user)
+    selected_department = department_code.strip()
+    if not selected_department:
+        raise HTTPException(status_code=422, detail="部门编码不能为空")
+    return load_inventory_department_summary(
+        db,
+        department_code=selected_department,
+        scope_sql=scope_sql,
+        scope_params=scope_params,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/reports/inventory-detail/options")
 def inventory_detail_filter_options(
     field: Literal["supplier", "group", "goods_code", "goods_name", "barcode"] = Query(...),
@@ -3086,6 +3150,7 @@ def store_summary(
     按门店汇总销售：在柜组粒度先做数据范围过滤，再聚合为门店，与权限口径一致。
     """
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     if prior_start_date and prior_end_date:
         optimized_prior_start, optimized_prior_end = (
@@ -3196,6 +3261,7 @@ def department_summary(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     table_name = _salegoodslist_table(db)
     has_counter_groups = _table_exists(db, "manaframe")
@@ -3300,6 +3366,7 @@ def group_summary(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     rows = _group_level_sales_rows(
         db,
@@ -3310,7 +3377,9 @@ def group_summary(
         unassigned_department=unassigned_department,
         group_code=group_code,
         keyword=keyword,
-        limit=limit,
+        # 先取完整本期，再按权限过滤、合并同期并截取；否则排行外的可见柜组
+        # 会被同期合并误当成本期零销售（尤其是独立查询财务月同比时）。
+        limit=None,
         exclude_rental=exclude_rental,
         exclude_backoffice_departments=exclude_backoffice_departments,
     )
@@ -3341,7 +3410,7 @@ def group_summary(
         row["same_period_effective_sales"] = 0.0
         row["same_period_net_profit"] = 0.0
         row["same_period_margin"] = 0.0
-    return current
+    return current[:limit]
 
 
 @router.get("/summary/department-goods")
@@ -3361,6 +3430,7 @@ def department_goods_summary(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     table_name = _salegoodslist_table(db)
     has_counter_groups = _table_exists(db, "manaframe")
@@ -3531,6 +3601,7 @@ def department_supplier_summary(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     table_name = _salegoodslist_table(db)
     has_counter_groups = _table_exists(db, "manaframe")
@@ -3739,6 +3810,104 @@ def map_group_summary(
     )
 
 
+@router.get("/groups/{group_code}/tickets/summary")
+def group_tickets_summary(
+    group_code: str,
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    goods_code: str | None = Query(None, description="商品编码"),
+    barcode: str | None = Query(None, description="商品条码"),
+    supplier_code: str | None = Query(None, description="供应商编码"),
+    exclude_rental: bool = False,
+    exclude_backoffice_departments: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """返回当前筛选范围内的全部小票数量和金额汇总，不受列表分页影响。"""
+    require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
+    scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    table_name = _salegoodslist_table(db)
+    has_counter_groups = _table_exists(db, "manaframe")
+    has_stores = _table_exists(db, "stores")
+    params: dict[str, Any] = {"group_code": group_code}
+    filters = _date_filter_sql(params, start_date, end_date)
+    filters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
+    filters += _ticket_product_filter_sql(
+        params,
+        goods_code=goods_code,
+        barcode=barcode,
+        supplier_code=supplier_code,
+    )
+    if has_counter_groups:
+        filters += _sales_department_exclusion_sql(
+            "cg",
+            enabled=exclude_backoffice_departments,
+        )
+    group_join = _counter_group_join_sql(has_counter_groups)
+    mkt_join = _stores_market_join_sql(has_stores)
+    scope_select = _group_scope_select_sql(has_counter_groups, has_stores=has_stores)
+    rows = _fetch_mappings(
+        db,
+        f"""
+        WITH base AS (
+          SELECT
+            {scope_select},
+            s.sglbillno AS billno,
+            s.sglsjje,
+            s.sglxssr,
+            s.sgln2
+          FROM {table_name} s
+          {group_join}
+          {mkt_join}
+          WHERE upper(trim(COALESCE(s.sglmfid, ''))) = upper(trim(:group_code)) {filters}
+        ),
+        ticket_rows AS (
+          SELECT
+            MAX(group_code) AS group_code,
+            MAX(group_name) AS group_name,
+            MAX(department_code) AS department_code,
+            MAX(department_name) AS department_name,
+            MAX(store_id) AS store_id,
+            billno,
+            COALESCE(SUM(sglsjje), 0) AS priced_sales_amount,
+            COALESCE(SUM(sglxssr), 0) AS effective_sales,
+            COALESCE(SUM(sgln2), 0) AS net_profit
+          FROM base
+          GROUP BY billno
+        )
+        SELECT
+          MAX(group_code) AS group_code,
+          MAX(group_name) AS group_name,
+          MAX(department_code) AS department_code,
+          MAX(department_name) AS department_name,
+          MAX(store_id) AS store_id,
+          COUNT(*) AS ticket_count,
+          COALESCE(SUM(priced_sales_amount), 0) AS priced_sales_amount,
+          COALESCE(SUM(effective_sales), 0) AS effective_sales,
+          COALESCE(SUM(net_profit), 0) AS net_profit
+        FROM ticket_rows
+        """,
+        params,
+    )
+    if not rows or not rows[0].get("ticket_count"):
+        return {
+            "ticket_count": 0,
+            "priced_sales_amount": 0,
+            "effective_sales": 0,
+            "net_profit": 0,
+        }
+    row = rows[0]
+    if not _row_allowed(scope, row):
+        return {
+            "ticket_count": 0,
+            "priced_sales_amount": 0,
+            "effective_sales": 0,
+            "net_profit": 0,
+        }
+    return _strip_scope(row)
+
+
 @router.get("/groups/{group_code}/tickets")
 def group_tickets(
     group_code: str,
@@ -3749,7 +3918,8 @@ def group_tickets(
     supplier_code: str | None = Query(None, description="供应商编码"),
     exclude_rental: bool = False,
     exclude_backoffice_departments: bool = False,
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(TICKET_PAGE_SIZE, ge=1, le=TICKET_EXPORT_FETCH_LIMIT),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -3767,12 +3937,13 @@ def group_tickets(
     若表为 ods_salegoodslist 且列缺失，需保证与线表结构一致。
     """
     require_permission(db, current_user, "sales.view")
+    _configure_sales_summary_timeout(db, start_date=start_date, end_date=end_date)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     table_name = _salegoodslist_table(db)
     has_counter_groups = _table_exists(db, "manaframe")
     has_stores = _table_exists(db, "stores")
     mkt_join = _stores_market_join_sql(has_stores)
-    params: dict[str, Any] = {"group_code": group_code, "limit": limit}
+    params: dict[str, Any] = {"group_code": group_code, "limit": limit, "offset": offset}
     filters = _date_filter_sql(params, start_date, end_date)
     filters += _sales_rental_exclusion_sql("s", enabled=exclude_rental)
     filters += _ticket_product_filter_sql(
@@ -3802,8 +3973,8 @@ def group_tickets(
     )
     head_join = ""
     if has_salehead and (dj_kind_col or has_salehead_djlb or has_salehead_rqsj):
-        head_join = f"""
-        LEFT JOIN salehead sh ON sh.billno::text = TRIM(BOTH FROM s.sglbillno::text)
+        head_join = """
+        LEFT JOIN salehead sh ON sh.billno = tr.billno
         """
     sale_datetime_expr = (
         "COALESCE(sh.rqsj, tr.sale_datetime) AS sale_datetime"
@@ -3814,12 +3985,12 @@ def group_tickets(
         lq_pay_join = """
         , lq_pay AS (
           SELECT
-            TRIM(BOTH FROM p.billno::text) AS billno,
+            p.billno AS billno,
             COALESCE(SUM(COALESCE(p.je, 0)), 0) AS lq_amount
           FROM salepay p
           WHERE TRIM(BOTH FROM COALESCE(p.paycode::text, '')) = '0500'
-            AND TRIM(BOTH FROM p.billno::text) IN (SELECT billno FROM ticket_rows)
-          GROUP BY TRIM(BOTH FROM p.billno::text)
+            AND p.billno IN (SELECT billno FROM ticket_rows)
+          GROUP BY p.billno
         )
         """
         lq_final_join = "LEFT JOIN lq_pay lp ON lp.billno = tr.billno"
@@ -3860,19 +4031,19 @@ def group_tickets(
         point_join = f"""
         , op_agg AS (
           SELECT
-            TRIM(BOTH FROM order_id::text) AS order_id,
+            order_id AS order_id,
             COALESCE(SUM(point), 0) AS point,
             COALESCE(SUM(CASE WHEN {consumption_point_condition} THEN point ELSE 0 END), 0) AS consumption_point,
             COALESCE(SUM(CASE WHEN {point_category_expr} LIKE '生日月%' THEN point ELSE 0 END), 0) AS birthday_month_member_point
           FROM order_point
-          WHERE TRIM(BOTH FROM order_id::text) IN (SELECT billno FROM ticket_rows)
-          GROUP BY TRIM(BOTH FROM order_id::text)
+          WHERE order_id IN (SELECT billno::text FROM ticket_rows)
+          GROUP BY order_id
         )
         """
         point_expr = "COALESCE(op.point, 0) AS point"
         consumption_point_expr = "COALESCE(op.consumption_point, 0) AS consumption_point"
         birthday_month_member_point_expr = "COALESCE(op.birthday_month_member_point, 0) AS birthday_month_member_point"
-        point_final_join = "LEFT JOIN op_agg op ON op.order_id = tr.billno"
+        point_final_join = "LEFT JOIN op_agg op ON op.order_id = tr.billno::text"
     else:
         point_join = ""
         point_expr = "0 AS point"
@@ -3896,7 +4067,7 @@ def group_tickets(
         WITH base AS (
           SELECT
             {scope_select},
-            TRIM(BOTH FROM s.sglbillno::text) AS billno,
+            s.sglbillno AS billno,
             s.sgldate AS sale_date,
             s.sglsaledate AS sale_datetime,
             s.sglsyjid AS cash_register_no,
@@ -3938,7 +4109,7 @@ def group_tickets(
           FROM base
           GROUP BY billno
           ORDER BY sale_date DESC, billno DESC
-          LIMIT :limit
+          LIMIT :limit OFFSET :offset
         )
         {lq_pay_join}
         {point_join}
@@ -3948,7 +4119,7 @@ def group_tickets(
           tr.department_code,
           tr.department_name,
           tr.store_id,
-          tr.billno,
+          TRIM(BOTH FROM tr.billno::text) AS billno,
           tr.sale_date,
           {sale_datetime_expr},
           tr.cash_register_no,
@@ -3967,7 +4138,7 @@ def group_tickets(
           {birthday_month_member_point_expr},
           {txn_expr}
         FROM ticket_rows tr
-        {head_join.replace("s.sglbillno::text", "tr.billno") if head_join else ""}
+        {head_join}
         {lq_final_join}
         {point_final_join}
         ORDER BY tr.sale_date DESC, tr.billno DESC
@@ -3984,6 +4155,15 @@ def ticket_detail(
     current_user: User = Depends(get_current_user),
 ):
     require_permission(db, current_user, "sales.view")
+    normalized_billno = billno.strip()
+    if (
+        not normalized_billno
+        or not normalized_billno.isascii()
+        or not normalized_billno.isdigit()
+        or len(normalized_billno) > 18
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="小票号格式无效")
+    billno_value = Decimal(normalized_billno)
     scope = load_business_scope(db, current_user, fallback_resource_code="sales")
     has_salehead = _table_exists(db, "salehead")
     has_salegoods = _table_exists(db, "salegoods")
@@ -4045,11 +4225,11 @@ def ticket_detail(
             FROM salegoods g
             {goods_scope_join}
             {goods_store_join}
-            WHERE g.billno::varchar = :billno
+            WHERE g.billno = :billno
             {(_sales_department_exclusion_sql("cg") if has_counter_groups else "")}
             GROUP BY 1, 2, 3, 4, 5
             """,
-            {"billno": billno},
+            {"billno": billno_value},
         )
         if scope_rows and not any(_row_allowed(scope, row) for row in scope_rows):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无该小票数据权限")
@@ -4063,10 +4243,10 @@ def ticket_detail(
               status, custtype, hhflag, ybillno, ysyjh, yfphm, channel,
               sendrqsj, sswr_sysy, fk_sysy, str2, str3
             FROM salehead
-            WHERE billno::varchar = :billno
+            WHERE billno = :billno
             LIMIT 1
             """,
-            {"billno": billno},
+            {"billno": billno_value},
         )
         goods = _fetch_mappings(
             db,
@@ -4077,10 +4257,10 @@ def ticket_detail(
               g.hyzke, g.yhzke, g.lszke, g.flag, g.rqsj
             FROM salegoods g
             {goodsbase_join}
-            WHERE g.billno::varchar = :billno
+            WHERE g.billno = :billno
             ORDER BY g.rowno
             """,
-            {"billno": billno},
+            {"billno": billno_value},
         )
         if has_salepay:
             paymode_join = (
@@ -4101,10 +4281,10 @@ def ticket_detail(
                   p.payno, p.paytype, p.paymemo, p.rqsj
                 FROM salepay p
                 {paymode_join}
-                WHERE p.billno::varchar = :billno
+                WHERE p.billno = :billno
                 ORDER BY p.rowno
                 """,
-                {"billno": billno},
+                {"billno": billno_value},
             )
         else:
             pays = []
@@ -4141,11 +4321,11 @@ def ticket_detail(
         FROM {table_name} s
         {group_join}
         {mkt_join}
-        WHERE s.sglbillno::varchar = :billno
+        WHERE s.sglbillno = :billno
         {(_sales_department_exclusion_sql("cg") if has_counter_groups else "")}
         ORDER BY s.sglrowno
         """,
-        {"billno": billno},
+        {"billno": billno_value},
     )
     allowed_rows = [_strip_scope(row) for row in rows if _row_allowed(scope, row)]
     if rows and not allowed_rows:

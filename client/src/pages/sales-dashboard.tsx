@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Building2, Check, ChevronRight, Download, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ import {
   formatTicketSaleDateTime,
 } from "@/lib/export-sales-excel";
 import { useToast } from "@/hooks/use-toast";
+import { useModuleAccessLog, type ModuleQueryConditions } from "@/hooks/use-module-access-log";
 import { cn } from "@/lib/utils";
 import {
   getSalesDashboardData,
@@ -163,6 +164,13 @@ type TicketSummary = {
   birthday_month_member_point?: number;
   /** 列表列「销售类型」：salehead.djlx/djlb，1 销售，4 退货 */
   transaction_type?: string | null;
+};
+
+type TicketSummaryTotals = {
+  ticket_count: number;
+  priced_sales_amount: number;
+  effective_sales: number;
+  net_profit: number;
 };
 
 type TicketDetail = {
@@ -481,6 +489,9 @@ const buildQuery = (params: Record<string, string | number | boolean | undefined
   return value ? `?${value}` : "";
 };
 
+const TICKET_PAGE_SIZE = 100;
+const TICKET_EXPORT_BATCH_SIZE = 5_000;
+
 /** 部门汇总中的「未归属部门」无编码，不能靠 department_code 筛选，需走专用查询参数 */
 function isUnassignedDepartmentRow(d: DepartmentSummary): boolean {
   const code = String(d.department_code ?? "").trim();
@@ -524,6 +535,8 @@ export default function SalesDashboardPage() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<SalesAnalysisResult | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [ticketsExporting, setTicketsExporting] = useState(false);
+  const [ticketPage, setTicketPage] = useState(1);
   /** 小票列表用本期日期或上年同期日期（与「同期小票数」下钻一致） */
   const [ticketsViewMode, setTicketsViewMode] = useState<"current" | "prior">("current");
   const showPricedSalesAmount = isCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
@@ -546,6 +559,35 @@ export default function SalesDashboardPage() {
       excludeBackofficeDepartments,
     ],
   );
+
+  const { recordQuery } = useModuleAccessLog({
+    moduleId: "sales-dashboard",
+    moduleName: "电脑端销售看板",
+    clientType: "desktop",
+    // 主框架已经记录模块进入，避免电脑端重复写入两条进入日志。
+    logEnter: false,
+    initialQueryConditions: {
+      query_type: "sales",
+      ...commonParams,
+      query_level: "stores",
+    },
+  });
+
+  const recordSalesQuery = (queryLevel: string, overrides: ModuleQueryConditions = {}) => {
+    recordQuery({
+      query_type: "sales",
+      ...commonParams,
+      query_level: queryLevel,
+      store_id: selectedStore?.store_id,
+      store_name: selectedStore?.store_name,
+      department_code: selectedDepartment?.department_code,
+      department_name: selectedDepartment?.department_name,
+      group_code: selectedGroup?.group_code,
+      group_name: selectedGroup?.group_name,
+      ...overrides,
+    });
+  };
+
   const ticketsQueryParams = useMemo(() => {
     if (ticketsViewMode === "prior") {
       return { start_date: priorStartDate, end_date: priorEndDate };
@@ -674,10 +716,36 @@ export default function SalesDashboardPage() {
       selectedProductTicketParams,
       excludeRental,
       excludeBackofficeDepartments,
+      ticketPage,
     ],
     queryFn: () =>
       getSalesDashboardData(
         `/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets${buildQuery({
+          ...ticketsQueryParams,
+          ...selectedProductTicketParams,
+          exclude_rental: excludeRental,
+          exclude_backoffice_departments: excludeBackofficeDepartments,
+          limit: TICKET_PAGE_SIZE,
+          offset: (ticketPage - 1) * TICKET_PAGE_SIZE,
+        })}`,
+        apiGet,
+      ),
+    enabled: activeTab === "tickets" && Boolean(selectedGroup?.group_code),
+  });
+
+  const ticketsSummaryQuery = useQuery<TicketSummaryTotals>({
+    queryKey: [
+      "/api/sales/groups/tickets/summary",
+      selectedGroup?.group_code,
+      ticketsQueryParams,
+      ticketsViewMode,
+      selectedProductTicketParams,
+      excludeRental,
+      excludeBackofficeDepartments,
+    ],
+    queryFn: () =>
+      getSalesDashboardData(
+        `/api/sales/groups/${encodeURIComponent(selectedGroup?.group_code ?? "")}/tickets/summary${buildQuery({
           ...ticketsQueryParams,
           ...selectedProductTicketParams,
           exclude_rental: excludeRental,
@@ -687,6 +755,22 @@ export default function SalesDashboardPage() {
       ),
     enabled: activeTab === "tickets" && Boolean(selectedGroup?.group_code),
   });
+
+  useEffect(() => {
+    setTicketPage(1);
+  }, [
+    selectedGroup?.group_code,
+    ticketsViewMode,
+    currentStartDate,
+    currentEndDate,
+    priorStartDate,
+    priorEndDate,
+    selectedProductTicketParams.goods_code,
+    selectedProductTicketParams.barcode,
+    selectedProductTicketParams.supplier_code,
+    excludeRental,
+    excludeBackofficeDepartments,
+  ]);
 
   const ticketDetailQuery = useQuery<TicketDetail>({
     queryKey: ["/api/sales/tickets", selectedBillno],
@@ -702,6 +786,7 @@ export default function SalesDashboardPage() {
       departmentGoodsQuery.isFetching ||
       departmentSuppliersQuery.isFetching ||
       ticketsQuery.isFetching ||
+      ticketsSummaryQuery.isFetching ||
       (Boolean(selectedBillno) && ticketDetailQuery.isFetching),
     [
       storesQuery.isFetching,
@@ -710,6 +795,7 @@ export default function SalesDashboardPage() {
       departmentGoodsQuery.isFetching,
       departmentSuppliersQuery.isFetching,
       ticketsQuery.isFetching,
+      ticketsSummaryQuery.isFetching,
       selectedBillno,
       ticketDetailQuery.isFetching,
     ],
@@ -720,7 +806,7 @@ export default function SalesDashboardPage() {
   const groupsInitialLoading = groupsQuery.isLoading;
   const departmentGoodsInitialLoading = departmentGoodsQuery.isLoading;
   const departmentSuppliersInitialLoading = departmentSuppliersQuery.isLoading;
-  const ticketsInitialLoading = ticketsQuery.isLoading;
+  const ticketsInitialLoading = ticketsQuery.isLoading || ticketsSummaryQuery.isLoading;
   const activeDataInitialLoading =
     (activeTab === "stores" && storesInitialLoading) ||
     (activeTab === "departments" && departmentsInitialLoading) ||
@@ -740,7 +826,7 @@ export default function SalesDashboardPage() {
               ? departmentGoodsQuery.error
               : departmentSuppliersQuery.error
             : activeTab === "tickets"
-              ? ticketsQuery.error
+              ? ticketsQuery.error || ticketsSummaryQuery.error
               : null;
 
   /** 与当前 Tab、日期及下钻一致：各 Tab 对应当前列表数据；门店 Tab 且在面包屑中选中了门店时只统计该门店一行 */
@@ -748,16 +834,15 @@ export default function SalesDashboardPage() {
     const empty = { sales: 0, profit: 0, tickets: 0, groups: 0 };
     if (activeDataError) return empty;
     if (activeTab === "tickets") {
-      const rows = ticketsQuery.data ?? [];
-      return rows.reduce(
-        (acc, row) => ({
-          sales: acc.sales + Number(row.effective_sales || 0),
-          profit: acc.profit + Number(row.net_profit || 0),
-          tickets: acc.tickets + 1,
-          groups: 1,
-        }),
-        { ...empty },
-      );
+      const summary = ticketsSummaryQuery.data;
+      return summary
+        ? {
+            sales: Number(summary.effective_sales || 0),
+            profit: Number(summary.net_profit || 0),
+            tickets: Number(summary.ticket_count || 0),
+            groups: summary.ticket_count > 0 ? 1 : 0,
+          }
+        : empty;
     }
     if (activeTab === "groups") {
       const rows = groupsQuery.data ?? [];
@@ -829,7 +914,7 @@ export default function SalesDashboardPage() {
     groupsQuery.data,
     departmentGoodsQuery.data,
     departmentSuppliersQuery.data,
-    ticketsQuery.data,
+    ticketsSummaryQuery.data,
   ]);
 
   const storesTableTotals = useMemo(() => {
@@ -1034,14 +1119,34 @@ export default function SalesDashboardPage() {
     return t.effective_sales > 0 ? t.net_profit / t.effective_sales : 0;
   }, [ticketsTableTotals]);
 
+  const ticketTotalCount = Number(ticketsSummaryQuery.data?.ticket_count ?? 0);
+  const ticketTotalPages = Math.max(1, Math.ceil(ticketTotalCount / TICKET_PAGE_SIZE));
+
+  useEffect(() => {
+    if (ticketPage > ticketTotalPages) setTicketPage(ticketTotalPages);
+  }, [ticketPage, ticketTotalPages]);
+
   const refresh = () => {
+    recordSalesQuery(
+      activeTab === "department-products" ? departmentProductView : activeTab,
+      {
+        keyword: activeTab === "groups" ? keyword : activeTab === "department-products" ? departmentProductKeyword : undefined,
+        supplier_code: departmentProductSupplierCode,
+        page: activeTab === "tickets" ? ticketPage : undefined,
+        view_mode: activeTab === "tickets" ? ticketsViewMode : undefined,
+        refresh: true,
+      },
+    );
     if (activeTab === "stores") storesQuery.refetch();
     if (activeTab === "departments") departmentsQuery.refetch();
     if (activeTab === "groups") groupsQuery.refetch();
     if (activeTab === "department-products" && departmentProductView === "groups") groupsQuery.refetch();
     if (activeTab === "department-products" && departmentProductView === "goods") departmentGoodsQuery.refetch();
     if (activeTab === "department-products" && departmentProductView === "suppliers") departmentSuppliersQuery.refetch();
-    if (activeTab === "tickets" && selectedGroup?.group_code) ticketsQuery.refetch();
+    if (activeTab === "tickets" && selectedGroup?.group_code) {
+      ticketsQuery.refetch();
+      ticketsSummaryQuery.refetch();
+    }
     if (selectedBillno) ticketDetailQuery.refetch();
   };
 
@@ -1066,6 +1171,16 @@ export default function SalesDashboardPage() {
       refresh();
       return;
     }
+    recordSalesQuery(activeTab === "department-products" ? departmentProductView : activeTab, {
+      start_date: draftCurrentStartDate,
+      end_date: draftCurrentEndDate,
+      prior_start_date: draftPriorStartDate,
+      prior_end_date: draftPriorEndDate,
+      keyword: activeTab === "groups" ? keyword : activeTab === "department-products" ? departmentProductKeyword : undefined,
+      supplier_code: departmentProductSupplierCode,
+      page: activeTab === "tickets" ? ticketPage : undefined,
+      view_mode: activeTab === "tickets" ? ticketsViewMode : undefined,
+    });
     setCurrentStartDate(draftCurrentStartDate);
     setCurrentEndDate(draftCurrentEndDate);
     setPriorStartDate(draftPriorStartDate);
@@ -1091,9 +1206,20 @@ export default function SalesDashboardPage() {
     setCurrentEndDate(nextCurrentEnd);
     setPriorStartDate(nextPrior.start_date);
     setPriorEndDate(nextPrior.end_date);
+    recordSalesQuery("stores", {
+      start_date: nextCurrentStart,
+      end_date: nextCurrentEnd,
+      prior_start_date: nextPrior.start_date,
+      prior_end_date: nextPrior.end_date,
+      preset_days: days,
+    });
   };
 
   const drillToStore = (store: StoreSummary) => {
+    recordSalesQuery("departments", {
+      store_id: store.store_id,
+      store_name: store.store_name,
+    });
     setSelectedStore(store);
     setSelectedDepartment(null);
     setSelectedGroup(null);
@@ -1103,6 +1229,11 @@ export default function SalesDashboardPage() {
   };
 
   const drillToDepartment = (department: DepartmentSummary) => {
+    recordSalesQuery("groups", {
+      department_code: department.department_code,
+      department_name: department.department_name,
+      unassigned_department: isUnassignedDepartmentRow(department),
+    });
     setSelectedDepartment(department);
     setSelectedGroup(null);
     setSelectedDepartmentProduct(null);
@@ -1112,14 +1243,26 @@ export default function SalesDashboardPage() {
   };
 
   const drillToGroup = (group: GroupSummary) => {
+    const nextTab = getGroupDrilldownTab(selectedDepartment);
+    recordSalesQuery(nextTab === "department-products" ? "goods" : "tickets", {
+      group_code: group.group_code,
+      group_name: group.group_name,
+    });
     setSelectedGroup(group);
     setSelectedDepartmentProduct(null);
     setTicketsViewMode("current");
     setDepartmentProductView("goods");
-    setActiveTab(getGroupDrilldownTab(selectedDepartment));
+    setActiveTab(nextTab);
   };
 
   const drillToDepartmentProduct = (product: DepartmentGoodsSummary) => {
+    recordSalesQuery("tickets", {
+      group_code: product.group_code,
+      group_name: product.group_name,
+      goods_code: product.goods_code,
+      barcode: product.barcode,
+      supplier_code: product.supplier_code,
+    });
     if (product.group_code && (!selectedGroup || selectedGroup.group_code !== product.group_code)) {
       setSelectedGroup({
         group_code: product.group_code,
@@ -1145,6 +1288,13 @@ export default function SalesDashboardPage() {
   const openPriorPeriodTickets = (event: MouseEvent, group: GroupSummary) => {
     event.stopPropagation();
     if (!Number(group.same_period_ticket_count ?? 0)) return;
+    recordSalesQuery("tickets", {
+      start_date: priorStartDate,
+      end_date: priorEndDate,
+      view_mode: "prior",
+      group_code: group.group_code,
+      group_name: group.group_name,
+    });
     setSelectedGroup(group);
     setSelectedDepartmentProduct(null);
     setTicketsViewMode("prior");
@@ -1152,6 +1302,11 @@ export default function SalesDashboardPage() {
   };
 
   const resetDrilldown = () => {
+    recordSalesQuery("stores", {
+      navigation_action: "back",
+      from_level: activeTab,
+      to_level: "stores",
+    });
     setSelectedStore(null);
     setSelectedDepartment(null);
     setSelectedGroup(null);
@@ -1162,6 +1317,11 @@ export default function SalesDashboardPage() {
   };
 
   const backToStores = () => {
+    recordSalesQuery("stores", {
+      navigation_action: "back",
+      from_level: activeTab,
+      to_level: "stores",
+    });
     setSelectedStore(null);
     setSelectedDepartment(null);
     setSelectedGroup(null);
@@ -1172,6 +1332,11 @@ export default function SalesDashboardPage() {
   };
 
   const backToDepartments = () => {
+    recordSalesQuery("departments", {
+      navigation_action: "back",
+      from_level: activeTab,
+      to_level: "departments",
+    });
     setSelectedDepartment(null);
     setSelectedGroup(null);
     setSelectedDepartmentProduct(null);
@@ -1181,6 +1346,11 @@ export default function SalesDashboardPage() {
   };
 
   const backToGroups = () => {
+    recordSalesQuery("groups", {
+      navigation_action: "back",
+      from_level: activeTab,
+      to_level: "groups",
+    });
     setSelectedGroup(null);
     setSelectedDepartmentProduct(null);
     setTicketsViewMode("current");
@@ -1190,11 +1360,48 @@ export default function SalesDashboardPage() {
   const backFromTickets = () => {
     setTicketsViewMode("current");
     if (selectedDepartmentProduct && isSupermarketDepartment(selectedDepartment)) {
+      recordSalesQuery("goods", {
+        navigation_action: "back",
+        from_level: "tickets",
+        to_level: "goods",
+      });
       setSelectedDepartmentProduct(null);
       setActiveTab("department-products");
       return;
     }
     backToGroups();
+  };
+
+  const toggleExcludeRental = () => {
+    const nextValue = !excludeRental;
+    recordSalesQuery(activeTab === "department-products" ? departmentProductView : activeTab, {
+      exclude_rental: nextValue,
+      filter_action: nextValue ? "exclude_rental" : "include_rental",
+    });
+    setExcludeRental(nextValue);
+  };
+
+  const toggleExcludeBackofficeDepartments = () => {
+    const nextValue = !excludeBackofficeDepartments;
+    recordSalesQuery(activeTab === "department-products" ? departmentProductView : activeTab, {
+      exclude_backoffice_departments: nextValue,
+      filter_action: nextValue ? "exclude_backoffice_departments" : "include_backoffice_departments",
+    });
+    setExcludeBackofficeDepartments(nextValue);
+  };
+
+  const openTicketDetail = (row: TicketSummary) => {
+    recordSalesQuery("detail", {
+      start_date: ticketsQueryParams.start_date,
+      end_date: ticketsQueryParams.end_date,
+      view_mode: ticketsViewMode,
+      goods_code: selectedDepartmentProduct?.goods_code,
+      barcode: selectedDepartmentProduct?.barcode,
+      supplier_code: selectedDepartmentProduct?.supplier_code,
+      ticket_no: `${row.invoice_no || row.billno}`,
+      bill_no: `${row.billno}`,
+    });
+    setSelectedBillno(`${row.billno}`);
   };
 
   const handleExportStores = () => {
@@ -1338,18 +1545,45 @@ export default function SalesDashboardPage() {
     }
   };
 
-  const handleExportTickets = () => {
+  const handleExportTickets = async () => {
     if (!selectedGroup?.group_code) {
       toast({ title: "请先选择柜组并打开小票列表", variant: "destructive" });
       return;
     }
-    const rows = ticketsQuery.data ?? [];
-    if (rows.length === 0) {
-      toast({ title: "暂无小票数据可导出", variant: "destructive" });
-      return;
-    }
+    setTicketsExporting(true);
     try {
-      exportTicketsToExcel(rows, {
+      const baseParams = {
+        ...ticketsQueryParams,
+        ...selectedProductTicketParams,
+        exclude_rental: excludeRental,
+        exclude_backoffice_departments: excludeBackofficeDepartments,
+      };
+      const summary = await apiGet<TicketSummaryTotals>(
+        `/api/sales/groups/${encodeURIComponent(selectedGroup.group_code)}/tickets/summary${buildQuery(baseParams)}`,
+      );
+      if (!summary.ticket_count) {
+        toast({ title: "暂无小票数据可导出", variant: "destructive" });
+        return;
+      }
+
+      const rows: TicketSummary[] = [];
+      for (let offset = 0; offset < summary.ticket_count; offset += TICKET_EXPORT_BATCH_SIZE) {
+        const batch = await apiGet<TicketSummary[]>(
+          `/api/sales/groups/${encodeURIComponent(selectedGroup.group_code)}/tickets${buildQuery({
+            ...baseParams,
+            limit: TICKET_EXPORT_BATCH_SIZE,
+            offset,
+          })}`,
+        );
+        rows.push(...batch);
+        if (batch.length === 0 && rows.length < summary.ticket_count) {
+          throw new Error(`小票明细仅返回 ${rows.length.toLocaleString("zh-CN")} / ${summary.ticket_count.toLocaleString("zh-CN")} 张，请重试`);
+        }
+      }
+      if (rows.length < summary.ticket_count) {
+        throw new Error(`小票明细仅返回 ${rows.length.toLocaleString("zh-CN")} / ${summary.ticket_count.toLocaleString("zh-CN")} 张，请重试`);
+      }
+      exportTicketsToExcel(rows.slice(0, summary.ticket_count), {
         startDate: ticketsQueryParams.start_date,
         endDate: ticketsQueryParams.end_date,
         groupCode: selectedGroup.group_code,
@@ -1357,13 +1591,15 @@ export default function SalesDashboardPage() {
         viewMode: ticketsViewMode,
         includePricedSalesAmount: showPricedSalesAmount,
       });
-      toast({ title: "已导出 Excel" });
+      toast({ title: `已导出 ${summary.ticket_count.toLocaleString("zh-CN")} 张小票` });
     } catch (err) {
       toast({
         title: "导出失败",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });
+    } finally {
+      setTicketsExporting(false);
     }
   };
 
@@ -1542,7 +1778,7 @@ export default function SalesDashboardPage() {
               size="sm"
               variant={excludeRental ? "default" : "outline"}
               aria-pressed={excludeRental}
-              onClick={() => setExcludeRental((value) => !value)}
+              onClick={toggleExcludeRental}
             >
               {excludeRental && <Check className="mr-2 h-4 w-4" />}
               排除租赁销售
@@ -1552,7 +1788,7 @@ export default function SalesDashboardPage() {
               size="sm"
               variant={excludeBackofficeDepartments ? "default" : "outline"}
               aria-pressed={excludeBackofficeDepartments}
-              onClick={() => setExcludeBackofficeDepartments((value) => !value)}
+              onClick={toggleExcludeBackofficeDepartments}
             >
               {excludeBackofficeDepartments && <Check className="mr-2 h-4 w-4" />}
               排除后台部门销售
@@ -1827,6 +2063,10 @@ export default function SalesDashboardPage() {
                           key={row.supplier_code}
                           className="cursor-pointer hover:bg-slate-50"
                           onClick={() => {
+                            recordSalesQuery("goods", {
+                              supplier_code: row.supplier_code,
+                              supplier_name: row.supplier_name,
+                            });
                             setDepartmentProductSupplierCode(row.supplier_code);
                             setDepartmentProductView("goods");
                           }}
@@ -2125,9 +2365,16 @@ export default function SalesDashboardPage() {
                 )}
               </div>
               {selectedGroup && (
-                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={handleExportTickets}>
-                  <Download className="mr-2 h-4 w-4" />
-                  导出 Excel
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={handleExportTickets}
+                  disabled={ticketsExporting}
+                >
+                  {ticketsExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  {ticketsExporting ? "导出中…" : "导出 Excel"}
                 </Button>
               )}
             </CardHeader>
@@ -2165,7 +2412,7 @@ export default function SalesDashboardPage() {
                     />
                   ) : (
                     (ticketsQuery.data ?? []).map((row) => (
-                      <TableRow key={`${row.billno}`} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedBillno(`${row.billno}`)}>
+                      <TableRow key={`${row.billno}`} className="cursor-pointer hover:bg-slate-50" onClick={() => openTicketDetail(row)}>
                         <TableCell className="py-2 font-medium">{row.billno}</TableCell>
                         <TableCell className="py-2 whitespace-nowrap">
                           {formatTicketSaleDateTime(row.sale_datetime, row.sale_date)}
@@ -2194,7 +2441,7 @@ export default function SalesDashboardPage() {
                   <TableFooter>
                     <TableRow className="hover:bg-muted/50">
                       <TableCell className="py-2 font-semibold" colSpan={5}>
-                        合计
+                        本页合计
                       </TableCell>
                       {showPricedSalesAmount && (
                         <TableCell className="py-2 text-right font-semibold tabular-nums">
@@ -2213,6 +2460,34 @@ export default function SalesDashboardPage() {
                   </TableFooter>
                 )}
               </Table>
+              {!ticketsQuery.isError && ticketTotalCount > 0 && (
+                <div className="mt-3 flex flex-col gap-2 border-t pt-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    共 <span className="font-semibold text-slate-900">{number(ticketTotalCount)}</span> 张小票，
+                    每页 {TICKET_PAGE_SIZE} 张；当前第 {ticketPage} / {ticketTotalPages} 页
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={ticketPage <= 1 || ticketsQuery.isFetching}
+                      onClick={() => setTicketPage((page) => Math.max(1, page - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={ticketPage >= ticketTotalPages || ticketsQuery.isFetching}
+                      onClick={() => setTicketPage((page) => Math.min(ticketTotalPages, page + 1))}
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -2331,7 +2606,17 @@ export default function SalesDashboardPage() {
       <Dialog open={Boolean(selectedBillno)} onOpenChange={(open) => !open && setSelectedBillno(null)}>
         <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
           <DialogHeader><DialogTitle>小票详情 {selectedBillno}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
+          {ticketDetailQuery.isLoading ? (
+            <div className="flex items-center justify-center gap-2 rounded border border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              小票详情加载中…
+            </div>
+          ) : ticketDetailQuery.isError ? (
+            <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              小票详情加载失败，请稍后重试。
+            </div>
+          ) : (
+            <div className="space-y-4">
             <ReceiptTicketHeaderBlock
               source={ticketDetailQuery.data?.source || "-"}
               head={ticketDetailQuery.data?.head ?? null}
@@ -2391,7 +2676,8 @@ export default function SalesDashboardPage() {
                 </TableBody>
               </Table>
             )}
-          </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

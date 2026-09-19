@@ -1,15 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { navigationItems } from "./navigation-items.ts";
 import { MODULE_PERMISSION_REQUIREMENTS } from "./module-permissions.ts";
 import {
   brandMemberAiFallbackMessage,
+  brandMemberCrossShoppingRequest,
   brandMemberRequest,
   buildAiSnapshot,
   filterBrandMemberGroups,
   previousPeriod,
   priorYearPeriod,
+  sortBrandMemberCrossShoppingRows,
 } from "./brand-member-analysis.ts";
 
 
@@ -47,6 +50,62 @@ test("competitors are optional in the report request", () => {
   assert.deepEqual(request.competitor_group_codes, []);
   assert.equal(request.current_start, "2025-01-01");
   assert.equal(request.prior_start, "2024-01-01");
+});
+
+
+test("cross-shopping request only uses the current target-brand period", () => {
+  const request = brandMemberCrossShoppingRequest({
+    storeCode: "601",
+    targetGroupCode: "6010101168",
+    competitorGroupCodes: ["OTHER"],
+    currentStart: "2026-08-01",
+    currentEnd: "2026-08-31",
+    priorStart: "2025-08-01",
+    priorEnd: "2025-08-31",
+  });
+
+  assert.deepEqual(request, {
+    store_code: "601",
+    target_group_code: "6010101168",
+    start_date: "2026-08-01",
+    end_date: "2026-08-31",
+  });
+});
+
+
+test("cross-shopping rows can rank by amount or unique buyers", () => {
+  const rows = [
+    { name: "A", buyer_count: 9, sales_revenue: 100 },
+    { name: "B", buyer_count: 3, sales_revenue: 300 },
+    { name: "C", buyer_count: 12, sales_revenue: 100 },
+  ];
+
+  assert.deepEqual(
+    sortBrandMemberCrossShoppingRows(rows, "sales_revenue").map((row) => row.name),
+    ["B", "C", "A"],
+  );
+  assert.deepEqual(
+    sortBrandMemberCrossShoppingRows(rows, "buyer_count").map((row) => row.name),
+    ["C", "A", "B"],
+  );
+  assert.deepEqual(rows.map((row) => row.name), ["A", "B", "C"]);
+});
+
+
+test("brand member page exposes the cross-shopping tab and department drilldown", async () => {
+  const source = await readFile(
+    new URL("../pages/member-analysis/brand-member-analysis.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /跨部门 \/ 跨品牌消费/);
+  assert.match(source, /\/api\/sales\/brand-member-analysis\/cross-shopping/);
+  assert.match(source, /\/api\/sales\/brand-member-analysis\/inflow-sources/);
+  assert.match(source, /部门排行/);
+  assert.match(source, /setSelectedCrossDepartmentCode\(department\.department_code\)/);
+  assert.match(source, /按消费金额/);
+  assert.match(source, /按人数/);
+  assert.match(source, /按需加载/);
 });
 
 

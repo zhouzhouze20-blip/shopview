@@ -282,6 +282,8 @@ def assemble_report(
             {
                 "manager_name": manager_name,
                 "key_brand_count": 0,
+                "current_premium_buyers": 0,
+                "prior_premium_buyers": 0,
                 "current_premium_sales": 0.0,
                 "prior_premium_sales": 0.0,
             },
@@ -289,10 +291,16 @@ def assemble_report(
         summary["key_brand_count"] += 1
         for level in row["levels"]:
             if level["level_code"] in {"03", "04"}:
+                summary["current_premium_buyers"] += level["current_buyers"]
+                summary["prior_premium_buyers"] += level["prior_buyers"]
                 summary["current_premium_sales"] += level["current_sales"]
                 summary["prior_premium_sales"] += level["prior_sales"]
     manager_summary = []
     for summary in manager_totals.values():
+        summary["premium_buyer_yoy"] = _yoy(
+            float(summary["current_premium_buyers"]),
+            float(summary["prior_premium_buyers"]),
+        )
         summary["premium_sales_yoy"] = _yoy(
             summary["current_premium_sales"], summary["prior_premium_sales"]
         )

@@ -8,9 +8,11 @@
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Iterable
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -18,12 +20,25 @@ from sqlalchemy.orm import Session
 from models.database import get_db
 from models.models import User
 from routers.auth import get_current_user
-from routers.authz import load_business_scope, require_permission
+from routers.authz import get_authz_subject, get_role_codes, is_admin, load_business_scope, require_permission
 from services.sales_analysis.ai_report import generate_ai_report
+from services.activity_analysis.star_diamond_excel import build_star_diamond_workbook
 from services.activity_analysis.coupon_monthly_balance import (
     month_bounds,
     normalize_period_month,
-    previous_period_month,
+    opening_balance_source_period,
+)
+from services.activity_analysis.birthday_coupon import (
+    BIRTHDAY_COUPON_ISSUE_ACTION,
+    BIRTHDAY_COUPON_STORE_CODE,
+    center_coupon_profile,
+    month_window as birthday_coupon_month_window,
+    normalize_coupon_type,
+)
+from services.activity_analysis.coupon_followup import (
+    FOLLOWUP_MEMBER_LEVELS,
+    normalize_followup_status,
+    query_coupon_followups,
 )
 from services.activity_analysis.point_rules import point_rule_source_tables, point_status_case_sql
 from services.department_display_order import department_display_sort_key
@@ -31,10 +46,14 @@ from services.department_display_order import department_display_sort_key
 
 router = APIRouter(prefix="/api/activity-analysis", tags=["activity-analysis"])
 ACTIVITY_ANALYSIS_PERMISSION = "activity_analysis.view"
+BIRTHDAY_COUPON_ANALYSIS_PERMISSION = "activity_analysis.birthday_coupon.view"
+MOBILE_COUPON_FOLLOWUP_PERMISSION = "mobile.coupon_followup.view"
+CENTER_BLACK_DIAMOND_FOLLOWUP_ROLE = "center_black_diamond_followup"
 POINTS_ACTIVITY_ANALYSIS_PERMISSION = "activity_analysis.points.view"
 POINTS_ACTIVITY_START_DATE = date(2026, 7, 9)
 POINTS_QUERY_TIMEOUT_SECONDS = 60
 STAR_DIAMOND_ANALYSIS_PERMISSION = "activity_analysis.star_diamond.view"
+STAR_DIAMOND_QUERY_TIMEOUT_SECONDS = 60
 VOUCHER_MATCH_VIEW_PERMISSION = "activity_settlement.voucher_match.view"
 VOUCHER_MATCH_CONFIRM_PERMISSION = "activity_settlement.voucher_match.confirm"
 VOUCHER_MATCH_REJECT_PERMISSION = "activity_settlement.voucher_match.reject"
@@ -124,15 +143,21 @@ VOUCHER_DETAIL_KEY_SQL = (
 VOUCHER_MATCH_EXCLUDED_FLOW_SEQNOS = ("29042789",)
 
 
+def _backend_coupon_recharge_condition_sql(alias: str = "l") -> str:
+    """Identify CRM backend recharge/refund logs using the voucher-match rule."""
+    prefix = f"{alias}." if alias else ""
+    return f"""{prefix}tcflzy IN ('M', 'N')
+              AND TRIM(BOTH FROM COALESCE({prefix}tcflsource, '')) = '2'
+              AND TRIM(BOTH FROM COALESCE({prefix}tcflsyjid, '')) = '0000'
+              AND NULLIF(TRIM(BOTH FROM COALESCE({prefix}tcflinvno, '')), '') IS NULL"""
+
+
 def _voucher_match_flow_exclusion_sql(alias: str = "l") -> str:
     prefix = f"{alias}." if alias else ""
     excluded = ", ".join(f"'{seqno}'" for seqno in VOUCHER_MATCH_EXCLUDED_FLOW_SEQNOS)
     return f"""{prefix}tcflseqno::text NOT IN ({excluded})
             AND NOT (
-              {prefix}tcflzy IN ('M', 'N')
-              AND TRIM(BOTH FROM COALESCE({prefix}tcflsource, '')) = '2'
-              AND TRIM(BOTH FROM COALESCE({prefix}tcflsyjid, '')) = '0000'
-              AND NULLIF(TRIM(BOTH FROM COALESCE({prefix}tcflinvno, '')), '') IS NULL
+              {_backend_coupon_recharge_condition_sql(alias)}
             )"""
 
 
@@ -281,6 +306,61 @@ def _case_expr(column: str, labels: dict[str, str], fallback: str) -> str:
     return "CASE " + " ".join(parts) + f" ELSE {fallback} END"
 
 
+def coupon_source_name_sql(alias: str = "l") -> str:
+    """Label backend CRM recharge rows before falling back to source-code labels."""
+    prefix = f"{alias}." if alias else ""
+    return f"""CASE
+            WHEN {_backend_coupon_recharge_condition_sql(alias)}
+            THEN '后台充券'
+            ELSE {_case_expr(f'{prefix}tcflsource', SOURCE_LABELS, "'未知来源'")}
+          END"""
+
+
+def _coupon_initial_issue_condition_sql(alias: str = "l") -> str:
+    """Return the actions that establish a coupon's original issue source."""
+    prefix = f"{alias}." if alias else ""
+    return f"{prefix}tcflzy IN ('F', 'm', 'M', 'Q', 'I', 'B', 'Z', 'b', 'X')"
+
+
+def coupon_summary_source_code_sql(alias: str = "l") -> str:
+    """Expose a source code only for initial issue/recharge movements."""
+    prefix = f"{alias}." if alias else ""
+    return f"CASE WHEN {_coupon_initial_issue_condition_sql(alias)} THEN {prefix}tcflsource ELSE NULL END"
+
+
+def coupon_summary_source_name_sql(alias: str = "l") -> str:
+    """Expose a source label only for initial issue/recharge movements."""
+    return f"""CASE
+            WHEN {_coupon_initial_issue_condition_sql(alias)}
+            THEN {coupon_source_name_sql(alias)}
+            ELSE NULL
+          END"""
+
+
+def coupon_payment_allocation_sql(
+    log_alias: str = "l",
+    payment_alias: str = "cp",
+    sale_alias: str = "h",
+) -> str:
+    """Allocate one ticket/batch coupon payment across its consumption log rows."""
+    action = f"{log_alias}.tcflzy"
+    amount = f"ABS(COALESCE({log_alias}.tcflmoney, 0))"
+    batch = f"{log_alias}.tcflsyjtrace::varchar"
+    consumed_amount = f"CASE WHEN {action} = 'O' THEN {amount} ELSE 0 END"
+    return f"""CASE
+            WHEN {action} = 'O' THEN
+              COALESCE({payment_alias}.coupon_pay_amount, 0)
+              * {amount}
+              / NULLIF(
+                  SUM({consumed_amount}) OVER (
+                    PARTITION BY {sale_alias}.billno, {batch}
+                  ),
+                  0
+                )
+            ELSE 0
+          END"""
+
+
 def _code_name_display_sql(code_expr: str, name_expr: str) -> str:
     code = f"NULLIF(TRIM(BOTH FROM COALESCE({code_expr}, '')), '')"
     name = f"NULLIF(TRIM(BOTH FROM COALESCE({name_expr}, '')), '')"
@@ -344,6 +424,10 @@ def _activity_store_name_sql(alias: str = "p") -> str:
 def _rows(db: Session, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     rows = db.execute(text(sql), params).mappings().all()
     return [{key: _json_value(value) for key, value in row.items()} for row in rows]
+
+
+def _raw_rows(db: Session, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    return [dict(row) for row in db.execute(text(sql), params).mappings().all()]
 
 
 def _one(db: Session, sql: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -818,6 +902,22 @@ def finance_voucher_amount_filter_sql(alias: str = "v") -> str:
             )"""
 
 
+def credit_buy_voucher_alias_sql() -> str:
+    """Recognize the verified NC purchase label for New Century's D coupon."""
+    # NC uses “0580增值卡” for D/增值卡2. Keep this alias scoped to the
+    # verified company, store and business date, rather than matching any “卡”.
+    return """(
+              br.match_type = 'CREDIT_BUY'
+              AND br.market_code = '603'
+              AND br.coupon_type = 'D'
+              AND v.voucher_corp_code = '1021'
+              AND v.subject_code = '122104'
+              AND v.voucher_store_code = br.voucher_store_code
+              AND v.voucher_business_date = br.business_date
+              AND TRIM(v.explanation) LIKE '%销售收入0580增值卡'
+            )"""
+
+
 def front_buy_sale_join_sql(log_alias: str = "l", sale_alias: str = "front_sale") -> str:
     """Return the one-to-one salehead lookup used by front buy/refund rows."""
     return f"""LEFT JOIN LATERAL (
@@ -885,6 +985,7 @@ def voucher_business_rows_ctes_sql() -> str:
             coupon_type,
             cashier_id,
             invoice_no,
+            SUM(use_amount) AS ticket_use_amount,
             SUM(use_amount) < 0 AS is_return
           FROM log_rows
           WHERE action_code IN ('O', 'U', 'P', 'V')
@@ -947,6 +1048,91 @@ def voucher_business_rows_ctes_sql() -> str:
             utr.voucher_store_code,
             utr.coupon_type
         ),
+        use_payment_fallback_rows AS MATERIALIZED (
+          SELECT
+            utr.business_date,
+            utr.market_code,
+            utr.voucher_store_code,
+            utr.coupon_type,
+            SUM(
+              LEAST(
+                ABS(utr.ticket_use_amount),
+                GREATEST(
+                  payments.target_coupon_payment
+                  - GREATEST(
+                      ABS(COALESCE(ticket_head.ysje, ticket_head.sjfk - COALESCE(ticket_head.zl, 0), 0))
+                      - payments.other_payment,
+                      0
+                    ),
+                  0
+                )
+              )
+            ) AS fallback_overage_amount
+          FROM use_ticket_rows utr
+          JOIN LATERAL (
+            SELECT h.billno, h.djlb, h.ysje, h.sjfk, h.zl
+            FROM salehead h
+            WHERE h.mkt = utr.market_code
+              AND h.syjh = utr.cashier_id
+              AND h.fphm = utr.invoice_no::numeric
+              AND h.rqsj::date = utr.business_date
+            ORDER BY h.billno DESC
+            LIMIT 1
+          ) ticket_head ON TRUE
+          JOIN LATERAL (
+            SELECT
+              SUM(
+                CASE
+                  WHEN p.paycode = '0500'
+                   AND UPPER(SUBSTRING(COALESCE(NULLIF(p.idno, ''), p.memo, '') FROM '^([A-Z])')) = UPPER(utr.coupon_type)
+                  THEN ABS(COALESCE(p.je, 0))
+                  ELSE 0
+                END
+              ) AS target_coupon_payment,
+              SUM(
+                CASE
+                  WHEN p.paycode = '0500'
+                   AND UPPER(SUBSTRING(COALESCE(NULLIF(p.idno, ''), p.memo, '') FROM '^([A-Z])')) = UPPER(utr.coupon_type)
+                  THEN 0
+                  ELSE ABS(COALESCE(p.je, 0))
+                END
+              ) AS other_payment
+            FROM salepay p
+            WHERE p.billno = ticket_head.billno
+          ) payments ON TRUE
+          WHERE utr.is_return IS FALSE
+            AND TRIM(BOTH FROM COALESCE(ticket_head.djlb::text, '')) NOT IN ('2', '4')
+            AND COALESCE(payments.target_coupon_payment, 0) > 0
+            AND payments.target_coupon_payment
+              > ABS(COALESCE(ticket_head.ysje, ticket_head.sjfk - COALESCE(ticket_head.zl, 0), 0))
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sellpaygoods spg
+              WHERE spg.spgbillno = ticket_head.billno
+                AND spg.spgpmtype = '5'
+                AND UPPER(SUBSTRING(COALESCE(spg.spgpayerid, '') FROM 1 FOR 1)) = UPPER(utr.coupon_type)
+                AND COALESCE(spg.spgsqyy, 0) <> 0
+            )
+          GROUP BY
+            utr.business_date,
+            utr.market_code,
+            utr.voucher_store_code,
+            utr.coupon_type
+          HAVING SUM(
+            LEAST(
+              ABS(utr.ticket_use_amount),
+              GREATEST(
+                payments.target_coupon_payment
+                - GREATEST(
+                    ABS(COALESCE(ticket_head.ysje, ticket_head.sjfk - COALESCE(ticket_head.zl, 0), 0))
+                    - payments.other_payment,
+                    0
+                  ),
+                0
+              )
+            )
+          ) > 0.005
+        ),
         use_business_rows AS (
           SELECT
             business_date,
@@ -977,7 +1163,9 @@ def voucher_business_rows_ctes_sql() -> str:
             ubr.coupon_name,
             'DEBIT_USE' AS match_type,
             '借方用券' AS match_type_name,
-            ubr.gross_business_amount - COALESCE(uo.overage_amount, 0) AS business_amount,
+            ubr.gross_business_amount
+              - COALESCE(uo.overage_amount, 0)
+              - COALESCE(uf.fallback_overage_amount, 0) AS business_amount,
             ubr.flow_count,
             ubr.member_count
           FROM use_business_rows ubr
@@ -986,7 +1174,16 @@ def voucher_business_rows_ctes_sql() -> str:
            AND uo.market_code = ubr.market_code
            AND uo.voucher_store_code = ubr.voucher_store_code
            AND uo.coupon_type = ubr.coupon_type
-          WHERE ABS(ubr.gross_business_amount - COALESCE(uo.overage_amount, 0)) > 0.005
+          LEFT JOIN use_payment_fallback_rows uf
+            ON uf.business_date = ubr.business_date
+           AND uf.market_code = ubr.market_code
+           AND uf.voucher_store_code = ubr.voucher_store_code
+           AND uf.coupon_type = ubr.coupon_type
+          WHERE ABS(
+            ubr.gross_business_amount
+              - COALESCE(uo.overage_amount, 0)
+              - COALESCE(uf.fallback_overage_amount, 0)
+          ) > 0.005
 
           UNION ALL
 
@@ -1566,8 +1763,361 @@ def _require_center_store_scope(db: Session, user: User) -> None:
 
 
 def _star_diamond_member_where(alias: str = "m") -> str:
-    value = f"UPPER(TRIM(COALESCE({alias}.is_star_diamond_member, '')))"
-    return f"{value} <> '' AND {value} NOT IN ('0', 'N', 'NO', 'FALSE', '否', '不是', '非')"
+    field = f"{alias}.is_star_diamond_member"
+    value = f"UPPER(TRIM({field}))"
+    # Keep the explicit null predicate so PostgreSQL can use the column's very
+    # selective null statistics. Wrapping the field in COALESCE made the
+    # planner estimate almost the whole member dimension as star members.
+    return (
+        f"{field} IS NOT NULL AND TRIM({field}) <> '' "
+        f"AND {value} NOT IN ('0', 'N', 'NO', 'FALSE', '否', '不是', '非')"
+    )
+
+
+def _execute_star_diamond_query(db: Session, loader: Callable[[], Any]) -> Any:
+    db.execute(text(f"SET LOCAL statement_timeout = '{STAR_DIAMOND_QUERY_TIMEOUT_SECONDS}s'"))
+    try:
+        return loader()
+    except OperationalError as exc:
+        if not _is_points_statement_timeout(exc):
+            raise
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="中心星钻会员数据查询超时，请缩短日期范围后重试",
+        ) from exc
+
+
+def _load_star_diamond_members(db: Session, keyword: str | None = None) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {}
+    keyword_sql = ""
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        keyword_sql = (
+            "AND (m.customer_no ILIKE :keyword OR m.customer_name ILIKE :keyword "
+            "OR m.telephone ILIKE :keyword)"
+        )
+    return _raw_rows(
+        db,
+        f"""
+        SELECT
+          UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no,
+          customer_name,
+          telephone,
+          customer_level,
+          admission_date,
+          is_star_diamond_member
+        FROM fj_dw_member_dim m
+        WHERE COALESCE(customer_no, '') <> ''
+          AND {_star_diamond_member_where("m")}
+          {keyword_sql}
+        ORDER BY member_no
+        """,
+        params,
+    )
+
+
+def _load_star_diamond_tickets(
+    db: Session,
+    member_nos: list[str],
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    if not member_nos:
+        return []
+    return _raw_rows(
+        db,
+        """
+        SELECT
+          h.billno,
+          UPPER(TRIM(COALESCE(h.hykh, ''))) AS member_no,
+          h.rqsj AS sale_time
+        FROM salehead h
+        WHERE h.mkt = '601'
+          AND NULLIF(UPPER(TRIM(COALESCE(h.hykh, ''))), '') = ANY(CAST(:member_nos AS text[]))
+          AND h.rqsj >= CAST(:start_date AS date)
+          AND h.rqsj < CAST(:end_date AS date) + INTERVAL '1 day'
+        ORDER BY h.rqsj, h.billno
+        """,
+        {"member_nos": member_nos, "start_date": start_date, "end_date": end_date},
+    )
+
+
+def _star_diamond_ticket_params(tickets: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "ticket_billnos": [row["billno"] for row in tickets],
+        "ticket_member_nos": [str(row["member_no"]) for row in tickets],
+        "ticket_sale_times": [row["sale_time"] for row in tickets],
+    }
+
+
+def _star_diamond_ticket_map_cte_sql() -> str:
+    return """
+        ticket_map AS MATERIALIZED (
+          SELECT *
+          FROM UNNEST(
+            CAST(:ticket_billnos AS numeric[]),
+            CAST(:ticket_member_nos AS text[]),
+            CAST(:ticket_sale_times AS timestamp[])
+          ) AS t(billno, member_no, sale_time)
+        )
+    """
+
+
+def _load_star_diamond_member_sales(
+    db: Session,
+    tickets: list[dict[str, Any]],
+    *,
+    include_preferences: bool,
+) -> list[dict[str, Any]]:
+    if not tickets:
+        return []
+    # Keep detail lookup parameterized by bill number. OFFSET 0 prevents
+    # flattening into a full-table hash join for large (e.g. YTD) ticket sets.
+    # This uses the existing bill-number index without changing amount scope.
+    preference_select = ""
+    preference_joins = ""
+    if include_preferences:
+        preference_select = f""",
+          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglcatid", "gc.catcname")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS categories,
+          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglppcode", "cb.cbcname")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS brands"""
+        preference_joins = f"""
+        {_category_join_sql("s", "gc")}
+        {_brand_join_sql("s", "cb")}"""
+    return _raw_rows(
+        db,
+        f"""
+        WITH {_star_diamond_ticket_map_cte_sql()}
+        SELECT
+          t.member_no,
+          COUNT(DISTINCT t.billno) AS ticket_count,
+          COUNT(DISTINCT t.billno) FILTER (WHERE s.sglbillno IS NOT NULL) AS overview_ticket_count,
+          COALESCE(SUM(s.sglxssr), 0) AS sales_amount,
+          COALESCE(SUM(s.sglnetml), 0) AS member_net_profit,
+          COALESCE(SUM(COALESCE(s.sglnetml, s.sgln2, 0)), 0) AS overview_net_profit,
+          MAX(t.sale_time) AS last_sale_time
+          {preference_select}
+        FROM ticket_map t
+        LEFT JOIN LATERAL (
+          SELECT detail.* FROM salegoodslist detail
+          WHERE detail.sglbillno = t.billno
+          OFFSET 0
+        ) s ON TRUE
+        {preference_joins}
+        GROUP BY t.member_no
+        """,
+        _star_diamond_ticket_params(tickets),
+    )
+
+
+def _load_star_diamond_category_sales(
+    db: Session,
+    tickets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not tickets:
+        return []
+    return _raw_rows(
+        db,
+        f"""
+        WITH {_star_diamond_ticket_map_cte_sql()}
+        SELECT
+          COALESCE(NULLIF(s.sglcatid, ''), '未标识') AS category_code,
+          COALESCE(NULLIF(gc.catcname, ''), '') AS category_name,
+          {_code_name_display_sql("s.sglcatid", "gc.catcname")} AS category_display,
+          COUNT(DISTINCT t.member_no) AS member_count,
+          COUNT(DISTINCT t.billno) AS ticket_count,
+          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
+        FROM ticket_map t
+        JOIN LATERAL (
+          SELECT detail.* FROM salegoodslist detail
+          WHERE detail.sglbillno = t.billno
+          OFFSET 0
+        ) s ON TRUE
+        {_category_join_sql("s", "gc")}
+        GROUP BY 1, 2, 3
+        ORDER BY sales_amount DESC
+        LIMIT 10
+        """,
+        _star_diamond_ticket_params(tickets),
+    )
+
+
+def _load_star_diamond_trail_rows(
+    db: Session,
+    tickets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not tickets:
+        return []
+    return _raw_rows(
+        db,
+        f"""
+        WITH {_star_diamond_ticket_map_cte_sql()},
+        manaframe_groups AS (
+          SELECT
+            mf.mfcode AS group_code,
+            mf.mfcname AS group_name,
+            dept.mfcode AS department_code,
+            dept.mfcname AS department_name
+          FROM manaframe mf
+          LEFT JOIN manaframe dept
+            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+        )
+        SELECT
+          t.sale_time,
+          t.billno,
+          t.member_no,
+          COUNT(*) AS sku_count,
+          SUM(COALESCE(s.sglsl, 0)) AS quantity,
+          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+          SUM(COALESCE(s.sglnetml, s.sgln2, 0)) AS net_profit,
+          STRING_AGG(DISTINCT {_code_name_display_sql("cg.department_code", "cg.department_name")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS departments,
+          STRING_AGG(DISTINCT {_code_name_display_sql("COALESCE(cg.group_code, s.sglmfid)", "cg.group_name")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS groups,
+          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglcatid", "gc.catcname")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS categories,
+          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglppcode", "cb.cbcname")}, ', ')
+            FILTER (WHERE s.sglbillno IS NOT NULL) AS brands
+        FROM ticket_map t
+        JOIN LATERAL (
+          SELECT detail.* FROM salegoodslist detail
+          WHERE detail.sglbillno = t.billno
+          OFFSET 0
+        ) s ON TRUE
+        LEFT JOIN manaframe_groups cg
+          ON UPPER(TRIM(COALESCE(cg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+        {_category_join_sql("s", "gc")}
+        {_brand_join_sql("s", "cb")}
+        GROUP BY t.sale_time, t.billno, t.member_no
+        ORDER BY t.sale_time DESC, t.billno DESC
+        """,
+        _star_diamond_ticket_params(tickets),
+    )
+
+
+def _star_diamond_decimal(value: Any) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value or 0))
+
+
+def _star_diamond_segment(ticket_count: int, sales_amount: Decimal) -> str:
+    if ticket_count == 0:
+        return "待唤醒"
+    if sales_amount >= Decimal("10000"):
+        return "高价值维护"
+    if ticket_count >= 2:
+        return "高频互动"
+    return "潜力培育"
+
+
+def _build_star_diamond_member_rows(
+    members: list[dict[str, Any]],
+    sales_rows: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    sales_by_member = {str(row["member_no"]): row for row in sales_rows}
+    result: list[dict[str, Any]] = []
+    for member in members:
+        member_no = str(member["member_no"])
+        sales = sales_by_member.get(member_no, {})
+        ticket_count = int(sales.get("ticket_count") or 0)
+        sales_amount = _star_diamond_decimal(sales.get("sales_amount"))
+        net_profit = _star_diamond_decimal(sales.get("member_net_profit"))
+        result.append(
+            {
+                **member,
+                "ticket_count": ticket_count,
+                "sales_amount": sales_amount,
+                "net_profit": net_profit,
+                "avg_ticket_amount": sales_amount / ticket_count if ticket_count else Decimal("0"),
+                "last_sale_time": sales.get("last_sale_time"),
+                "categories": sales.get("categories") or "",
+                "brands": sales.get("brands") or "",
+                "service_segment": _star_diamond_segment(ticket_count, sales_amount),
+            }
+        )
+    result.sort(
+        key=lambda row: (
+            -_star_diamond_decimal(row["sales_amount"]),
+            -int(row["ticket_count"]),
+            str(row["member_no"]),
+        )
+    )
+    return [_json_value(row) for row in result[:limit]]
+
+
+def _build_star_diamond_overview(
+    members: list[dict[str, Any]],
+    sales_rows: list[dict[str, Any]],
+    category_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    sales_by_member = {str(row["member_no"]): row for row in sales_rows}
+    normalized: list[dict[str, Any]] = []
+    for member in members:
+        sales = sales_by_member.get(str(member["member_no"]), {})
+        ticket_count = int(sales.get("overview_ticket_count") or 0)
+        sales_amount = _star_diamond_decimal(sales.get("sales_amount"))
+        normalized.append(
+            {
+                "ticket_count": ticket_count,
+                "sales_amount": sales_amount,
+                "net_profit": _star_diamond_decimal(sales.get("overview_net_profit")),
+                "segment": _star_diamond_segment(ticket_count, sales_amount),
+            }
+        )
+
+    active = [row for row in normalized if row["ticket_count"] > 0]
+    ticket_count = sum(row["ticket_count"] for row in normalized)
+    sales_amount = sum((row["sales_amount"] for row in normalized), Decimal("0"))
+    net_profit = sum((row["net_profit"] for row in normalized), Decimal("0"))
+    summary = {
+        "star_member_count": len(normalized),
+        "active_member_count": len(active),
+        "ticket_count": ticket_count,
+        "sales_amount": sales_amount,
+        "net_profit": net_profit,
+        "avg_ticket_amount": sales_amount / ticket_count if ticket_count else Decimal("0"),
+        "avg_member_amount": sales_amount / len(active) if active else Decimal("0"),
+        "repeat_member_count": sum(row["ticket_count"] >= 2 for row in normalized),
+        "silent_member_count": sum(row["ticket_count"] == 0 for row in normalized),
+        "high_value_member_count": sum(
+            row["ticket_count"] > 0 and row["sales_amount"] >= Decimal("10000") for row in normalized
+        ),
+        "nurture_member_count": sum(
+            row["ticket_count"] > 0 and row["sales_amount"] < Decimal("10000") for row in normalized
+        ),
+    }
+
+    service_actions = {
+        "待唤醒": "专属顾问一对一回访，提供新品预览、生日礼遇或到店预约。",
+        "高价值维护": "安排专属接待、重点品牌私享会、预留爆款和售后跟进。",
+        "高频互动": "推送跨品类搭配权益，邀请参加会员日和积分加速活动。",
+        "潜力培育": "根据最近购买品类推荐同楼层品牌券包，提升二次到店。",
+    }
+    segments: list[dict[str, Any]] = []
+    for segment, action in service_actions.items():
+        segment_rows = [row for row in normalized if row["segment"] == segment]
+        if not segment_rows:
+            continue
+        segments.append(
+            {
+                "segment": segment,
+                "member_count": len(segment_rows),
+                "sales_amount": sum((row["sales_amount"] for row in segment_rows), Decimal("0")),
+                "service_action": action,
+            }
+        )
+    segments.sort(
+        key=lambda row: (-_star_diamond_decimal(row["sales_amount"]), -int(row["member_count"]))
+    )
+    return {
+        "summary": _json_value(summary),
+        "top_categories": [_json_value(row) for row in category_rows],
+        "service_segments": [_json_value(row) for row in segments],
+    }
 
 
 def _activity_filter(
@@ -1677,149 +2227,19 @@ async def star_diamond_overview(
     _ensure_required_tables(db)
     _require_center_store_scope(db, current_user)
 
-    params = {"start_date": start_date, "end_date": end_date}
-    member_where = _star_diamond_member_where("m")
-    summary = _one(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT
-            UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no,
-            customer_name,
-            telephone,
-            customer_level,
-            admission_date,
-            is_star_diamond_member
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {member_where}
-        ),
-        tickets AS (
-          SELECT
-            h.billno,
-            UPPER(TRIM(COALESCE(h.hykh, ''))) AS member_no,
-            MIN(h.rqsj) AS sale_time,
-            SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
-            SUM(COALESCE(s.sglnetml, s.sgln2, 0)) AS net_profit,
-            SUM(COALESCE(s.sglsl, 0)) AS quantity,
-            SUM(COALESCE(s.sglsqje, 0)) AS coupon_amount
-          FROM salehead h
-          JOIN star_members sm ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-          JOIN salegoodslist s ON s.sglbillno = h.billno
-          WHERE h.mkt::varchar = '601'
-            AND h.rqsj::date BETWEEN :start_date AND :end_date
-          GROUP BY h.billno, UPPER(TRIM(COALESCE(h.hykh, '')))
-        ),
-        member_sales AS (
-          SELECT
-            sm.member_no,
-            COUNT(DISTINCT t.billno) AS ticket_count,
-            COALESCE(SUM(t.sales_amount), 0) AS sales_amount,
-            COALESCE(SUM(t.net_profit), 0) AS net_profit,
-            MAX(t.sale_time) AS last_sale_time
-          FROM star_members sm
-          LEFT JOIN tickets t ON t.member_no = sm.member_no
-          GROUP BY sm.member_no
+    def load() -> dict[str, Any]:
+        members = _load_star_diamond_members(db)
+        tickets = _load_star_diamond_tickets(
+            db,
+            [str(row["member_no"]) for row in members],
+            start_date,
+            end_date,
         )
-        SELECT
-          COUNT(*) AS star_member_count,
-          COUNT(*) FILTER (WHERE ticket_count > 0) AS active_member_count,
-          COALESCE(SUM(ticket_count), 0) AS ticket_count,
-          COALESCE(SUM(sales_amount), 0) AS sales_amount,
-          COALESCE(SUM(net_profit), 0) AS net_profit,
-          CASE WHEN COALESCE(SUM(ticket_count), 0) > 0 THEN COALESCE(SUM(sales_amount), 0) / SUM(ticket_count) ELSE 0 END AS avg_ticket_amount,
-          CASE WHEN COUNT(*) FILTER (WHERE ticket_count > 0) > 0 THEN COALESCE(SUM(sales_amount), 0) / COUNT(*) FILTER (WHERE ticket_count > 0) ELSE 0 END AS avg_member_amount,
-          COUNT(*) FILTER (WHERE ticket_count >= 2) AS repeat_member_count,
-          COUNT(*) FILTER (WHERE ticket_count = 0) AS silent_member_count,
-          COUNT(*) FILTER (WHERE ticket_count > 0 AND sales_amount >= 10000) AS high_value_member_count,
-          COUNT(*) FILTER (WHERE ticket_count > 0 AND sales_amount < 10000) AS nurture_member_count
-        FROM member_sales
-        """,
-        params,
-    )
+        sales_rows = _load_star_diamond_member_sales(db, tickets, include_preferences=False)
+        category_rows = _load_star_diamond_category_sales(db, tickets)
+        return _build_star_diamond_overview(members, sales_rows, category_rows)
 
-    category_rows = _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {member_where}
-        )
-        SELECT
-          COALESCE(NULLIF(s.sglcatid, ''), '未标识') AS category_code,
-          COALESCE(NULLIF(gc.catcname, ''), '') AS category_name,
-          {_code_name_display_sql("s.sglcatid", "gc.catcname")} AS category_display,
-          COUNT(DISTINCT h.hykh) AS member_count,
-          COUNT(DISTINCT h.billno) AS ticket_count,
-          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
-        FROM salehead h
-        JOIN star_members sm ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-        JOIN salegoodslist s ON s.sglbillno = h.billno
-        {_category_join_sql("s", "gc")}
-        WHERE h.mkt::varchar = '601'
-          AND h.rqsj::date BETWEEN :start_date AND :end_date
-        GROUP BY 1, 2, 3
-        ORDER BY sales_amount DESC
-        LIMIT 10
-        """,
-        params,
-    )
-
-    service_segments = _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {member_where}
-        ),
-        member_sales AS (
-          SELECT
-            sm.member_no,
-            COUNT(DISTINCT h.billno) AS ticket_count,
-            COALESCE(SUM(s.sglxssr), 0) AS sales_amount,
-            MAX(h.rqsj) AS last_sale_time
-          FROM star_members sm
-          LEFT JOIN salehead h
-            ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-           AND h.mkt::varchar = '601'
-           AND h.rqsj::date BETWEEN :start_date AND :end_date
-          LEFT JOIN salegoodslist s ON s.sglbillno = h.billno
-          GROUP BY sm.member_no
-        )
-        SELECT
-          segment,
-          COUNT(*) AS member_count,
-          SUM(sales_amount) AS sales_amount,
-          service_action
-        FROM (
-          SELECT
-            member_no,
-            sales_amount,
-            CASE
-              WHEN ticket_count = 0 THEN '待唤醒'
-              WHEN sales_amount >= 10000 THEN '高价值维护'
-              WHEN ticket_count >= 2 THEN '高频互动'
-              ELSE '潜力培育'
-            END AS segment,
-            CASE
-              WHEN ticket_count = 0 THEN '专属顾问一对一回访，提供新品预览、生日礼遇或到店预约。'
-              WHEN sales_amount >= 10000 THEN '安排专属接待、重点品牌私享会、预留爆款和售后跟进。'
-              WHEN ticket_count >= 2 THEN '推送跨品类搭配权益，邀请参加会员日和积分加速活动。'
-              ELSE '根据最近购买品类推荐同楼层品牌券包，提升二次到店。'
-            END AS service_action
-          FROM member_sales
-        ) x
-        GROUP BY segment, service_action
-        ORDER BY sales_amount DESC NULLS LAST, member_count DESC
-        """,
-        params,
-    )
-
-    return {"summary": summary, "top_categories": category_rows, "service_segments": service_segments}
+    return _execute_star_diamond_query(db, load)
 
 
 @router.get("/star-diamond/members")
@@ -1835,76 +2255,18 @@ async def star_diamond_members(
     _ensure_required_tables(db)
     _require_center_store_scope(db, current_user)
 
-    params: dict[str, Any] = {"start_date": start_date, "end_date": end_date, "limit": limit}
-    keyword_sql = ""
-    if keyword:
-        params["keyword"] = f"%{keyword.strip()}%"
-        keyword_sql = "AND (m.customer_no ILIKE :keyword OR m.customer_name ILIKE :keyword OR m.telephone ILIKE :keyword)"
-
-    return _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT
-            UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no,
-            customer_name,
-            telephone,
-            customer_level,
-            admission_date,
-            is_star_diamond_member
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {_star_diamond_member_where("m")}
-            {keyword_sql}
-        ),
-        member_sales AS (
-          SELECT
-            sm.member_no,
-            COUNT(DISTINCT h.billno) AS ticket_count,
-            COALESCE(SUM(s.sglxssr), 0) AS sales_amount,
-            COALESCE(SUM(s.sglnetml), 0) AS net_profit,
-            MAX(h.rqsj) AS last_sale_time,
-            STRING_AGG(DISTINCT {_code_name_display_sql("s.sglcatid", "gc.catcname")}, ', ')
-              FILTER (WHERE s.sglbillno IS NOT NULL) AS categories,
-            STRING_AGG(DISTINCT {_code_name_display_sql("s.sglppcode", "cb.cbcname")}, ', ')
-              FILTER (WHERE s.sglbillno IS NOT NULL) AS brands
-          FROM star_members sm
-          LEFT JOIN salehead h
-            ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-           AND h.mkt::varchar = '601'
-           AND h.rqsj::date BETWEEN :start_date AND :end_date
-          LEFT JOIN salegoodslist s ON s.sglbillno = h.billno
-          {_category_join_sql("s", "gc")}
-          {_brand_join_sql("s", "cb")}
-          GROUP BY sm.member_no
+    def load() -> list[dict[str, Any]]:
+        members = _load_star_diamond_members(db, keyword)
+        tickets = _load_star_diamond_tickets(
+            db,
+            [str(row["member_no"]) for row in members],
+            start_date,
+            end_date,
         )
-        SELECT
-          sm.member_no,
-          sm.customer_name,
-          sm.telephone,
-          sm.customer_level,
-          sm.admission_date,
-          sm.is_star_diamond_member,
-          COALESCE(ms.ticket_count, 0) AS ticket_count,
-          COALESCE(ms.sales_amount, 0) AS sales_amount,
-          COALESCE(ms.net_profit, 0) AS net_profit,
-          CASE WHEN COALESCE(ms.ticket_count, 0) > 0 THEN COALESCE(ms.sales_amount, 0) / ms.ticket_count ELSE 0 END AS avg_ticket_amount,
-          ms.last_sale_time,
-          COALESCE(ms.categories, '') AS categories,
-          COALESCE(ms.brands, '') AS brands,
-          CASE
-            WHEN COALESCE(ms.ticket_count, 0) = 0 THEN '待唤醒'
-            WHEN COALESCE(ms.sales_amount, 0) >= 10000 THEN '高价值维护'
-            WHEN COALESCE(ms.ticket_count, 0) >= 2 THEN '高频互动'
-            ELSE '潜力培育'
-          END AS service_segment
-        FROM star_members sm
-        LEFT JOIN member_sales ms ON ms.member_no = sm.member_no
-        ORDER BY sales_amount DESC, ticket_count DESC, sm.member_no
-        LIMIT :limit
-        """,
-        params,
-    )
+        sales_rows = _load_star_diamond_member_sales(db, tickets, include_preferences=True)
+        return _build_star_diamond_member_rows(members, sales_rows, limit)
+
+    return _execute_star_diamond_query(db, load)
 
 
 @router.get("/star-diamond/trails")
@@ -1920,64 +2282,91 @@ async def star_diamond_trails(
     _ensure_required_tables(db)
     _require_center_store_scope(db, current_user)
 
-    params: dict[str, Any] = {"start_date": start_date, "end_date": end_date, "limit": limit}
-    member_filter = ""
-    if member_no:
-        params["member_no"] = member_no.strip().upper()
-        member_filter = "AND UPPER(TRIM(COALESCE(h.hykh, ''))) = :member_no"
-
-    return _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no, customer_name, telephone
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {_star_diamond_member_where("m")}
-        ),
-        manaframe_groups AS (
-          SELECT
-            mf.mfcode AS group_code,
-            mf.mfcname AS group_name,
-            dept.mfcode AS department_code,
-            dept.mfcname AS department_name
-          FROM manaframe mf
-          LEFT JOIN manaframe dept
-            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+    def load() -> list[dict[str, Any]]:
+        selected_member_no = member_no.strip().upper() if member_no else ""
+        members = _load_star_diamond_members(db, selected_member_no or None)
+        if selected_member_no:
+            members = [row for row in members if str(row["member_no"]) == selected_member_no]
+        tickets = _load_star_diamond_tickets(
+            db,
+            [str(row["member_no"]) for row in members],
+            start_date,
+            end_date,
         )
-        SELECT
-          h.rqsj AS sale_time,
-          h.billno,
-          h.hykh AS member_no,
-          sm.customer_name,
-          sm.telephone,
-          COUNT(*) AS sku_count,
-          SUM(COALESCE(s.sglsl, 0)) AS quantity,
-          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
-          SUM(COALESCE(s.sglnetml, s.sgln2, 0)) AS net_profit,
-          STRING_AGG(DISTINCT {_code_name_display_sql("cg.department_code", "cg.department_name")}, ', ')
-            FILTER (WHERE s.sglbillno IS NOT NULL) AS departments,
-          STRING_AGG(DISTINCT {_code_name_display_sql("COALESCE(cg.group_code, s.sglmfid)", "cg.group_name")}, ', ')
-            FILTER (WHERE s.sglbillno IS NOT NULL) AS groups,
-          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglcatid", "gc.catcname")}, ', ')
-            FILTER (WHERE s.sglbillno IS NOT NULL) AS categories,
-          STRING_AGG(DISTINCT {_code_name_display_sql("s.sglppcode", "cb.cbcname")}, ', ')
-            FILTER (WHERE s.sglbillno IS NOT NULL) AS brands
-        FROM salehead h
-        JOIN star_members sm ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-        JOIN salegoodslist s ON s.sglbillno = h.billno
-        LEFT JOIN manaframe_groups cg ON UPPER(TRIM(COALESCE(cg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
-        {_category_join_sql("s", "gc")}
-        {_brand_join_sql("s", "cb")}
-        WHERE h.mkt::varchar = '601'
-          AND h.rqsj::date BETWEEN :start_date AND :end_date
-          {member_filter}
-        GROUP BY h.rqsj, h.billno, h.hykh, sm.customer_name, sm.telephone
-        ORDER BY h.rqsj DESC, h.billno DESC
-        LIMIT :limit
-        """,
-        params,
-    )
+        tickets.sort(key=lambda row: (row["sale_time"], row["billno"]), reverse=True)
+        trail_rows = _load_star_diamond_trail_rows(db, tickets[:limit])
+        members_by_no = {str(row["member_no"]): row for row in members}
+        result = []
+        for row in trail_rows:
+            member = members_by_no.get(str(row["member_no"]), {})
+            result.append(
+                _json_value(
+                    {
+                        **row,
+                        "customer_name": member.get("customer_name"),
+                        "telephone": member.get("telephone"),
+                    }
+                )
+            )
+        return result
+
+    return _execute_star_diamond_query(db, load)
+
+
+class StarDiamondExportRequest(BaseModel):
+    start_date: date
+    end_date: date
+    keyword: str = Field(default="", max_length=200)
+    segment: str = Field(default="", max_length=30)
+    member_no: str = Field(default="", max_length=100)
+    ai_report: str = Field(default="", max_length=30000)
+
+
+def _load_star_diamond_export_data(db: Session, payload: StarDiamondExportRequest) -> dict[str, Any]:
+    start, end = payload.start_date.isoformat(), payload.end_date.isoformat()
+    members = _load_star_diamond_members(db)
+    tickets = _load_star_diamond_tickets(db, [str(row["member_no"]) for row in members], start, end)
+    sales = _load_star_diamond_member_sales(db, tickets, include_preferences=True)
+    categories = _load_star_diamond_category_sales(db, tickets)
+    overview = _build_star_diamond_overview(members, sales, categories)
+    member_rows = _build_star_diamond_member_rows(members, sales, len(members))
+    if payload.keyword.strip():
+        matching = {str(row["member_no"]) for row in _load_star_diamond_members(db, payload.keyword.strip())}
+        member_rows = [row for row in member_rows if str(row["member_no"]) in matching]
+    if payload.segment:
+        member_rows = [row for row in member_rows if row["service_segment"] == payload.segment]
+    selected_member = payload.member_no.strip().upper()
+    trail_tickets = [row for row in tickets if not selected_member or str(row["member_no"]) == selected_member]
+    trail_rows = _load_star_diamond_trail_rows(db, trail_tickets)
+    by_member = {str(row["member_no"]): row for row in members}
+    for row in trail_rows:
+        row["customer_name"] = by_member.get(str(row["member_no"]), {}).get("customer_name")
+    return {
+        "start_date": start, "end_date": end,
+        "keyword": payload.keyword.strip(), "segment": payload.segment, "member_no": selected_member,
+        "overview": overview, "members": member_rows, "trails": trail_rows,
+        "ai_report": payload.ai_report,
+    }
+
+
+@router.post("/star-diamond/export")
+def star_diamond_export(
+    payload: StarDiamondExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_permission(db, current_user, STAR_DIAMOND_ANALYSIS_PERMISSION)
+    _require_center_store_scope(db, current_user)
+    if payload.start_date > payload.end_date:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    if payload.segment not in {"", "高价值维护", "高频互动", "潜力培育", "待唤醒"}:
+        raise HTTPException(status_code=400, detail="无效的服务分层")
+    _ensure_required_tables(db)
+    report = _execute_star_diamond_query(db, lambda: _load_star_diamond_export_data(db, payload))
+    content = build_star_diamond_workbook(report)
+    filename = f"中心星钻会员分析_{payload.start_date}_{payload.end_date}.xlsx"
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}", "Cache-Control": "no-store"})
 
 
 @router.post("/star-diamond/member-analysis")
@@ -2113,6 +2502,75 @@ async def star_diamond_member_analysis(
     }
 
 
+def _load_star_diamond_overall_dimensions(
+    db: Session,
+    tickets: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not tickets:
+        return [], []
+    params = _star_diamond_ticket_params(tickets)
+    top_brands = _rows(
+        db,
+        f"""
+        WITH {_star_diamond_ticket_map_cte_sql()}
+        SELECT
+          COALESCE(NULLIF(s.sglppcode, ''), '未标识') AS brand_code,
+          COALESCE(NULLIF(cb.cbcname, ''), '') AS brand_name,
+          {_code_name_display_sql("s.sglppcode", "cb.cbcname")} AS brand_display,
+          COUNT(DISTINCT t.member_no) AS member_count,
+          COUNT(DISTINCT t.billno) AS ticket_count,
+          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
+        FROM ticket_map t
+        JOIN LATERAL (
+          SELECT detail.* FROM salegoodslist detail
+          WHERE detail.sglbillno = t.billno
+          OFFSET 0
+        ) s ON TRUE
+        {_brand_join_sql("s", "cb")}
+        GROUP BY 1, 2, 3
+        ORDER BY sales_amount DESC
+        LIMIT 10
+        """,
+        params,
+    )
+    top_departments = _rows(
+        db,
+        f"""
+        WITH {_star_diamond_ticket_map_cte_sql()},
+        manaframe_groups AS (
+          SELECT
+            mf.mfcode AS group_code,
+            mf.mfcname AS group_name,
+            dept.mfcode AS department_code,
+            dept.mfcname AS department_name
+          FROM manaframe mf
+          LEFT JOIN manaframe dept
+            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+        )
+        SELECT
+          COALESCE(NULLIF(cg.department_code, ''), '未归属') AS department_code,
+          COALESCE(NULLIF(cg.department_name, ''), '未归属部门') AS department_name,
+          {_code_name_display_sql("cg.department_code", "cg.department_name")} AS department_display,
+          COUNT(DISTINCT t.member_no) AS member_count,
+          COUNT(DISTINCT t.billno) AS ticket_count,
+          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
+        FROM ticket_map t
+        JOIN LATERAL (
+          SELECT detail.* FROM salegoodslist detail
+          WHERE detail.sglbillno = t.billno
+          OFFSET 0
+        ) s ON TRUE
+        LEFT JOIN manaframe_groups cg ON UPPER(TRIM(COALESCE(cg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+        GROUP BY 1, 2, 3
+        ORDER BY sales_amount DESC
+        LIMIT 10
+        """,
+        params,
+    )
+
+    return top_brands, top_departments
+
+
 @router.post("/star-diamond/overall-analysis")
 async def star_diamond_overall_analysis(
     payload: dict[str, Any],
@@ -2128,78 +2586,18 @@ async def star_diamond_overall_analysis(
     if not start_date or not end_date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date/end_date 不能为空")
 
-    params = {"start_date": start_date, "end_date": end_date}
-    member_where = _star_diamond_member_where("m")
     overview_data = await star_diamond_overview(start_date, end_date, db, current_user)
     top_members = await star_diamond_members(start_date, end_date, None, 30, db, current_user)
     recent_trails = await star_diamond_trails(start_date, end_date, None, 50, db, current_user)
 
-    top_brands = _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {member_where}
+    def load_dimensions() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        members = _load_star_diamond_members(db)
+        tickets = _load_star_diamond_tickets(
+            db, [str(row["member_no"]) for row in members], start_date, end_date,
         )
-        SELECT
-          COALESCE(NULLIF(s.sglppcode, ''), '未标识') AS brand_code,
-          COALESCE(NULLIF(cb.cbcname, ''), '') AS brand_name,
-          {_code_name_display_sql("s.sglppcode", "cb.cbcname")} AS brand_display,
-          COUNT(DISTINCT h.hykh) AS member_count,
-          COUNT(DISTINCT h.billno) AS ticket_count,
-          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
-        FROM salehead h
-        JOIN star_members sm ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-        JOIN salegoodslist s ON s.sglbillno = h.billno
-        {_brand_join_sql("s", "cb")}
-        WHERE h.mkt::varchar = '601'
-          AND h.rqsj::date BETWEEN :start_date AND :end_date
-        GROUP BY 1, 2, 3
-        ORDER BY sales_amount DESC
-        LIMIT 10
-        """,
-        params,
-    )
-    top_departments = _rows(
-        db,
-        f"""
-        WITH star_members AS (
-          SELECT UPPER(TRIM(COALESCE(customer_no, ''))) AS member_no
-          FROM fj_dw_member_dim m
-          WHERE COALESCE(customer_no, '') <> ''
-            AND {member_where}
-        ),
-        manaframe_groups AS (
-          SELECT
-            mf.mfcode AS group_code,
-            mf.mfcname AS group_name,
-            dept.mfcode AS department_code,
-            dept.mfcname AS department_name
-          FROM manaframe mf
-          LEFT JOIN manaframe dept
-            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
-        )
-        SELECT
-          COALESCE(NULLIF(cg.department_code, ''), '未归属') AS department_code,
-          COALESCE(NULLIF(cg.department_name, ''), '未归属部门') AS department_name,
-          {_code_name_display_sql("cg.department_code", "cg.department_name")} AS department_display,
-          COUNT(DISTINCT h.hykh) AS member_count,
-          COUNT(DISTINCT h.billno) AS ticket_count,
-          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount
-        FROM salehead h
-        JOIN star_members sm ON sm.member_no = UPPER(TRIM(COALESCE(h.hykh, '')))
-        JOIN salegoodslist s ON s.sglbillno = h.billno
-        LEFT JOIN manaframe_groups cg ON UPPER(TRIM(COALESCE(cg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
-        WHERE h.mkt::varchar = '601'
-          AND h.rqsj::date BETWEEN :start_date AND :end_date
-        GROUP BY 1, 2, 3
-        ORDER BY sales_amount DESC
-        LIMIT 10
-        """,
-        params,
-    )
+        return _load_star_diamond_overall_dimensions(db, tickets)
+
+    top_brands, top_departments = _execute_star_diamond_query(db, load_dimensions)
 
     summary = overview_data.get("summary") or {}
     star_member_count = float(summary.get("star_member_count") or 0)
@@ -2229,6 +2627,8 @@ async def star_diamond_overall_analysis(
     }
     ai = generate_ai_report(
         ai_payload,
+        # The five-part plan needs more output room than the default short report.
+        min_output_tokens=8192,
         instructions=(
             "你是百货商场高端会员运营负责人。"
             "基于所选时间段内全部星钻会员销售明细、分层、品类、品牌、部门和购物轨迹样本，"
@@ -3913,8 +4313,8 @@ async def coupon_summary(
             l.tcfldate AS flow_date,
             l.tcflzy AS action_code,
             {_case_expr("l.tcflzy", ACTION_LABELS, "'未知动作'")} AS action_name,
-            l.tcflsource AS source_code,
-            {_case_expr("l.tcflsource", SOURCE_LABELS, "'未知来源'")} AS source_name,
+            {coupon_summary_source_code_sql("l")} AS source_code,
+            {coupon_summary_source_name_sql("l")} AS source_name,
             {coupon_type_sql} AS coupon_type,
             l.tcflvipno AS member_no,
             l.tcflqno AS coupon_no,
@@ -3927,7 +4327,7 @@ async def coupon_summary(
               ELSE 0
             END AS consumed_log_amount,
             h.billno,
-            cp.coupon_pay_amount
+            {coupon_payment_allocation_sql("l", "cp", "h")} AS coupon_pay_amount
           FROM tktcardfqlog l
           LEFT JOIN salehead h
             ON l.tcflmkt = h.mkt
@@ -4207,7 +4607,10 @@ async def voucher_match_candidates(
               + CASE
                   WHEN br.match_type = 'DEBIT_USE' AND v.explanation ILIKE ('%0500%促销券' || br.coupon_type || '%') THEN 10
                   WHEN br.match_type = 'DEBIT_USE' AND v.explanation ILIKE ('%' || br.coupon_name || '%') THEN 10
-                  WHEN br.match_type = 'CREDIT_BUY' AND v.explanation ILIKE ('%' || br.coupon_name || '%') THEN 20
+                  WHEN br.match_type = 'CREDIT_BUY' AND (
+                    v.explanation ILIKE ('%' || br.coupon_name || '%')
+                    OR {credit_buy_voucher_alias_sql()}
+                  ) THEN 20
                   ELSE 0
                 END
             ) AS match_score
@@ -4228,6 +4631,7 @@ async def voucher_match_candidates(
                 AND (
                   v.explanation ILIKE ('%' || br.coupon_name || '%')
                   OR v.explanation ILIKE '%券%'
+                  OR {credit_buy_voucher_alias_sql()}
                 )
               )
             )
@@ -4793,8 +5197,110 @@ async def rebuild_coupon_revenue_movements(
         ),
         {"period_month": period_month, "start_date": start_date, "end_date": end_date, "market_code": market_code},
     )
+    sales_rebate_result = db.execute(
+        text(
+            """
+            WITH sales_rebate_rows AS (
+              SELECT
+                l.tcfldate AS business_date,
+                :period_month AS period_month,
+                l.tcflmkt::varchar AS market_code,
+                UPPER(TRIM(COALESCE(NULLIF(l.tcfljetype, ''), '未标识'))) AS coupon_type,
+                SUM(CASE
+                  WHEN l.tcflzy = 'F' THEN ABS(COALESCE(l.tcflmoney, 0))
+                  WHEN l.tcflzy = 'K' THEN -ABS(COALESCE(l.tcflmoney, 0))
+                  ELSE 0
+                END) AS business_amount
+              FROM tktcardfqlog l
+              WHERE l.tcfldate >= CAST(:start_date AS DATE)
+                AND l.tcfldate < CAST(:end_date AS DATE)
+                AND l.tcflzy IN ('F', 'K')
+                AND l.tcflsource = '1'
+                AND (:market_code = '' OR l.tcflmkt::varchar = :market_code)
+              GROUP BY business_date, period_month, market_code, coupon_type
+              HAVING ABS(SUM(CASE
+                WHEN l.tcflzy = 'F' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'K' THEN -ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END)) > 0.005
+            ),
+            sales_rebate_with_name AS (
+              SELECT
+                sr.*,
+                COALESCE(NULLIF(tq.tqname, ''), sr.coupon_type) AS coupon_name
+              FROM sales_rebate_rows sr
+              LEFT JOIN tktqtype tq ON tq.tqcode = sr.coupon_type
+            )
+            INSERT INTO activity_coupon_revenue_movement (
+                business_date,
+                period_month,
+                market_code,
+                business_store_code,
+                coupon_type,
+                coupon_name,
+                match_type,
+                voucher_match_id,
+                source_type,
+                source_key,
+                voucher_detail_id,
+                business_amount,
+                revenue_rate,
+                actual_revenue_amount,
+                rate_snapshot_date,
+                rate_status,
+                movement_direction,
+                created_at,
+                updated_at
+            )
+            SELECT
+                business_date,
+                period_month,
+                market_code,
+                market_code,
+                coupon_type,
+                coupon_name,
+                'CREDIT_BUY',
+                NULL,
+                'COUPON_RECHARGE',
+                'coupon_sales_rebate:' || business_date::text || ':' || market_code || ':' || coupon_type,
+                md5('coupon_sales_rebate:' || business_date::text || ':' || market_code || ':' || coupon_type),
+                business_amount,
+                1,
+                business_amount,
+                NULL,
+                'OK',
+                'INCREASE',
+                NOW(),
+                NOW()
+            FROM sales_rebate_with_name
+            ON CONFLICT (source_type, source_key)
+            DO UPDATE SET
+                business_date = EXCLUDED.business_date,
+                period_month = EXCLUDED.period_month,
+                market_code = EXCLUDED.market_code,
+                business_store_code = EXCLUDED.business_store_code,
+                coupon_type = EXCLUDED.coupon_type,
+                coupon_name = EXCLUDED.coupon_name,
+                match_type = EXCLUDED.match_type,
+                voucher_detail_id = EXCLUDED.voucher_detail_id,
+                business_amount = EXCLUDED.business_amount,
+                revenue_rate = EXCLUDED.revenue_rate,
+                actual_revenue_amount = EXCLUDED.actual_revenue_amount,
+                rate_snapshot_date = EXCLUDED.rate_snapshot_date,
+                rate_status = EXCLUDED.rate_status,
+                movement_direction = EXCLUDED.movement_direction,
+                updated_at = NOW()
+            """
+        ),
+        {"period_month": period_month, "start_date": start_date, "end_date": end_date, "market_code": market_code},
+    )
     db.commit()
-    return {"rebuilt": (result.rowcount or 0) + (recharge_result.rowcount or 0)}
+    rebuilt = (
+        (result.rowcount or 0)
+        + (recharge_result.rowcount or 0)
+        + (sales_rebate_result.rowcount or 0)
+    )
+    return {"rebuilt": rebuilt}
 
 
 @router.get("/coupon-confirmed-revenue-daily")
@@ -4912,7 +5418,7 @@ async def rebuild_coupon_monthly_balances(
     _ensure_coupon_monthly_tables(db)
     period_month = _period_or_400(payload.period_month)
     market_code = payload.market_code.strip() if payload.market_code else ""
-    previous_month = previous_period_month(period_month)
+    previous_month = opening_balance_source_period(period_month)
     _reject_confirmed_coupon_month(db, period_month, market_code)
 
     db.execute(
@@ -4963,7 +5469,8 @@ async def rebuild_coupon_monthly_balances(
                 coupon_name,
                 ending_balance
               FROM activity_coupon_monthly_balance
-              WHERE period_month = :previous_month
+              WHERE :previous_month IS NOT NULL
+                AND period_month = :previous_month
                 AND (:market_code = '' OR market_code = :market_code)
             ),
             balance_keys AS (
@@ -5281,6 +5788,88 @@ async def voucher_details(
     )
 
 
+def _coupon_flows_query_sql(log_filter: str, keyword_filter: str) -> str:
+    """Build the coupon-flow query after limiting the requested log page first."""
+    return f"""
+        WITH filtered_logs AS MATERIALIZED (
+          SELECT
+            l.tcflseqno,
+            l.tcfldate,
+            l.tcflzy,
+            l.tcflsource,
+            l.tcflpopid,
+            l.tcflvipno,
+            l.tcflqno,
+            l.tcflmoney,
+            l.tcflye,
+            l.tcflmkt,
+            l.tcflsyjid,
+            l.tcflinvno,
+            l.tcflsyjtrace,
+            p.tpiname AS activity_name,
+            h.billno,
+            h.rqsj AS sale_time,
+            h.hykh AS sale_member_no
+          FROM tktcardfqlog l
+          LEFT JOIN tktpopinfo p ON p.tpiid = l.tcflpopid
+          LEFT JOIN salehead h
+            ON l.tcflmkt = h.mkt
+           AND l.tcflsyjid = h.syjh
+           AND l.tcflinvno ~ '^[0-9]+$'
+           AND h.fphm = l.tcflinvno::numeric
+          WHERE {log_filter}
+            {keyword_filter}
+          ORDER BY l.tcfldate DESC, l.tcflseqno DESC
+          LIMIT :limit OFFSET :offset
+        )
+        SELECT
+          fl.tcflseqno AS flow_id,
+          fl.tcfldate AS flow_date,
+          fl.tcflzy AS action_code,
+          {_case_expr("fl.tcflzy", ACTION_LABELS, "'未知动作'")} AS action_name,
+          fl.tcflsource AS source_code,
+          {coupon_source_name_sql("fl")} AS source_name,
+          fl.tcflpopid AS activity_id,
+          fl.activity_name,
+          fl.tcflvipno AS member_no,
+          fl.tcflqno AS coupon_no,
+          fl.tcflmoney AS raw_flow_amount,
+          {ACTION_AMOUNT_SQL.replace("l.", "fl.")} AS flow_amount,
+          fl.tcflye AS balance_amount,
+          fl.tcflmkt AS market_code,
+          fl.tcflsyjid AS cashier_no,
+          fl.tcflinvno AS invoice_no,
+          fl.tcflsyjtrace AS trace_no,
+          fl.billno,
+          fl.sale_time,
+          fl.sale_member_no,
+          COALESCE(cp.coupon_pay_amount, 0) AS coupon_pay_amount,
+          COALESCE(cp.coupon_pay_names, '') AS coupon_pay_names,
+          COALESCE(sb.sales_amount, 0) AS sales_amount,
+          COALESCE(sb.gross_profit, 0) AS gross_profit,
+          COALESCE(sb.net_profit, 0) AS net_profit
+        FROM filtered_logs fl
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(COALESCE(p.je, 0)) AS coupon_pay_amount,
+            STRING_AGG(DISTINCT COALESCE(NULLIF(p.payname, ''), p.paycode), '、') AS coupon_pay_names
+          FROM salepay p
+          WHERE p.billno = fl.billno
+            AND p.batch = fl.tcflsyjtrace::varchar
+            AND p.paycode IN ('0500', '0580')
+        ) cp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(COALESCE(sgl.sglxssr, 0)) AS sales_amount,
+            SUM(COALESCE(sgl.sgln2, 0)) AS gross_profit,
+            SUM(COALESCE(sgl.sglnetml, sgl.sgln2, 0)) AS net_profit
+          FROM salegoodslist sgl
+          WHERE sgl.sglbillno = fl.billno
+        ) sb ON TRUE
+        ORDER BY fl.tcfldate DESC, fl.tcflseqno DESC
+        """
+
+
 @router.get("/coupon-flows")
 async def coupon_flows(
     activity_id: str | None = Query(None, description="活动档期编码 tktpopinfo.tpiid"),
@@ -5325,72 +5914,7 @@ async def coupon_flows(
           )
         """
 
-    return _rows(
-        db,
-        f"""
-        WITH coupon_pay AS (
-          SELECT
-            billno,
-            batch,
-            SUM(COALESCE(je, 0)) AS coupon_pay_amount,
-            STRING_AGG(DISTINCT COALESCE(NULLIF(payname, ''), paycode), '、') AS coupon_pay_names
-          FROM salepay
-          WHERE paycode IN ('0500', '0580')
-          GROUP BY billno, batch
-        ),
-        sale_bill AS (
-          SELECT
-            sglbillno AS billno,
-            SUM(COALESCE(sglxssr, 0)) AS sales_amount,
-            SUM(COALESCE(sgln2, 0)) AS gross_profit,
-            SUM(COALESCE(sglnetml, sgln2, 0)) AS net_profit
-          FROM salegoodslist
-          GROUP BY sglbillno
-        )
-        SELECT
-          l.tcflseqno AS flow_id,
-          l.tcfldate AS flow_date,
-          l.tcflzy AS action_code,
-          {_case_expr("l.tcflzy", ACTION_LABELS, "'未知动作'")} AS action_name,
-          l.tcflsource AS source_code,
-          {_case_expr("l.tcflsource", SOURCE_LABELS, "'未知来源'")} AS source_name,
-          l.tcflpopid AS activity_id,
-          p.tpiname AS activity_name,
-          l.tcflvipno AS member_no,
-          l.tcflqno AS coupon_no,
-          l.tcflmoney AS raw_flow_amount,
-          {ACTION_AMOUNT_SQL} AS flow_amount,
-          l.tcflye AS balance_amount,
-          l.tcflmkt AS market_code,
-          l.tcflsyjid AS cashier_no,
-          l.tcflinvno AS invoice_no,
-          l.tcflsyjtrace AS trace_no,
-          h.billno,
-          h.rqsj AS sale_time,
-          h.hykh AS sale_member_no,
-          COALESCE(cp.coupon_pay_amount, 0) AS coupon_pay_amount,
-          COALESCE(cp.coupon_pay_names, '') AS coupon_pay_names,
-          COALESCE(sb.sales_amount, 0) AS sales_amount,
-          COALESCE(sb.gross_profit, 0) AS gross_profit,
-          COALESCE(sb.net_profit, 0) AS net_profit
-        FROM tktcardfqlog l
-        LEFT JOIN tktpopinfo p ON p.tpiid = l.tcflpopid
-        LEFT JOIN salehead h
-          ON l.tcflmkt = h.mkt
-         AND l.tcflsyjid = h.syjh
-         AND l.tcflinvno ~ '^[0-9]+$'
-         AND h.fphm = l.tcflinvno::numeric
-        LEFT JOIN coupon_pay cp
-          ON cp.billno = h.billno
-         AND cp.batch = l.tcflsyjtrace::varchar
-        LEFT JOIN sale_bill sb ON sb.billno = h.billno
-        WHERE {log_filter}
-          {keyword_filter}
-        ORDER BY l.tcfldate DESC, l.tcflseqno DESC
-        LIMIT :limit OFFSET :offset
-        """,
-        params,
-    )
+    return _rows(db, _coupon_flows_query_sql(log_filter, keyword_filter), params)
 
 
 @router.get("/quality-issues")
@@ -5489,7 +6013,7 @@ async def quality_issues(
               l.tcflzy AS action_code,
               {_case_expr("l.tcflzy", ACTION_LABELS, "'未知动作'")} AS action_name,
               l.tcflsource AS source_code,
-              {_case_expr("l.tcflsource", SOURCE_LABELS, "'未知来源'")} AS source_name,
+              {coupon_source_name_sql("l")} AS source_name,
               l.tcflmoney AS raw_flow_amount,
               {ACTION_AMOUNT_SQL} AS flow_amount,
               l.tcflmkt AS market_code,
@@ -5627,3 +6151,1390 @@ async def quality_issues(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="issue_type 仅支持 unmatched_logs/payments_without_logs/amount_mismatch/missing_member/unassigned_activity",
     )
+
+
+@router.get("/birthday-coupon/dashboard")
+async def birthday_coupon_dashboard(
+    start_month: str = Query(..., description="开始月份 YYYY-MM"),
+    end_month: str = Query(..., description="结束月份 YYYY-MM"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    detail_limit: int = Query(500, ge=1, le=50000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """常州购物中心 L/C 券发放、核销和消费带动分析。"""
+    require_permission(db, current_user, BIRTHDAY_COUPON_ANALYSIS_PERMISSION)
+    _ensure_required_tables(db)
+    business_scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    _require_selected_activity_store(db, business_scope, BIRTHDAY_COUPON_STORE_CODE)
+
+    try:
+        cohort_start, cohort_end, month_count = birthday_coupon_month_window(start_month, end_month)
+        selected_coupon_type = normalize_coupon_type(coupon_type)
+        coupon_profile = center_coupon_profile(selected_coupon_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    params: dict[str, Any] = {
+        "cohort_start": cohort_start,
+        "cohort_end": cohort_end,
+        "today": date.today(),
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        "expected_face_value": coupon_profile["expected_face_value"],
+        "expected_issue_count_per_member": coupon_profile["expected_issue_count_per_member"],
+        "fallback_coupon_name": coupon_profile["fallback_name"],
+        "detail_limit": detail_limit,
+    }
+
+    monthly = _rows(
+        db,
+        """
+        WITH periods AS (
+          SELECT generate_series(
+            CAST(:cohort_start AS date),
+            CAST(:cohort_end AS date) - INTERVAL '1 month',
+            INTERVAL '1 month'
+          )::date AS period_month
+        ),
+        issue_rows AS (
+          SELECT
+            date_trunc('month', l.tcfldate)::date AS period_month,
+            NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') AS member_no,
+            l.tcfldate AS issue_date,
+            l.tcflstartdate AS valid_from,
+            l.tcflenddate AS valid_to,
+            COALESCE(l.tcflmoney, 0) AS issue_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND TRIM(COALESCE(l.tcflzy, '')) = :issue_action
+            AND l.tcfldate >= CAST(:cohort_start AS date)
+            AND l.tcfldate < CAST(:cohort_end AS date)
+        ),
+        issue_member_counts AS (
+          SELECT period_month, member_no, COUNT(*) AS issue_count
+          FROM issue_rows
+          WHERE member_no IS NOT NULL
+          GROUP BY period_month, member_no
+        ),
+        issue_month AS (
+          SELECT
+            rows.period_month,
+            COUNT(*) AS issue_row_count,
+            COUNT(DISTINCT member_no) AS issued_member_count,
+            SUM(issue_amount) AS issued_amount,
+            MIN(issue_date) AS first_issue_date,
+            MAX(issue_date) AS last_issue_date,
+            MIN(valid_from) AS valid_from,
+            MAX(valid_to) AS valid_to,
+            COUNT(*) FILTER (WHERE EXTRACT(DAY FROM issue_date) = 1) AS day1_issue_count,
+            COUNT(*) FILTER (WHERE issue_amount <> :expected_face_value) AS face_value_exception_count,
+            COUNT(*) FILTER (WHERE member_no IS NULL) AS missing_member_count,
+            COALESCE((
+              SELECT SUM(GREATEST(member_counts.issue_count - :expected_issue_count_per_member, 0))
+              FROM issue_member_counts member_counts
+              WHERE member_counts.period_month = rows.period_month
+            ), 0) AS duplicate_issue_count
+          FROM issue_rows rows
+          GROUP BY rows.period_month
+        ),
+        usage_member AS (
+          SELECT
+            date_trunc('month', COALESCE(l.tcflstartdate, l.tcfldate))::date AS period_month,
+            NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') AS member_no,
+            COUNT(*) FILTER (WHERE l.tcflzy = 'O') AS consume_count,
+            SUM(CASE WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS gross_redeemed_amount,
+            SUM(CASE WHEN l.tcflzy = 'P' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS return_amount,
+            SUM(CASE WHEN l.tcflzy = 'U' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS consume_reverse_amount,
+            SUM(CASE WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS return_reverse_amount,
+            SUM(
+              CASE
+                WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END
+            ) AS net_redeemed_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy IN ('O', 'P', 'U', 'V')
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:cohort_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:cohort_end AS date)
+          GROUP BY 1, 2
+        ),
+        usage_month AS (
+          SELECT
+            period_month,
+            COUNT(DISTINCT member_no) FILTER (WHERE consume_count > 0) AS redeemed_member_count,
+            COUNT(DISTINCT member_no) FILTER (WHERE net_redeemed_amount > 0) AS net_redeemed_member_count,
+            SUM(consume_count) AS consume_count,
+            SUM(gross_redeemed_amount) AS gross_redeemed_amount,
+            SUM(return_amount) AS return_amount,
+            SUM(consume_reverse_amount) AS consume_reverse_amount,
+            SUM(return_reverse_amount) AS return_reverse_amount,
+            SUM(net_redeemed_amount) AS net_redeemed_amount
+          FROM usage_member
+          GROUP BY period_month
+        )
+        SELECT
+          p.period_month,
+          COALESCE(i.issue_row_count, 0) AS issue_row_count,
+          COALESCE(i.issued_member_count, 0) AS issued_member_count,
+          COALESCE(i.issued_amount, 0) AS issued_amount,
+          i.first_issue_date,
+          i.last_issue_date,
+          i.valid_from,
+          i.valid_to,
+          COALESCE(i.day1_issue_count, 0) AS day1_issue_count,
+          COALESCE(i.issue_row_count, 0) - COALESCE(i.day1_issue_count, 0) AS off_schedule_issue_count,
+          COALESCE(i.face_value_exception_count, 0) AS face_value_exception_count,
+          COALESCE(i.missing_member_count, 0) AS missing_member_count,
+          COALESCE(i.duplicate_issue_count, 0) AS duplicate_issue_count,
+          COALESCE(u.redeemed_member_count, 0) AS redeemed_member_count,
+          COALESCE(u.net_redeemed_member_count, 0) AS net_redeemed_member_count,
+          COALESCE(u.consume_count, 0) AS consume_count,
+          COALESCE(u.gross_redeemed_amount, 0) AS gross_redeemed_amount,
+          COALESCE(u.return_amount, 0) AS return_amount,
+          COALESCE(u.consume_reverse_amount, 0) AS consume_reverse_amount,
+          COALESCE(u.return_reverse_amount, 0) AS return_reverse_amount,
+          COALESCE(u.net_redeemed_amount, 0) AS net_redeemed_amount,
+          CASE
+            WHEN COALESCE(i.issued_member_count, 0) > 0
+              THEN ROUND(COALESCE(u.net_redeemed_member_count, 0)::numeric / i.issued_member_count * 100, 2)
+            ELSE NULL
+          END AS member_redemption_rate,
+          CASE
+            WHEN COALESCE(i.issued_amount, 0) > 0
+              THEN ROUND(COALESCE(u.net_redeemed_amount, 0)::numeric / i.issued_amount * 100, 2)
+            ELSE NULL
+          END AS amount_redemption_rate,
+          GREATEST(COALESCE(i.issued_amount, 0) - COALESCE(u.net_redeemed_amount, 0), 0) AS unused_amount,
+          CASE
+            WHEN i.valid_to < CAST(:today AS date)
+              THEN GREATEST(COALESCE(i.issued_amount, 0) - COALESCE(u.net_redeemed_amount, 0), 0)
+            ELSE 0
+          END AS expired_unused_amount,
+          CASE WHEN i.valid_to < CAST(:today AS date) THEN 'EXPIRED' ELSE 'ACTIVE' END AS cohort_status
+        FROM periods p
+        LEFT JOIN issue_month i ON i.period_month = p.period_month
+        LEFT JOIN usage_month u ON u.period_month = p.period_month
+        ORDER BY p.period_month
+        """,
+        params,
+    )
+
+    daily = _rows(
+        db,
+        """
+        SELECT
+          l.tcfldate AS business_date,
+          SUM(CASE WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS gross_redeemed_amount,
+          SUM(CASE WHEN l.tcflzy = 'P' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS return_amount,
+          SUM(CASE WHEN l.tcflzy = 'U' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS consume_reverse_amount,
+          SUM(
+            CASE
+              WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+              ELSE 0
+            END
+          ) AS net_redeemed_amount,
+          COUNT(DISTINCT NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '')) FILTER (WHERE l.tcflzy = 'O') AS redeemed_member_count
+        FROM tktcardfqlog l
+        WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+          AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+          AND l.tcflzy IN ('O', 'P', 'U', 'V')
+          AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:cohort_start AS date)
+          AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:cohort_end AS date)
+        GROUP BY l.tcfldate
+        ORDER BY l.tcfldate
+        """,
+        params,
+    )
+
+    department_group_rows = _rows(
+        db,
+        f"""
+        WITH matched_logs AS (
+          SELECT
+            h.billno,
+            l.tcflseqno,
+            ABS(COALESCE(l.tcflmoney, 0)) AS coupon_amount
+          FROM tktcardfqlog l
+          JOIN salehead h
+            ON l.tcflmkt = h.mkt
+           AND l.tcflsyjid = h.syjh
+           AND l.tcflinvno ~ '^[0-9]+$'
+           AND h.fphm = l.tcflinvno::numeric
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = 'O'
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:cohort_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:cohort_end AS date)
+        ),
+        coupon_bill AS (
+          SELECT billno, SUM(coupon_amount) AS coupon_amount
+          FROM matched_logs
+          GROUP BY billno
+        ),
+        manaframe_groups AS (
+          SELECT
+            mf.mfcode AS group_code,
+            mf.mfcname AS group_name,
+            dept.mfcode AS department_code,
+            dept.mfcname AS department_name
+          FROM manaframe mf
+          LEFT JOIN manaframe dept
+            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+        ),
+        sales_group AS (
+          SELECT
+            s.sglbillno AS billno,
+            COALESCE(NULLIF(mg.department_code, ''), '未归属') AS department_code,
+            COALESCE(NULLIF(mg.department_name, ''), '未归属部门') AS department_name,
+            COALESCE(NULLIF(mg.group_code, ''), '未归属') AS group_code,
+            COALESCE(NULLIF(mg.group_name, ''), '未归属柜组') AS group_name,
+            SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+            SUM(COALESCE(s.sgln2, 0)) AS gross_profit
+          FROM salegoodslist s
+          JOIN coupon_bill cb ON cb.billno = s.sglbillno
+          LEFT JOIN manaframe_groups mg
+            ON UPPER(TRIM(COALESCE(mg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+          WHERE 1=1 {_sales_department_exclusion_sql("mg")}
+          GROUP BY 1, 2, 3, 4, 5
+        ),
+        bill_totals AS (
+          SELECT billno, SUM(sales_amount) AS bill_sales_amount
+          FROM sales_group
+          GROUP BY billno
+        ),
+        allocated AS (
+          SELECT
+            sg.*,
+            cb.coupon_amount,
+            CASE
+              WHEN COALESCE(bt.bill_sales_amount, 0) <> 0 THEN sg.sales_amount / bt.bill_sales_amount
+              ELSE 0
+            END AS allocation_ratio
+          FROM sales_group sg
+          JOIN bill_totals bt ON bt.billno = sg.billno
+          JOIN coupon_bill cb ON cb.billno = sg.billno
+        )
+        SELECT
+          CASE WHEN GROUPING(group_code) = 1 THEN 'DEPARTMENT' ELSE 'GROUP' END AS row_level,
+          department_code,
+          department_name,
+          CASE WHEN GROUPING(group_code) = 1 THEN NULL ELSE group_code END AS group_code,
+          CASE WHEN GROUPING(group_name) = 1 THEN NULL ELSE group_name END AS group_name,
+          COUNT(DISTINCT billno) AS ticket_count,
+          SUM(sales_amount) AS driven_sales_amount,
+          SUM(gross_profit) AS gross_profit,
+          SUM(coupon_amount * allocation_ratio) AS allocated_coupon_amount,
+          CASE
+            WHEN SUM(coupon_amount * allocation_ratio) <> 0
+              THEN ROUND(SUM(sales_amount) / SUM(coupon_amount * allocation_ratio), 2)
+            ELSE NULL
+          END AS sales_leverage,
+          CASE
+            WHEN SUM(sales_amount) <> 0 THEN ROUND(SUM(gross_profit) / SUM(sales_amount) * 100, 2)
+            ELSE NULL
+          END AS gross_margin_rate
+        FROM allocated
+        GROUP BY GROUPING SETS (
+          (department_code, department_name),
+          (department_code, department_name, group_code, group_name)
+        )
+        ORDER BY row_level, department_code, driven_sales_amount DESC, group_code
+        """,
+        params,
+    )
+    departments = [row for row in department_group_rows if row.get("row_level") == "DEPARTMENT"]
+    groups = [row for row in department_group_rows if row.get("row_level") == "GROUP"]
+
+    members = _rows(
+        db,
+        """
+        WITH issue_member AS (
+          SELECT
+            date_trunc('month', l.tcfldate)::date AS period_month,
+            NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') AS member_no,
+            COUNT(*) AS issue_count,
+            MIN(l.tcfldate) AS issue_date,
+            MIN(l.tcflstartdate) AS valid_from,
+            MAX(l.tcflenddate) AS valid_to,
+            SUM(COALESCE(l.tcflmoney, 0)) AS issued_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:cohort_start AS date)
+            AND l.tcfldate < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+          GROUP BY 1, 2
+        ),
+        usage_member AS (
+          SELECT
+            date_trunc('month', COALESCE(l.tcflstartdate, l.tcfldate))::date AS period_month,
+            NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') AS member_no,
+            COUNT(*) FILTER (WHERE l.tcflzy = 'O') AS consume_count,
+            MIN(l.tcfldate) FILTER (WHERE l.tcflzy = 'O') AS first_redeem_date,
+            MAX(l.tcfldate) FILTER (WHERE l.tcflzy = 'O') AS last_redeem_date,
+            SUM(CASE WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS gross_redeemed_amount,
+            SUM(CASE WHEN l.tcflzy = 'P' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS return_amount,
+            SUM(CASE WHEN l.tcflzy = 'U' THEN ABS(COALESCE(l.tcflmoney, 0)) ELSE 0 END) AS consume_reverse_amount,
+            SUM(
+              CASE
+                WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END
+            ) AS net_redeemed_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy IN ('O', 'P', 'U', 'V')
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:cohort_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:cohort_end AS date)
+          GROUP BY 1, 2
+        )
+        SELECT
+          i.period_month,
+          i.member_no,
+          COALESCE(NULLIF(m.customer_level, ''), '未识别') AS customer_level,
+          i.issue_count,
+          i.issue_date,
+          i.valid_from,
+          i.valid_to,
+          i.issued_amount,
+          COALESCE(u.consume_count, 0) AS consume_count,
+          u.first_redeem_date,
+          u.last_redeem_date,
+          COALESCE(u.gross_redeemed_amount, 0) AS gross_redeemed_amount,
+          COALESCE(u.return_amount, 0) AS return_amount,
+          COALESCE(u.consume_reverse_amount, 0) AS consume_reverse_amount,
+          COALESCE(u.net_redeemed_amount, 0) AS net_redeemed_amount,
+          GREATEST(i.issued_amount - COALESCE(u.net_redeemed_amount, 0), 0) AS unused_amount,
+          CASE
+            WHEN COALESCE(u.net_redeemed_amount, 0) > 0 THEN 'REDEEMED'
+            WHEN i.valid_to < CAST(:today AS date) THEN 'EXPIRED_UNUSED'
+            ELSE 'UNUSED'
+          END AS redemption_status,
+          CASE WHEN i.issue_count > :expected_issue_count_per_member THEN TRUE ELSE FALSE END AS duplicate_issue
+        FROM issue_member i
+        LEFT JOIN usage_member u
+          ON u.period_month = i.period_month
+         AND UPPER(TRIM(COALESCE(u.member_no, ''))) = UPPER(TRIM(COALESCE(i.member_no, '')))
+        LEFT JOIN fj_dw_member_dim m
+          ON UPPER(TRIM(COALESCE(m.customer_no, ''))) = UPPER(TRIM(COALESCE(i.member_no, '')))
+        ORDER BY i.period_month DESC,
+          CASE
+            WHEN COALESCE(u.net_redeemed_amount, 0) > 0 THEN 1
+            WHEN i.valid_to < CAST(:today AS date) THEN 2
+            ELSE 3
+          END,
+          i.member_no
+        LIMIT :detail_limit
+        """,
+        params,
+    )
+
+    source = _one(
+        db,
+        """
+        SELECT
+          COALESCE(NULLIF(tq.tqname, ''), :fallback_coupon_name) AS coupon_name,
+          MIN(l.tcfldate) FILTER (WHERE l.tcflzy = :issue_action) AS issue_coverage_start,
+          MAX(l.tcfldate) AS latest_data_date,
+          COUNT(*) AS source_row_count,
+          COUNT(*) FILTER (
+            WHERE l.tcflzy = :issue_action
+              AND l.tcfldate >= CAST(:cohort_start AS date)
+              AND l.tcfldate < CAST(:cohort_end AS date)
+          ) AS selected_issue_row_count
+        FROM tktcardfqlog l
+        LEFT JOIN tktqtype tq ON UPPER(TRIM(COALESCE(tq.tqcode, ''))) = :coupon_type
+        WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+          AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+        GROUP BY COALESCE(NULLIF(tq.tqname, ''), :fallback_coupon_name)
+        """,
+        params,
+    )
+
+    def total(key: str) -> float:
+        return float(sum(float(row.get(key) or 0) for row in monthly))
+
+    issued_member_count = total("issued_member_count")
+    net_redeemed_member_count = total("net_redeemed_member_count")
+    issued_amount = total("issued_amount")
+    net_redeemed_amount = total("net_redeemed_amount")
+    driven_sales_amount = float(sum(float(row.get("driven_sales_amount") or 0) for row in departments))
+    allocated_coupon_amount = float(sum(float(row.get("allocated_coupon_amount") or 0) for row in departments))
+    detail_total = int(issued_member_count)
+
+    quality_issues: list[dict[str, Any]] = []
+    for row in monthly:
+        period = str(row.get("period_month") or "")[:7]
+        checks = (
+            ("OFF_SCHEDULE", "非每月1日发放", int(row.get("off_schedule_issue_count") or 0)),
+            ("EXCESS_ISSUE", "超出每人标准发放张数", int(row.get("duplicate_issue_count") or 0)),
+            ("FACE_VALUE", "单笔面值不是100元", int(row.get("face_value_exception_count") or 0)),
+            ("MISSING_MEMBER", "发放日志缺会员号", int(row.get("missing_member_count") or 0)),
+        )
+        for issue_code, issue_name, issue_count in checks:
+            if issue_count > 0:
+                quality_issues.append(
+                    {
+                        "period_month": period,
+                        "issue_code": issue_code,
+                        "issue_name": issue_name,
+                        "issue_count": issue_count,
+                    }
+                )
+        if int(row.get("issued_member_count") or 0) == 0 and int(row.get("redeemed_member_count") or 0) > 0:
+            quality_issues.append(
+                {
+                    "period_month": period,
+                    "issue_code": "MISSING_ISSUE_BATCH",
+                    "issue_name": "有核销但缺发放批次",
+                    "issue_count": int(row.get("redeemed_member_count") or 0),
+                }
+            )
+
+    return {
+        "scope": {
+            "store_code": BIRTHDAY_COUPON_STORE_CODE,
+            "store_name": "常州购物中心",
+            "coupon_type": selected_coupon_type,
+            "coupon_name": source.get("coupon_name") or coupon_profile["fallback_name"],
+            "start_month": start_month,
+            "end_month": end_month,
+            "month_count": month_count,
+            "expected_issue_day": 1,
+            "expected_face_value": coupon_profile["expected_face_value"],
+            "expected_issue_count_per_member": coupon_profile["expected_issue_count_per_member"],
+            "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        },
+        "summary": {
+            "issued_member_count": int(issued_member_count),
+            "issued_amount": issued_amount,
+            "net_redeemed_member_count": int(net_redeemed_member_count),
+            "net_redeemed_amount": net_redeemed_amount,
+            "member_redemption_rate": round(net_redeemed_member_count / issued_member_count * 100, 2) if issued_member_count else None,
+            "amount_redemption_rate": round(net_redeemed_amount / issued_amount * 100, 2) if issued_amount else None,
+            "unused_amount": total("unused_amount"),
+            "expired_unused_amount": total("expired_unused_amount"),
+            "driven_sales_amount": driven_sales_amount,
+            "allocated_coupon_amount": allocated_coupon_amount,
+            "sales_leverage": round(driven_sales_amount / allocated_coupon_amount, 2) if allocated_coupon_amount else None,
+            "off_schedule_issue_count": int(total("off_schedule_issue_count")),
+            "duplicate_issue_count": int(total("duplicate_issue_count")),
+            "face_value_exception_count": int(total("face_value_exception_count")),
+        },
+        "monthly": monthly,
+        "daily": daily,
+        "departments": departments,
+        "groups": groups,
+        "members": members,
+        "quality_issues": quality_issues,
+        "detail": {
+            "returned_count": len(members),
+            "estimated_total_count": detail_total,
+            "limit": detail_limit,
+            "truncated": detail_total > len(members),
+        },
+        "source": {
+            **source,
+            "tables": ["tktqtype", "tktcardfqlog", "salehead", "salegoodslist", "manaframe", "fj_dw_member_dim"],
+            "cohort_rule": "按券日志有效期起始月归属发放批次；核销、退券和冲正跟随该批次",
+        },
+    }
+
+
+@router.get("/birthday-coupon/export-details")
+async def birthday_coupon_export_details(
+    start_month: str = Query(..., description="开始月份 YYYY-MM"),
+    end_month: str = Query(..., description="结束月份 YYYY-MM"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    detail_limit: int = Query(50000, ge=1, le=50000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return export-only member-level, monthly ticket, and coupon-flow detail."""
+    require_permission(db, current_user, BIRTHDAY_COUPON_ANALYSIS_PERMISSION)
+    _ensure_required_tables(db)
+    business_scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    _require_selected_activity_store(db, business_scope, BIRTHDAY_COUPON_STORE_CODE)
+    try:
+        cohort_start, cohort_end, _ = birthday_coupon_month_window(start_month, end_month)
+        selected_coupon_type = normalize_coupon_type(coupon_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    params = {
+        "cohort_start": cohort_start,
+        "cohort_end": cohort_end,
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        "detail_limit": detail_limit,
+    }
+    member_base_sql = """
+        WITH issue_member AS MATERIALIZED (
+          SELECT
+            date_trunc('month', l.tcfldate)::date AS period_month,
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            COUNT(*) AS issue_count,
+            SUM(COALESCE(l.tcflmoney, 0)) AS issued_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:cohort_start AS date)
+            AND l.tcfldate < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+          GROUP BY 1, 2
+        ),
+        member_dim AS MATERIALIZED (
+          SELECT
+            i.period_month,
+            i.member_no,
+            MAX(COALESCE(NULLIF(TRIM(m.customer_level), ''), '未识别')) AS customer_level,
+            MAX(NULLIF(TRIM(m.customer_name), '')) AS customer_name
+          FROM issue_member i
+          JOIN fj_dw_member_dim m ON m.customer_no = i.member_no
+          GROUP BY 1, 2
+        ),
+        usage_member AS MATERIALIZED (
+          SELECT
+            date_trunc('month', COALESCE(l.tcflstartdate, l.tcfldate))::date AS period_month,
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            SUM(
+              CASE
+                WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END
+            ) AS net_redeemed_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy IN ('O', 'P', 'U', 'V')
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:cohort_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:cohort_end AS date)
+          GROUP BY 1, 2
+        ),
+        salehead_scope AS MATERIALIZED (
+          SELECT
+            date_trunc('month', h.rqsj)::date AS period_month,
+            UPPER(TRIM(h.hykh)) AS member_no,
+            h.billno,
+            h.rqsj AS sale_time
+          FROM salehead h
+          WHERE h.mkt = :market_code
+            AND h.rqsj >= CAST(:cohort_start AS date)
+            AND h.rqsj < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(h.hykh, '')), '') IS NOT NULL
+        ),
+        member_tickets AS MATERIALIZED (
+          SELECT i.period_month, i.member_no, h.billno, h.sale_time
+          FROM issue_member i
+          JOIN salehead_scope h
+            ON h.member_no = i.member_no
+           AND h.period_month = i.period_month
+        ),
+        member_sales AS MATERIALIZED (
+          SELECT
+            mt.period_month,
+            mt.member_no,
+            COUNT(DISTINCT mt.billno) AS ticket_count,
+            COALESCE(SUM(s.sglxssr), 0) AS monthly_sales_amount,
+            MAX(mt.sale_time) AS last_sale_time
+          FROM member_tickets mt
+          JOIN salegoodslist s ON s.sglbillno = mt.billno
+          GROUP BY 1, 2
+        )
+    """
+    member_levels = _rows(
+        db,
+        member_base_sql
+        + """
+        SELECT
+          i.period_month,
+          COALESCE(d.customer_level, '未识别') AS customer_level,
+          COUNT(*) AS issued_member_count,
+          SUM(i.issue_count) AS issue_count,
+          SUM(i.issued_amount) AS issued_amount,
+          COUNT(*) FILTER (WHERE COALESCE(u.net_redeemed_amount, 0) > 0) AS redeemed_member_count,
+          SUM(COALESCE(u.net_redeemed_amount, 0)) AS net_redeemed_amount,
+          COUNT(*) FILTER (WHERE COALESCE(ms.ticket_count, 0) > 0) AS consuming_member_count,
+          SUM(COALESCE(ms.ticket_count, 0)) AS ticket_count,
+          SUM(COALESCE(ms.monthly_sales_amount, 0)) AS monthly_sales_amount
+        FROM issue_member i
+        LEFT JOIN member_dim d ON d.period_month = i.period_month AND d.member_no = i.member_no
+        LEFT JOIN usage_member u ON u.period_month = i.period_month AND u.member_no = i.member_no
+        LEFT JOIN member_sales ms ON ms.period_month = i.period_month AND ms.member_no = i.member_no
+        GROUP BY 1, 2
+        ORDER BY 1, monthly_sales_amount DESC, 2
+        """,
+        params,
+    )
+    level_members = _rows(
+        db,
+        member_base_sql
+        + """
+        SELECT
+          i.period_month,
+          i.member_no,
+          d.customer_name,
+          COALESCE(d.customer_level, '未识别') AS customer_level,
+          i.issue_count,
+          i.issued_amount,
+          COALESCE(u.net_redeemed_amount, 0) AS net_redeemed_amount,
+          COALESCE(ms.ticket_count, 0) AS ticket_count,
+          COALESCE(ms.monthly_sales_amount, 0) AS monthly_sales_amount,
+          ms.last_sale_time,
+          COUNT(*) OVER() AS total_count
+        FROM issue_member i
+        LEFT JOIN member_dim d ON d.period_month = i.period_month AND d.member_no = i.member_no
+        LEFT JOIN usage_member u ON u.period_month = i.period_month AND u.member_no = i.member_no
+        LEFT JOIN member_sales ms ON ms.period_month = i.period_month AND ms.member_no = i.member_no
+        ORDER BY i.period_month DESC, monthly_sales_amount DESC, i.member_no
+        LIMIT :detail_limit
+        """,
+        params,
+    )
+    member_sales = _rows(
+        db,
+        """
+        WITH issue_member AS MATERIALIZED (
+          SELECT DISTINCT
+            date_trunc('month', l.tcfldate)::date AS period_month,
+            UPPER(TRIM(l.tcflvipno)) AS member_no
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:cohort_start AS date)
+            AND l.tcfldate < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+        ),
+        member_dim AS MATERIALIZED (
+          SELECT
+            i.period_month,
+            i.member_no,
+            MAX(COALESCE(NULLIF(TRIM(m.customer_level), ''), '未识别')) AS customer_level,
+            MAX(NULLIF(TRIM(m.customer_name), '')) AS customer_name
+          FROM issue_member i
+          JOIN fj_dw_member_dim m ON m.customer_no = i.member_no
+          GROUP BY 1, 2
+        ),
+        salehead_scope AS MATERIALIZED (
+          SELECT
+            date_trunc('month', h.rqsj)::date AS period_month,
+            UPPER(TRIM(h.hykh)) AS member_no,
+            h.billno,
+            h.rqsj AS sale_time
+          FROM salehead h
+          WHERE h.mkt = :market_code
+            AND h.rqsj >= CAST(:cohort_start AS date)
+            AND h.rqsj < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(h.hykh, '')), '') IS NOT NULL
+        ),
+        manaframe_groups AS (
+          SELECT
+            mf.mfcode AS group_code,
+            mf.mfcname AS group_name,
+            dept.mfcname AS department_name
+          FROM manaframe mf
+          LEFT JOIN manaframe dept
+            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+        ),
+        ticket_rows AS (
+          SELECT
+            i.period_month,
+            i.member_no,
+            d.customer_name,
+            COALESCE(d.customer_level, '未识别') AS customer_level,
+            h.sale_time,
+            h.billno,
+            COUNT(*) AS sku_count,
+            SUM(COALESCE(s.sglsl, 0)) AS quantity,
+            SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+            STRING_AGG(DISTINCT COALESCE(NULLIF(mg.department_name, ''), '未归属部门'), '、') AS departments,
+            STRING_AGG(DISTINCT COALESCE(NULLIF(mg.group_name, ''), NULLIF(s.sglmfid, ''), '未归属柜组'), '、') AS groups,
+            STRING_AGG(DISTINCT COALESCE(NULLIF(s.sglppcode, ''), '未标识'), '、') AS brand_codes
+          FROM issue_member i
+          JOIN salehead_scope h
+            ON h.member_no = i.member_no
+           AND h.period_month = i.period_month
+          JOIN salegoodslist s ON s.sglbillno = h.billno
+          LEFT JOIN member_dim d ON d.period_month = i.period_month AND d.member_no = i.member_no
+          LEFT JOIN manaframe_groups mg
+            ON UPPER(TRIM(COALESCE(mg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+          GROUP BY 1, 2, 3, 4, 5, 6
+        )
+        SELECT ticket_rows.*, COUNT(*) OVER() AS total_count
+        FROM ticket_rows
+        ORDER BY period_month DESC, sale_time DESC, billno DESC
+        LIMIT :detail_limit
+        """,
+        params,
+    )
+    usage_flows = _rows(
+        db,
+        """
+        WITH issued_coupons AS MATERIALIZED (
+          SELECT
+            date_trunc('month', l.tcfldate)::date AS period_month,
+            l.tcflvipseq AS coupon_asset_id,
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            MIN(l.tcfldate) AS issue_date
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:cohort_start AS date)
+            AND l.tcfldate < CAST(:cohort_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+          GROUP BY 1, 2, 3
+        ),
+        member_dim AS MATERIALIZED (
+          SELECT
+            i.period_month,
+            i.member_no,
+            MAX(COALESCE(NULLIF(TRIM(m.customer_level), ''), '未识别')) AS customer_level
+          FROM issued_coupons i
+          JOIN fj_dw_member_dim m ON m.customer_no = i.member_no
+          GROUP BY 1, 2
+        ),
+        flow_rows AS (
+          SELECT
+            i.period_month,
+            i.member_no,
+            COALESCE(d.customer_level, '未识别') AS customer_level,
+            i.coupon_asset_id,
+            NULLIF(TRIM(COALESCE(l.tcflqno, '')), '') AS coupon_no,
+            i.issue_date,
+            l.tcflseqno AS flow_id,
+            l.tcfldate AS flow_date,
+            l.tcflzy AS action_code,
+            """
+        + _case_expr("l.tcflzy", ACTION_LABELS, "'未知动作'")
+        + """ AS action_name,
+            CASE
+              WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+              WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+              ELSE COALESCE(l.tcflmoney, 0)
+            END AS flow_amount,
+            l.tcflye AS balance_amount,
+            l.tcflsyjid AS cashier_no,
+            l.tcflinvno AS invoice_no,
+            h.billno,
+            h.rqsj AS sale_time,
+            COALESCE(sb.sales_amount, 0) AS sales_amount,
+            COALESCE(NULLIF(sb.group_names, ''), '未归属柜组') AS group_names
+          FROM issued_coupons i
+          JOIN tktcardfqlog l ON l.tcflvipseq = i.coupon_asset_id
+          LEFT JOIN member_dim d ON d.period_month = i.period_month AND d.member_no = i.member_no
+          LEFT JOIN salehead h
+            ON l.tcflmkt = h.mkt
+           AND l.tcflsyjid = h.syjh
+           AND l.tcflinvno ~ '^[0-9]+$'
+           AND h.fphm = l.tcflinvno::numeric
+          LEFT JOIN LATERAL (
+            SELECT
+              SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+              STRING_AGG(
+                DISTINCT COALESCE(NULLIF(TRIM(mf.mfcname), ''), NULLIF(TRIM(s.sglmfid), ''), '未归属柜组'),
+                '、'
+              ) AS group_names
+            FROM salegoodslist s
+            LEFT JOIN manaframe mf
+              ON UPPER(TRIM(COALESCE(mf.mfcode, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+            WHERE s.sglbillno = h.billno
+          ) sb ON TRUE
+          WHERE l.tcflzy IN ('O', 'P', 'U', 'V')
+        )
+        SELECT flow_rows.*, COUNT(*) OVER() AS total_count
+        FROM flow_rows
+        ORDER BY period_month DESC, flow_date DESC, flow_id DESC
+        LIMIT :detail_limit
+        """,
+        params,
+    )
+    followups: list[dict[str, Any]] = []
+    followups_total = 0
+    if selected_coupon_type == "C":
+        followup_month = cohort_start
+        while followup_month < cohort_end and len(followups) < detail_limit:
+            if followup_month.month == 12:
+                next_followup_month = date(followup_month.year + 1, 1, 1)
+            else:
+                next_followup_month = date(followup_month.year, followup_month.month + 1, 1)
+            result = query_coupon_followups(
+                db,
+                period_start=followup_month,
+                period_end=next_followup_month,
+                market_code=BIRTHDAY_COUPON_STORE_CODE,
+                issue_action=BIRTHDAY_COUPON_ISSUE_ACTION,
+                limit=max(1, detail_limit - len(followups)),
+                offset=0,
+            )
+            followups_total += int(result["total"])
+            followups.extend(result["items"])
+            followup_month = next_followup_month
+
+    def export_meta(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        total_count = int(rows[0].get("total_count") or 0) if rows else 0
+        return {
+            "returned_count": len(rows),
+            "total_count": total_count,
+            "truncated": total_count > len(rows),
+        }
+
+    return {
+        "member_levels": member_levels,
+        "level_members": level_members,
+        "member_sales": member_sales,
+        "usage_flows": usage_flows,
+        "followups": followups,
+        "detail": {
+            "level_members": export_meta(level_members),
+            "member_sales": export_meta(member_sales),
+            "usage_flows": export_meta(usage_flows),
+            "followups": {
+                "returned_count": len(followups),
+                "total_count": followups_total,
+                "truncated": followups_total > len(followups),
+            },
+            "limit": detail_limit,
+        },
+    }
+
+
+def _birthday_coupon_period_context(
+    db: Session,
+    current_user: User,
+    coupon_type: str,
+    period_month: str,
+) -> tuple[str, date, date]:
+    """Validate one L/C coupon cohort month and enforce the same access chain as the dashboard."""
+    require_permission(db, current_user, BIRTHDAY_COUPON_ANALYSIS_PERMISSION)
+    _ensure_required_tables(db)
+    business_scope = load_business_scope(db, current_user, fallback_resource_code="sales")
+    _require_selected_activity_store(db, business_scope, BIRTHDAY_COUPON_STORE_CODE)
+    try:
+        selected_coupon_type = normalize_coupon_type(coupon_type)
+        period_start, period_end, _ = birthday_coupon_month_window(period_month, period_month)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return selected_coupon_type, period_start, period_end
+
+
+def _coupon_followup_filters(
+    status_code: str | None,
+) -> str | None:
+    try:
+        return normalize_followup_status(status_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/birthday-coupon/followups")
+async def birthday_coupon_followups(
+    period_month: str = Query(..., description="C券发放月份 YYYY-MM"),
+    status_code: str | None = Query(None, description="跟进状态"),
+    keyword: str | None = Query(None, description="会员、品牌柜组或品类主管"),
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Desktop queue for assigning C-coupon Black Gold/Diamond members to category managers."""
+    _, period_start, period_end = _birthday_coupon_period_context(
+        db, current_user, "C", period_month
+    )
+    selected_status = _coupon_followup_filters(status_code)
+    return query_coupon_followups(
+        db,
+        period_start=period_start,
+        period_end=period_end,
+        market_code=BIRTHDAY_COUPON_STORE_CODE,
+        issue_action=BIRTHDAY_COUPON_ISSUE_ACTION,
+        status_code=selected_status,
+        keyword=keyword,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/birthday-coupon/followups/mobile")
+async def mobile_birthday_coupon_followups(
+    period_month: str = Query(..., description="C券发放月份 YYYY-MM"),
+    status_code: str | None = Query(None, description="跟进状态"),
+    keyword: str | None = Query(None, description="会员或负责品牌柜组"),
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Use the effective user's brand scope or explicit center black-diamond role."""
+    require_permission(db, current_user, MOBILE_COUPON_FOLLOWUP_PERMISSION)
+    try:
+        period_start, period_end, _ = birthday_coupon_month_window(period_month, period_month)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    selected_status = _coupon_followup_filters(status_code)
+    subject = get_authz_subject(db, current_user)
+    all_black_diamond = CENTER_BLACK_DIAMOND_FOLLOWUP_ROLE in get_role_codes(db, subject.user_id)
+    manager_user_id = None if all_black_diamond or is_admin(db, subject) else subject.user_id
+    return query_coupon_followups(
+        db,
+        period_start=period_start,
+        period_end=period_end,
+        market_code=BIRTHDAY_COUPON_STORE_CODE,
+        issue_action=BIRTHDAY_COUPON_ISSUE_ACTION,
+        manager_user_id=manager_user_id,
+        member_levels=("黑钻卡会员",) if all_black_diamond else FOLLOWUP_MEMBER_LEVELS,
+        status_code=selected_status,
+        keyword=keyword,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/birthday-coupon/usage-details")
+async def birthday_coupon_usage_details(
+    period_month: str = Query(..., description="发放月份 YYYY-MM"),
+    member_no: str = Query(..., min_length=1, description="会员卡号"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return every issued coupon in a member cohort row and its exact usage flows."""
+    selected_coupon_type, period_start, period_end = _birthday_coupon_period_context(
+        db, current_user, coupon_type, period_month
+    )
+    normalized_member_no = member_no.strip().upper()
+    if not normalized_member_no:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="会员卡号不能为空")
+    params = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        "member_no": normalized_member_no,
+    }
+    coupons = _rows(
+        db,
+        """
+        SELECT
+          l.tcflvipseq AS coupon_asset_id,
+          NULLIF(TRIM(COALESCE(l.tcflqno, '')), '') AS coupon_no,
+          l.tcfldate AS issue_date,
+          l.tcflstartdate AS valid_from,
+          l.tcflenddate AS valid_to,
+          COALESCE(l.tcflmoney, 0) AS issued_amount,
+          l.tcflye AS balance_amount
+        FROM tktcardfqlog l
+        WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+          AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+          AND l.tcflzy = :issue_action
+          AND l.tcfldate >= CAST(:period_start AS date)
+          AND l.tcfldate < CAST(:period_end AS date)
+          AND UPPER(TRIM(COALESCE(l.tcflvipno, ''))) = :member_no
+        ORDER BY l.tcflvipseq
+        """,
+        params,
+    )
+    flows = _rows(
+        db,
+        """
+        WITH issued_coupons AS MATERIALIZED (
+          SELECT DISTINCT l.tcflvipseq
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:period_start AS date)
+            AND l.tcfldate < CAST(:period_end AS date)
+            AND UPPER(TRIM(COALESCE(l.tcflvipno, ''))) = :member_no
+        )
+        SELECT
+          l.tcflseqno AS flow_id,
+          l.tcflvipseq AS coupon_asset_id,
+          NULLIF(TRIM(COALESCE(l.tcflqno, '')), '') AS coupon_no,
+          l.tcfldate AS flow_date,
+          l.tcflzy AS action_code,
+          """ + _case_expr("l.tcflzy", ACTION_LABELS, "'未知动作'") + """ AS action_name,
+          CASE
+            WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+            WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+            WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+            ELSE COALESCE(l.tcflmoney, 0)
+          END AS flow_amount,
+          l.tcflye AS balance_amount,
+          l.tcflsyjid AS cashier_no,
+          l.tcflinvno AS invoice_no,
+          l.tcflsyjtrace AS trace_no,
+          h.billno,
+          h.rqsj AS sale_time,
+          COALESCE(sb.sales_amount, 0) AS sales_amount,
+          COALESCE(sb.quantity, 0) AS quantity,
+          COALESCE(NULLIF(sb.group_names, ''), '未归属柜组') AS group_names
+        FROM tktcardfqlog l
+        JOIN issued_coupons issued ON issued.tcflvipseq = l.tcflvipseq
+        LEFT JOIN salehead h
+          ON l.tcflmkt = h.mkt
+         AND l.tcflsyjid = h.syjh
+         AND l.tcflinvno ~ '^[0-9]+$'
+         AND h.fphm = l.tcflinvno::numeric
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+            SUM(COALESCE(s.sglsl, 0)) AS quantity,
+            STRING_AGG(
+              DISTINCT COALESCE(NULLIF(TRIM(mf.mfcname), ''), NULLIF(TRIM(s.sglmfid), ''), '未归属柜组'),
+              '、'
+            ) AS group_names
+          FROM salegoodslist s
+          LEFT JOIN manaframe mf
+            ON UPPER(TRIM(COALESCE(mf.mfcode, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+          WHERE s.sglbillno = h.billno
+        ) sb ON TRUE
+        WHERE l.tcflzy IN ('O', 'P', 'U', 'V')
+        ORDER BY l.tcfldate, l.tcflseqno
+        """,
+        params,
+    )
+    return {"coupons": coupons, "flows": flows}
+
+
+@router.get("/birthday-coupon/member-levels")
+async def birthday_coupon_member_levels(
+    period_month: str = Query(..., description="发放月份 YYYY-MM"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Summarize one coupon cohort month by the member's current level."""
+    selected_coupon_type, period_start, period_end = _birthday_coupon_period_context(
+        db, current_user, coupon_type, period_month
+    )
+    params = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+    }
+    return _rows(
+        db,
+        """
+        WITH issue_member AS MATERIALIZED (
+          SELECT
+            CAST(:period_start AS date) AS period_month,
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            COUNT(*) AS issue_count,
+            SUM(COALESCE(l.tcflmoney, 0)) AS issued_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:period_start AS date)
+            AND l.tcfldate < CAST(:period_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+          GROUP BY 2
+        ),
+        usage_member AS MATERIALIZED (
+          SELECT
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            SUM(
+              CASE
+                WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END
+            ) AS net_redeemed_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy IN ('O', 'P', 'U', 'V')
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:period_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:period_end AS date)
+          GROUP BY 1
+        ),
+        member_dim AS MATERIALIZED (
+          SELECT
+            i.member_no,
+            MAX(COALESCE(NULLIF(TRIM(m.customer_level), ''), '未识别')) AS customer_level
+          FROM issue_member i
+          JOIN fj_dw_member_dim m ON m.customer_no = i.member_no
+          GROUP BY 1
+        ),
+        member_tickets AS MATERIALIZED (
+          SELECT
+            i.member_no,
+            h.billno
+          FROM issue_member i
+          JOIN salehead h
+            ON NULLIF(UPPER(TRIM(COALESCE(h.hykh, ''))), '') = i.member_no
+           AND h.mkt = :market_code
+           AND h.rqsj >= CAST(:period_start AS date)
+           AND h.rqsj < CAST(:period_end AS date)
+        ),
+        member_sales AS MATERIALIZED (
+          SELECT
+            mt.member_no,
+            COUNT(DISTINCT mt.billno) AS ticket_count,
+            COALESCE(SUM(s.sglxssr), 0) AS monthly_sales_amount
+          FROM member_tickets mt
+          JOIN salegoodslist s ON s.sglbillno = mt.billno
+          GROUP BY 1
+        )
+        SELECT
+          CAST(:period_start AS date) AS period_month,
+          COALESCE(d.customer_level, '未识别') AS customer_level,
+          COUNT(*) AS issued_member_count,
+          SUM(i.issue_count) AS issue_count,
+          SUM(i.issued_amount) AS issued_amount,
+          COUNT(*) FILTER (WHERE COALESCE(u.net_redeemed_amount, 0) > 0) AS redeemed_member_count,
+          SUM(COALESCE(u.net_redeemed_amount, 0)) AS net_redeemed_amount,
+          COUNT(*) FILTER (WHERE COALESCE(ms.ticket_count, 0) > 0) AS consuming_member_count,
+          SUM(COALESCE(ms.ticket_count, 0)) AS ticket_count,
+          SUM(COALESCE(ms.monthly_sales_amount, 0)) AS monthly_sales_amount
+        FROM issue_member i
+        LEFT JOIN member_dim d ON d.member_no = i.member_no
+        LEFT JOIN usage_member u ON u.member_no = i.member_no
+        LEFT JOIN member_sales ms ON ms.member_no = i.member_no
+        GROUP BY 2
+        ORDER BY monthly_sales_amount DESC, customer_level
+        """,
+        params,
+    )
+
+
+@router.get("/birthday-coupon/level-members")
+async def birthday_coupon_level_members(
+    period_month: str = Query(..., description="发放月份 YYYY-MM"),
+    customer_level: str = Query(..., min_length=1, description="会员等级"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    keyword: str | None = Query(None, description="会员卡号或姓名"),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List members in one level and their total store consumption during the coupon month."""
+    selected_coupon_type, period_start, period_end = _birthday_coupon_period_context(
+        db, current_user, coupon_type, period_month
+    )
+    normalized_level = customer_level.strip()
+    if not normalized_level:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="会员等级不能为空")
+    params: dict[str, Any] = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        "customer_level": normalized_level,
+        "limit": limit,
+        "offset": offset,
+    }
+    keyword_sql = ""
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        keyword_sql = "AND (i.member_no ILIKE :keyword OR COALESCE(d.customer_name, '') ILIKE :keyword)"
+    rows = _rows(
+        db,
+        f"""
+        WITH issue_member AS MATERIALIZED (
+          SELECT
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            COUNT(*) AS issue_count,
+            SUM(COALESCE(l.tcflmoney, 0)) AS issued_amount
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:period_start AS date)
+            AND l.tcfldate < CAST(:period_end AS date)
+            AND NULLIF(TRIM(COALESCE(l.tcflvipno, '')), '') IS NOT NULL
+          GROUP BY 1
+        ),
+        member_dim AS MATERIALIZED (
+          SELECT
+            i.member_no,
+            MAX(COALESCE(NULLIF(TRIM(m.customer_level), ''), '未识别')) AS customer_level,
+            MAX(NULLIF(TRIM(m.customer_name), '')) AS customer_name
+          FROM issue_member i
+          JOIN fj_dw_member_dim m ON m.customer_no = i.member_no
+          GROUP BY 1
+        ),
+        filtered_members AS MATERIALIZED (
+          SELECT i.*, COALESCE(d.customer_level, '未识别') AS customer_level, d.customer_name
+          FROM issue_member i
+          LEFT JOIN member_dim d ON d.member_no = i.member_no
+          WHERE COALESCE(d.customer_level, '未识别') = :customer_level
+            {keyword_sql}
+        ),
+        usage_member AS MATERIALIZED (
+          SELECT
+            UPPER(TRIM(l.tcflvipno)) AS member_no,
+            SUM(
+              CASE
+                WHEN l.tcflzy = 'O' THEN ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy IN ('P', 'U') THEN -ABS(COALESCE(l.tcflmoney, 0))
+                WHEN l.tcflzy = 'V' THEN ABS(COALESCE(l.tcflmoney, 0))
+                ELSE 0
+              END
+            ) AS net_redeemed_amount
+          FROM tktcardfqlog l
+          JOIN filtered_members fm ON fm.member_no = UPPER(TRIM(l.tcflvipno))
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy IN ('O', 'P', 'U', 'V')
+            AND COALESCE(l.tcflstartdate, l.tcfldate) >= CAST(:period_start AS date)
+            AND COALESCE(l.tcflstartdate, l.tcfldate) < CAST(:period_end AS date)
+          GROUP BY 1
+        ),
+        member_tickets AS MATERIALIZED (
+          SELECT
+            fm.member_no,
+            h.billno,
+            h.rqsj AS sale_time
+          FROM filtered_members fm
+          JOIN salehead h
+            ON NULLIF(UPPER(TRIM(COALESCE(h.hykh, ''))), '') = fm.member_no
+           AND h.mkt = :market_code
+           AND h.rqsj >= CAST(:period_start AS date)
+           AND h.rqsj < CAST(:period_end AS date)
+        ),
+        member_sales AS MATERIALIZED (
+          SELECT
+            mt.member_no,
+            COUNT(DISTINCT mt.billno) AS ticket_count,
+            COALESCE(SUM(s.sglxssr), 0) AS monthly_sales_amount,
+            MAX(mt.sale_time) AS last_sale_time
+          FROM member_tickets mt
+          JOIN salegoodslist s ON s.sglbillno = mt.billno
+          GROUP BY 1
+        )
+        SELECT
+          CAST(:period_start AS date) AS period_month,
+          fm.member_no,
+          fm.customer_name,
+          fm.customer_level,
+          fm.issue_count,
+          fm.issued_amount,
+          COALESCE(u.net_redeemed_amount, 0) AS net_redeemed_amount,
+          COALESCE(ms.ticket_count, 0) AS ticket_count,
+          COALESCE(ms.monthly_sales_amount, 0) AS monthly_sales_amount,
+          ms.last_sale_time,
+          COUNT(*) OVER() AS total_count
+        FROM filtered_members fm
+        LEFT JOIN usage_member u ON u.member_no = fm.member_no
+        LEFT JOIN member_sales ms ON ms.member_no = fm.member_no
+        ORDER BY monthly_sales_amount DESC, fm.member_no
+        LIMIT :limit OFFSET :offset
+        """,
+        params,
+    )
+    return {
+        "items": rows,
+        "total": int(rows[0].get("total_count") or 0) if rows else 0,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/birthday-coupon/member-sales")
+async def birthday_coupon_member_sales(
+    period_month: str = Query(..., description="发放月份 YYYY-MM"),
+    member_no: str = Query(..., min_length=1, description="会员卡号"),
+    coupon_type: str = Query("L", description="券种 L 或 C"),
+    limit: int = Query(500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return ticket-level consumption for an issued member during that coupon cohort month."""
+    selected_coupon_type, period_start, period_end = _birthday_coupon_period_context(
+        db, current_user, coupon_type, period_month
+    )
+    normalized_member_no = member_no.strip().upper()
+    if not normalized_member_no:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="会员卡号不能为空")
+    params = {
+        "period_start": period_start,
+        "period_end": period_end,
+        "market_code": BIRTHDAY_COUPON_STORE_CODE,
+        "coupon_type": selected_coupon_type,
+        "issue_action": BIRTHDAY_COUPON_ISSUE_ACTION,
+        "member_no": normalized_member_no,
+        "limit": limit,
+    }
+    items = _rows(
+        db,
+        """
+        WITH cohort_member AS MATERIALIZED (
+          SELECT DISTINCT UPPER(TRIM(l.tcflvipno)) AS member_no
+          FROM tktcardfqlog l
+          WHERE TRIM(COALESCE(l.tcflmkt, '')) = :market_code
+            AND UPPER(TRIM(COALESCE(l.tcfljetype, ''))) = :coupon_type
+            AND l.tcflzy = :issue_action
+            AND l.tcfldate >= CAST(:period_start AS date)
+            AND l.tcfldate < CAST(:period_end AS date)
+            AND UPPER(TRIM(COALESCE(l.tcflvipno, ''))) = :member_no
+        ),
+        manaframe_groups AS (
+          SELECT
+            mf.mfcode AS group_code,
+            mf.mfcname AS group_name,
+            dept.mfcode AS department_code,
+            dept.mfcname AS department_name
+          FROM manaframe mf
+          LEFT JOIN manaframe dept
+            ON UPPER(TRIM(COALESCE(mf.mfpcode, ''))) = UPPER(TRIM(COALESCE(dept.mfcode, '')))
+        )
+        SELECT
+          h.rqsj AS sale_time,
+          h.billno,
+          COUNT(*) AS sku_count,
+          SUM(COALESCE(s.sglsl, 0)) AS quantity,
+          SUM(COALESCE(s.sglxssr, 0)) AS sales_amount,
+          STRING_AGG(DISTINCT COALESCE(NULLIF(mg.department_name, ''), '未归属部门'), '、') AS departments,
+          STRING_AGG(DISTINCT COALESCE(NULLIF(mg.group_name, ''), NULLIF(s.sglmfid, ''), '未归属柜组'), '、') AS groups,
+          STRING_AGG(DISTINCT COALESCE(NULLIF(s.sglppcode, ''), '未标识'), '、') AS brand_codes
+        FROM cohort_member cm
+        JOIN salehead h
+          ON NULLIF(UPPER(TRIM(COALESCE(h.hykh, ''))), '') = cm.member_no
+         AND h.mkt = :market_code
+         AND h.rqsj >= CAST(:period_start AS date)
+         AND h.rqsj < CAST(:period_end AS date)
+        JOIN salegoodslist s ON s.sglbillno = h.billno
+        LEFT JOIN manaframe_groups mg
+          ON UPPER(TRIM(COALESCE(mg.group_code, ''))) = UPPER(TRIM(COALESCE(s.sglmfid, '')))
+        GROUP BY h.rqsj, h.billno
+        ORDER BY h.rqsj DESC, h.billno DESC
+        LIMIT :limit
+        """,
+        params,
+    )
+    return {
+        "items": items,
+        "summary": {
+            "ticket_count": len(items),
+            "sales_amount": sum(Decimal(str(row.get("sales_amount") or 0)) for row in items),
+            "quantity": sum(Decimal(str(row.get("quantity") or 0)) for row in items),
+            "truncated": len(items) >= limit,
+        },
+    }

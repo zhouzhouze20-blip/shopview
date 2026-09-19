@@ -64,5 +64,8 @@ test("HY0001 is registered in the center report folder with its own permission",
   assert.match(pageSource, />品类主管</);
   assert.match(pageSource, />开始日期</);
   assert.match(pageSource, />结束日期</);
+  assert.match(pageSource, />本期人数</);
+  assert.match(pageSource, />同期人数</);
+  assert.match(pageSource, />人数同比</);
   assert.match(pageSource, /\/api\/sales\/reports\/hy0001\/export/);
 });

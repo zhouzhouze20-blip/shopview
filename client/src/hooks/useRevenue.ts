@@ -131,6 +131,21 @@ export interface RevenueUnitDetail {
   loss_bearing_details: Array<Record<string, any>>;
   fee_details: Array<Record<string, any>>;
   extra_receipts: RevenueExtraReceipt[];
+  month_close_extra_details?: Array<{
+    id: number;
+    revenue_date: string;
+    revenue_month?: string | null;
+    source_subject_code?: string | null;
+    source_subject_name?: string | null;
+    source_group_code?: string | null;
+    source_group_name?: string | null;
+    amount: number;
+    adjustment_reason?: string | null;
+    source_bill_no?: string | null;
+    source_voucher_id?: string | null;
+    source_type: "MONTH_CLOSE_BINDING";
+    match_status: "MATCHED";
+  }>;
 }
 
 export interface CreateRevenueExtraReceiptInput {
@@ -151,6 +166,8 @@ export function useRevenueMonthly(params: {
   revenueDate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  financialYear?: number | null;
+  financialMonth?: number | null;
   revenueMonth?: string | null;
   storeId?: number | null;
   floorId?: number | null;
@@ -166,6 +183,8 @@ export function useRevenueMonthly(params: {
       params.storeId ?? "all",
       params.floorId ?? "all",
       params.metric ?? "total",
+      params.financialYear ?? "no-financial-year",
+      params.financialMonth ?? "all-financial-months",
     ],
     enabled: params.enabled ?? true,
     queryFn: () => {
@@ -178,6 +197,8 @@ export function useRevenueMonthly(params: {
       q.set("metric", params.metric ?? "total");
       if (params.storeId != null) q.set("store_id", String(params.storeId));
       if (params.floorId != null) q.set("floor_id", String(params.floorId));
+      if (params.financialYear != null) q.set("financial_year", String(params.financialYear));
+      if (params.financialMonth != null) q.set("financial_month", String(params.financialMonth));
       return apiGet<RevenueMonthlyResponse>(`/api/revenue-map/monthly?${q.toString()}`);
     },
     staleTime: 0,
@@ -224,6 +245,8 @@ export function useRevenueUnitDetail(params: {
   revenueDate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  financialYear?: number | null;
+  financialMonth?: number | null;
   revenueMonth?: string | null;
 }) {
   return useQuery({
@@ -233,6 +256,8 @@ export function useRevenueUnitDetail(params: {
       params.startDate && params.endDate
         ? `${params.startDate}:${params.endDate}`
         : params.revenueDate ?? params.revenueMonth ?? "",
+      params.financialYear ?? "no-financial-year",
+      params.financialMonth ?? "all-financial-months",
     ],
     enabled: Boolean(params.unitId && ((params.startDate && params.endDate) || params.revenueDate || params.revenueMonth)),
     queryFn: () => {
@@ -246,6 +271,8 @@ export function useRevenueUnitDetail(params: {
       } else if (params.revenueMonth) {
         q.set("revenue_month", params.revenueMonth);
       }
+      if (params.financialYear != null) q.set("financial_year", String(params.financialYear));
+      if (params.financialMonth != null) q.set("financial_month", String(params.financialMonth));
       return apiGet<RevenueUnitDetail>(`/api/revenue-map/units/${params.unitId}/detail?${q.toString()}`);
     },
     staleTime: 0,
@@ -257,9 +284,12 @@ export function useRevenueExtraReceipts(params: {
   revenueDate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  financialYear?: number | null;
+  financialMonth?: number | null;
   revenueMonth?: string | null;
   storeId?: number | null;
   floorId?: number | null;
+  enabled?: boolean;
 }) {
   return useQuery({
     queryKey: [
@@ -269,7 +299,10 @@ export function useRevenueExtraReceipts(params: {
         : params.revenueDate ?? params.revenueMonth ?? "",
       params.storeId ?? "all",
       params.floorId ?? "all",
+      params.financialYear ?? "no-financial-year",
+      params.financialMonth ?? "all-financial-months",
     ],
+    enabled: params.enabled ?? true,
     queryFn: () => {
       const q = new URLSearchParams();
       if (params.startDate && params.endDate) {
@@ -279,6 +312,8 @@ export function useRevenueExtraReceipts(params: {
       else if (params.revenueMonth) q.set("revenue_month", params.revenueMonth);
       if (params.storeId != null) q.set("store_id", String(params.storeId));
       if (params.floorId != null) q.set("floor_id", String(params.floorId));
+      if (params.financialYear != null) q.set("financial_year", String(params.financialYear));
+      if (params.financialMonth != null) q.set("financial_month", String(params.financialMonth));
       return apiGet<RevenueExtraReceipt[]>(`/api/revenue-map/extra-receipts?${q.toString()}`);
     },
     staleTime: 0,

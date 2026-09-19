@@ -3,9 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  SALES_DASHBOARD_LONG_RANGE_TIMEOUT_MS,
   SalesDashboardTimeoutError,
   getSalesDashboardData,
   isSalesDashboardTimeoutError,
+  salesDashboardRequestTimeoutMs,
   salesDashboardRangeDays,
   validateSalesDashboardDateRanges,
 } from "./sales-dashboard-request.ts";
@@ -34,6 +36,27 @@ test("sales dashboard recognizes a gateway timeout response", async () => {
   await assert.rejects(
     getSalesDashboardData("/api/sales/summary/stores", request, { timeoutMs: 100 }),
     SalesDashboardTimeoutError,
+  );
+});
+
+test("sales dashboard gives cross-month requests enough time without relaxing single-month requests", () => {
+  assert.equal(
+    salesDashboardRequestTimeoutMs(
+      "/api/sales/summary/stores?start_date=2026-08-01&end_date=2026-08-21",
+    ),
+    30_000,
+  );
+  assert.equal(
+    salesDashboardRequestTimeoutMs(
+      "/api/sales/summary/stores?start_date=2026-01-01&end_date=2026-08-21",
+    ),
+    SALES_DASHBOARD_LONG_RANGE_TIMEOUT_MS,
+  );
+  assert.equal(
+    salesDashboardRequestTimeoutMs(
+      "/api/sales/groups/101/tickets?start_date=2026-01-01&end_date=2026-08-21",
+    ),
+    30_000,
   );
 });
 
@@ -89,4 +112,20 @@ test("sales dashboard waits for an explicit query and avoids hidden store reques
   assert.match(source, /enabled: activeTab === "stores"/);
   assert.match(source, /onClick=\{applyDateRange\}/);
   assert.match(source, /查询未完成/);
+});
+
+test("desktop sales dashboard records readable query audit logs for filters and drilldowns", async () => {
+  const source = await readFile(new URL("../pages/sales-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /moduleId: "sales-dashboard"/);
+  assert.match(source, /moduleName: "电脑端销售看板"/);
+  assert.match(source, /clientType: "desktop"/);
+  assert.match(source, /logEnter: false/);
+  assert.match(source, /initialQueryConditions:[\s\S]*query_level: "stores"/);
+  assert.match(source, /recordSalesQuery\("departments"/);
+  assert.match(source, /recordSalesQuery\("groups"/);
+  assert.match(source, /recordSalesQuery\("tickets"/);
+  assert.match(source, /recordSalesQuery\("detail"/);
+  assert.match(source, /exclude_rental: nextValue/);
+  assert.match(source, /exclude_backoffice_departments: nextValue/);
 });

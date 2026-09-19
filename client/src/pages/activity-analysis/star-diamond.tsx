@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, CalendarDays, Crown, Eye, Loader2, RefreshCw, Search, ShoppingBag, Sparkles, Users } from "lucide-react";
+import { Bot, CalendarDays, Crown, Download, Eye, Loader2, RefreshCw, Search, ShoppingBag, Sparkles, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, apiRequest } from "@/lib/api";
 import { canAccessModule } from "@/lib/module-permissions";
 
 type RowData = Record<string, number | string | null>;
@@ -29,7 +29,17 @@ const money = (value: unknown) =>
 const number = (value: unknown) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(Number(value || 0));
 const fmtDateTime = (value: unknown) => (typeof value === "string" && value ? value.replace("T", " ").slice(0, 19) : "—");
 const fmtDate = (value: unknown) => (typeof value === "string" && value ? value.slice(0, 10) : "—");
-const errorText = (error: unknown) => (error instanceof Error ? error.message : "请求失败");
+const errorText = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "请求失败";
+  const jsonStart = message.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(message.slice(jsonStart));
+      if (typeof body.detail === "string") return body.detail;
+    } catch { /* Fall back to the original message for non-JSON responses. */ }
+  }
+  return message;
+};
 
 function buildQuery(params: Record<string, string | number | undefined | null>) {
   const qs = new URLSearchParams();
@@ -73,7 +83,9 @@ function SimpleTable({
   columns,
   onRowClick,
   rowClassName,
+  loading = false,
 }: {
+  loading?: boolean;
   rows: RowData[];
   columns: Array<[string, string, (value: unknown) => string] | [string, string] | [string, string, undefined, (row: RowData) => ReactNode]>;
   onRowClick?: (row: RowData) => void;
@@ -106,7 +118,7 @@ function SimpleTable({
             ))
           ) : (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">暂无数据</TableCell>
+              <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">{loading ? "正在加载，请稍候…" : "暂无数据"}</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -122,33 +134,45 @@ export default function StarDiamondAnalysisPage() {
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
   const [keyword, setKeyword] = useState("");
+  const [appliedKeyword, setAppliedKeyword] = useState("");
   const [selectedMember, setSelectedMember] = useState("");
   const [selectedSegment, setSelectedSegment] = useState("");
   const [activeTab, setActiveTab] = useState("members");
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<Record<string, unknown> | null>(null);
+  const [analysisError, setAnalysisError] = useState("");
+  const [analysisMember, setAnalysisMember] = useState<RowData | null>(null);
   const [overallAnalysisOpen, setOverallAnalysisOpen] = useState(false);
   const [overallAnalysisLoading, setOverallAnalysisLoading] = useState(false);
   const [overallAnalysisResult, setOverallAnalysisResult] = useState<Record<string, unknown> | null>(null);
+  const [overallAnalysisError, setOverallAnalysisError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   const commonParams = { start_date: startDate, end_date: endDate };
   const overviewQuery = useQuery<Overview>({
     queryKey: ["/api/activity-analysis/star-diamond/overview", commonParams],
     queryFn: () => apiGet(`/api/activity-analysis/star-diamond/overview${buildQuery(commonParams)}`),
     enabled: canViewStarDiamond,
+    retry: false,
+    staleTime: 60_000,
   });
   const membersQuery = useQuery<RowData[]>({
-    queryKey: ["/api/activity-analysis/star-diamond/members", commonParams, keyword],
+    queryKey: ["/api/activity-analysis/star-diamond/members", commonParams, appliedKeyword],
     queryFn: () =>
-      apiGet(`/api/activity-analysis/star-diamond/members${buildQuery({ ...commonParams, keyword, limit: 300 })}`),
+      apiGet(`/api/activity-analysis/star-diamond/members${buildQuery({ ...commonParams, keyword: appliedKeyword, limit: 300 })}`),
     enabled: canViewStarDiamond,
+    retry: false,
+    staleTime: 60_000,
   });
   const trailsQuery = useQuery<RowData[]>({
     queryKey: ["/api/activity-analysis/star-diamond/trails", commonParams, selectedMember],
     queryFn: () =>
       apiGet(`/api/activity-analysis/star-diamond/trails${buildQuery({ ...commonParams, member_no: selectedMember, limit: 300 })}`),
-    enabled: canViewStarDiamond,
+    enabled: canViewStarDiamond && activeTab === "trails",
+    retry: false,
+    staleTime: 60_000,
   });
 
   const summary = overviewQuery.data?.summary || {};
@@ -162,7 +186,7 @@ export default function StarDiamondAnalysisPage() {
   const refreshAll = () => {
     overviewQuery.refetch();
     membersQuery.refetch();
-    trailsQuery.refetch();
+    if (activeTab === "trails") trailsQuery.refetch();
   };
   const visibleMembers = useMemo(() => {
     const rows = membersQuery.data || [];
@@ -184,13 +208,18 @@ export default function StarDiamondAnalysisPage() {
     setAnalysisOpen(true);
     setAnalysisLoading(true);
     setAnalysisResult(null);
+    setAnalysisError("");
+    setAnalysisMember(row);
     try {
       const result = await apiPost<Record<string, unknown>>("/api/activity-analysis/star-diamond/member-analysis", {
         member_no: memberNo,
         start_date: startDate,
         end_date: endDate,
       });
+      if (!result) throw new Error("未收到分析结果，请重试。");
       setAnalysisResult(result);
+    } catch (error) {
+      setAnalysisError(errorText(error));
     } finally {
       setAnalysisLoading(false);
     }
@@ -201,14 +230,47 @@ export default function StarDiamondAnalysisPage() {
     setOverallAnalysisOpen(true);
     setOverallAnalysisLoading(true);
     setOverallAnalysisResult(null);
+    setOverallAnalysisError("");
     try {
       const result = await apiPost<Record<string, unknown>>("/api/activity-analysis/star-diamond/overall-analysis", {
         start_date: startDate,
         end_date: endDate,
       });
+      if (!result) throw new Error("未收到分析结果，请重试。");
       setOverallAnalysisResult(result);
+    } catch (error) {
+      setOverallAnalysisError(errorText(error));
     } finally {
       setOverallAnalysisLoading(false);
+    }
+  };
+
+  const exportExcel = async () => {
+    if (!canViewStarDiamond || exporting) return;
+    setExporting(true);
+    setExportError("");
+    const period = overallAnalysisResult?.period as Record<string, unknown> | undefined;
+    const ai = overallAnalysisResult?.ai as Record<string, unknown> | undefined;
+    const includeAi = !overallAnalysisLoading && period?.start_date === startDate && period?.end_date === endDate && ai?.status === "success";
+    const filename = `中心星钻会员分析_${startDate}_${endDate}.xlsx`;
+    try {
+      const response = await apiRequest("/api/activity-analysis/star-diamond/export", {
+        method: "POST",
+        body: JSON.stringify({ start_date: startDate, end_date: endDate, keyword: appliedKeyword,
+          segment: selectedSegment, member_no: selectedMember, ai_report: includeAi ? String(ai?.report || "") : "" }),
+      });
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setExportError(errorText(error));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -239,6 +301,10 @@ export default function StarDiamondAnalysisPage() {
             {overviewQuery.isFetching || membersQuery.isFetching || trailsQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             刷新
           </Button>
+          <Button variant="outline" onClick={exportExcel} disabled={exporting || !startDate || !endDate || startDate > endDate}>
+            {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {exporting ? "正在导出…" : "导出 Excel"}
+          </Button>
           <Button onClick={runOverallAnalysis} disabled={overallAnalysisLoading}>
             {overallAnalysisLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
             AI整体方案
@@ -246,6 +312,7 @@ export default function StarDiamondAnalysisPage() {
         </div>
       </div>
 
+      {exportError ? <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">导出失败：{exportError}</div> : null}
       {overviewQuery.isError ? (
         <Card className="rounded-lg border-red-200 bg-red-50">
           <CardContent className="p-4 text-sm text-red-700">{errorText(overviewQuery.error)}</CardContent>
@@ -313,7 +380,10 @@ export default function StarDiamondAnalysisPage() {
                 <Label htmlFor="star-keyword">会员搜索</Label>
                 <Input id="star-keyword" className="mt-1" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="会员号、姓名、手机号" />
               </div>
-              <Button variant="outline" onClick={() => membersQuery.refetch()}>
+              <Button variant="outline" onClick={() => {
+                if (appliedKeyword === keyword.trim()) membersQuery.refetch();
+                else setAppliedKeyword(keyword.trim());
+              }}>
                 <Search className="mr-2 h-4 w-4" />
                 查询
               </Button>
@@ -329,6 +399,7 @@ export default function StarDiamondAnalysisPage() {
           ) : (
             <SimpleTable
               rows={visibleMembers}
+              loading={membersQuery.isFetching}
               columns={[
                 [
                   "__actions",
@@ -381,6 +452,7 @@ export default function StarDiamondAnalysisPage() {
           ) : (
             <SimpleTable
               rows={trailsQuery.data || []}
+              loading={trailsQuery.isFetching}
               columns={[
                 ["sale_time", "销售时间", fmtDateTime],
                 ["billno", "小票"],
@@ -409,6 +481,14 @@ export default function StarDiamondAnalysisPage() {
             <div className="flex min-h-40 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               正在生成会员分析...
+            </div>
+          ) : analysisError ? (
+            <div role="alert" className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+              <p className="font-medium">会员分析生成失败</p>
+              <p className="break-words text-sm text-muted-foreground">{analysisError}</p>
+              <Button variant="outline" onClick={() => analysisMember && runMemberAnalysis(analysisMember)}>
+                <RefreshCw className="mr-2 h-4 w-4" />重试
+              </Button>
             </div>
           ) : analysisResult ? (
             <div className="space-y-4">
@@ -460,6 +540,14 @@ export default function StarDiamondAnalysisPage() {
             <div className="flex min-h-40 items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               正在生成整体运营方案...
+            </div>
+          ) : overallAnalysisError ? (
+            <div role="alert" className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+              <p className="font-medium">整体方案生成失败</p>
+              <p className="break-words text-sm text-muted-foreground">{overallAnalysisError}</p>
+              <Button variant="outline" onClick={runOverallAnalysis}>
+                <RefreshCw className="mr-2 h-4 w-4" />重试
+              </Button>
             </div>
           ) : overallAnalysisResult ? (
             <div className="space-y-4">

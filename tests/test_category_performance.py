@@ -97,6 +97,14 @@ class CategoryPerformanceTest(unittest.TestCase):
         self.assertIn("category_manager_performance_targets", source)
         self.assertIn("salegoodslist", source)
 
+    def test_active_brand_assignment_grants_mobile_supplier_payment_role(self):
+        helper_source = inspect.getsource(category_performance._ensure_supplier_payment_role)
+        upsert_source = inspect.getsource(category_performance.upsert_brand_assignment)
+
+        self.assertIn("category_supplier_payment_viewer", helper_source)
+        self.assertIn("_ensure_supplier_payment_role", upsert_source)
+        self.assertIn("if payload.is_active", upsert_source)
+
 
 if __name__ == "__main__":
     unittest.main()

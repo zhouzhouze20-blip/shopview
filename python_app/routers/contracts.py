@@ -588,7 +588,6 @@ def _load_contract_list_items(
                 string_agg(DISTINCT {scope_entry_expr}, ';;' ORDER BY {scope_entry_expr}) AS scope_entries,
                 string_agg(DISTINCT NULLIF(trim(COALESCE(cmf.cmfbrand, '')), ''), ',' ORDER BY NULLIF(trim(COALESCE(cmf.cmfbrand, '')), '')) AS range_brands,
                 MIN(cmf.cmfeffdate) AS range_start_date,
-                MAX(cmf.cmflapdate) AS range_end_date,
                 COALESCE(SUM(cmf.cmfjzmj), 0) AS contract_area
               FROM contmanaframe cmf
               {cmf_name_join}
@@ -640,7 +639,7 @@ def _load_contract_list_items(
               cmf_summary.scope_entries,
               cmf_summary.range_brands,
               cmf_summary.range_start_date,
-              cmf_summary.range_end_date,
+              cm.cmlapdate AS range_end_date,
               cmf_summary.contract_area,
               bd_summary.is_clear,
               bd_summary.clear_flags,

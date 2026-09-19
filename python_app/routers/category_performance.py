@@ -237,6 +237,48 @@ def _manager(db: Session, manager_user_id: int):
     return manager
 
 
+def _ensure_coupon_followup_role(db: Session, *, manager_user_id: int, store_row) -> None:
+    """New 601 brand managers immediately receive only the mobile follow-up module role."""
+    if str(store_row["store_code"] or "").strip() != "601":
+        return
+    db.execute(
+        text(
+            """
+            INSERT INTO user_roles (user_id, role_id, store_id, created_at)
+            SELECT :manager_user_id, role_row.id, :store_id, NOW()
+            FROM roles role_row
+            WHERE role_row.role_code = 'category_coupon_followup_manager'
+              AND role_row.is_active
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {
+            "manager_user_id": manager_user_id,
+            "store_id": store_row["store_id"],
+        },
+    )
+
+
+def _ensure_supplier_payment_role(db: Session, *, manager_user_id: int, store_row) -> None:
+    """Active category managers receive the mobile payment entry; data stays assignment-scoped."""
+    db.execute(
+        text(
+            """
+            INSERT INTO user_roles (user_id, role_id, store_id, created_at)
+            SELECT :manager_user_id, role_row.id, :store_id, NOW()
+            FROM roles role_row
+            WHERE role_row.role_code = 'category_supplier_payment_viewer'
+              AND role_row.is_active
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {
+            "manager_user_id": manager_user_id,
+            "store_id": store_row["store_id"],
+        },
+    )
+
+
 def _operation_log(
     db: Session,
     current_user: User,
@@ -396,6 +438,17 @@ async def upsert_brand_assignment(
             "user_id": current_user.user_id,
         },
     )
+    if payload.is_active:
+        _ensure_coupon_followup_role(
+            db,
+            manager_user_id=int(manager["user_id"]),
+            store_row=store,
+        )
+        _ensure_supplier_payment_role(
+            db,
+            manager_user_id=int(manager["user_id"]),
+            store_row=store,
+        )
     if payload.is_key_brand is not None:
         db.execute(
             text(
@@ -1165,6 +1218,11 @@ async def import_category_performance_workbook(
                 "manager_name": manager["real_name"],
                 "user_id": current_user.user_id,
             },
+        )
+        _ensure_supplier_payment_role(
+            db,
+            manager_user_id=int(manager["user_id"]),
+            store_row=store,
         )
         imported["brand_assignments"] += 1
 

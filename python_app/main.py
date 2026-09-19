@@ -2,7 +2,7 @@
 百货柜位管理系统 - 主应用程序
 Department Store Counter Management System - Main Application
 """
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, Request, Response, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -27,6 +27,8 @@ from models.database import engine, Base
 from routers import (
     auth,
     erp_settlements,
+    cosmetics_payment_matching,
+    rental_receivables,
     stores,
     counters,
     counter_groups,
@@ -43,7 +45,10 @@ from routers import (
     contracts,
     contract_unit_bindings,
     sales,
+    self_operated_sales,
     od0005_micro_mall,
+    new_century_payment_report,
+    inventory_turnover,
     non_rental_monthly_revenue,
     store_other_business_income,
     category_performance,
@@ -52,6 +57,9 @@ from routers import (
     revenue,
     merchant_planning,
     activity_analysis,
+    new_century_campaign,
+    coupon_campaigns,
+    coupon_live,
     manaframe,
     suppliers,
     system_management,
@@ -93,6 +101,7 @@ app.add_middleware(
 app.include_router(stores.router)
 app.include_router(auth.router)
 app.include_router(erp_settlements.router)
+app.include_router(rental_receivables.router)
 app.include_router(counters.router)
 app.include_router(counter_groups.router)
 app.include_router(tenants.router)
@@ -108,7 +117,11 @@ app.include_router(floor_area_report.router)
 app.include_router(contracts.router)
 app.include_router(contract_unit_bindings.router)
 app.include_router(sales.router)
+app.include_router(self_operated_sales.router)
 app.include_router(od0005_micro_mall.router)
+app.include_router(new_century_payment_report.router)
+app.include_router(cosmetics_payment_matching.router)
+app.include_router(inventory_turnover.router)
 app.include_router(non_rental_monthly_revenue.router)
 app.include_router(store_other_business_income.router)
 app.include_router(category_performance.router)
@@ -117,6 +130,9 @@ app.include_router(joint_renewal_revenue.router)
 app.include_router(revenue.router)
 app.include_router(merchant_planning.router)
 app.include_router(activity_analysis.router)
+app.include_router(new_century_campaign.router)
+app.include_router(coupon_campaigns.router)
+app.include_router(coupon_live.router)
 app.include_router(manaframe.router)
 app.include_router(suppliers.router)
 app.include_router(system_management.router)
@@ -369,8 +385,8 @@ async def favicon():
 
 # 健康检查接口
 @app.get("/api/health")
-async def health_check():
-    """健康检查接口"""
+def health_check(response: Response):
+    """数据库不可用时返回 503，供容器探针判断；同步查询在线程池执行。"""
     try:
         # 测试数据库连接
         from models.database import SessionLocal
@@ -386,7 +402,7 @@ async def health_check():
             db_message = f"数据库连接失败: {str(e)}"
         finally:
             db.close()
-        
+        response.status_code = 200 if db_status == "connected" else 503
         return {
             "status": "healthy" if db_status == "connected" else "degraded",
             "service": "百货柜位管理系统",
@@ -398,6 +414,7 @@ async def health_check():
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
+        response.status_code = 503
         return {
             "status": "unhealthy",
             "service": "百货柜位管理系统",

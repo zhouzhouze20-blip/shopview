@@ -148,6 +148,48 @@ test("desktop sales dashboard sends rental and back-office exclusion switches th
   assert.match(analysisSource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
 });
 
+test("ticket table paginates by 100 while totals and export cover every filtered ticket", () => {
+  const pageSource = readFileSync(new URL("../pages/sales-dashboard.tsx", import.meta.url), "utf8");
+  const ticketsQueryStart = pageSource.indexOf("const ticketsQuery");
+  const ticketsQueryEnd = pageSource.indexOf("const ticketDetailQuery", ticketsQueryStart);
+  const ticketsQuerySource = pageSource.slice(ticketsQueryStart, ticketsQueryEnd);
+  const exportStart = pageSource.indexOf("const handleExportTickets");
+  const exportEnd = pageSource.indexOf("return (", exportStart);
+  const exportSource = pageSource.slice(exportStart, exportEnd);
+
+  assert.ok(exportStart >= 0 && exportEnd > exportStart);
+  assert.match(ticketsQuerySource, /limit: TICKET_PAGE_SIZE/);
+  assert.match(ticketsQuerySource, /offset: \(ticketPage - 1\) \* TICKET_PAGE_SIZE/);
+  assert.match(ticketsQuerySource, /tickets\/summary/);
+  assert.match(pageSource, /每页 \{TICKET_PAGE_SIZE\} 张/);
+  assert.match(pageSource, /上一页/);
+  assert.match(pageSource, /下一页/);
+  assert.match(pageSource, /本页合计/);
+  assert.match(exportSource, /apiGet<TicketSummaryTotals>/);
+  assert.match(exportSource, /apiGet<TicketSummary\[\]>/);
+  assert.match(exportSource, /offset < summary\.ticket_count/);
+  assert.match(exportSource, /limit: TICKET_EXPORT_BATCH_SIZE/);
+  assert.match(exportSource, /offset,/);
+  assert.match(exportSource, /\.\.\.selectedProductTicketParams/);
+  assert.match(exportSource, /exclude_rental: excludeRental/);
+  assert.match(exportSource, /exclude_backoffice_departments: excludeBackofficeDepartments/);
+  assert.doesNotMatch(exportSource, /TICKET_EXPORT_MAX_ROWS/);
+  assert.doesNotMatch(exportSource, /const rows = ticketsQuery\.data/);
+});
+
+test("desktop ticket detail distinguishes loading and failure from real zero values", () => {
+  const pageSource = readFileSync(new URL("../pages/sales-dashboard.tsx", import.meta.url), "utf8");
+  const dialogStart = pageSource.indexOf('<Dialog open={Boolean(selectedBillno)}');
+  const dialogEnd = pageSource.indexOf("</Dialog>", dialogStart);
+  const dialogSource = pageSource.slice(dialogStart, dialogEnd);
+
+  assert.ok(dialogStart >= 0 && dialogEnd > dialogStart);
+  assert.match(dialogSource, /ticketDetailQuery\.isLoading/);
+  assert.match(dialogSource, /ticketDetailQuery\.isError/);
+  assert.match(dialogSource, /小票详情加载中/);
+  assert.match(dialogSource, /小票详情加载失败/);
+});
+
 test("mobile sales dashboard shows current retail price without a prior-period retail field", () => {
   const pageSource = readFileSync(new URL("../pages/mobile-sales-dashboard.tsx", import.meta.url), "utf8");
 

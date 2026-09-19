@@ -90,6 +90,7 @@ export function useDeleteBusinessUnit() {
         id: number;
         deleted_geo_elements?: number;
         detached_bindings?: number;
+        detached_month_close_adjustments?: number;
       }>(`/api/business-units/${id}`),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["business-units"] });

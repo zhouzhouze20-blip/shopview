@@ -24,11 +24,18 @@ WHITE = "FFFFFF"
 THIN = Side(style="thin", color="B7B7B7")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 METRIC_GROUPS = (
-    ("来客数", "笔"),
-    ("客单", "元"),
     ("销售收入", "万元"),
     ("毛利额", "万元"),
     ("毛利率", "%"),
+    ("来客数", "笔"),
+    ("客单", "元"),
+)
+METRIC_NUMBER_FORMATS = (
+    "0.00", "0.00", "0.00%",
+    "0.00", "0.00", "0.00%",
+    "0.00%", "0.00%", "0.00%",
+    "#,##0", "#,##0", "0.00%",
+    "0.00", "0.00", "0.00%",
 )
 
 
@@ -157,12 +164,6 @@ def _write_hierarchy_headers(sheet) -> None:
 
 def _metric_values(metrics: dict[str, Any]) -> list[Any]:
     return [
-        int(metrics.get("ticket_count_current") or 0),
-        int(metrics.get("ticket_count_prior") or 0),
-        metrics.get("ticket_count_yoy"),
-        metrics.get("average_ticket_current"),
-        metrics.get("average_ticket_prior"),
-        metrics.get("average_ticket_yoy"),
         float(metrics.get("sales_current") or 0) / 10000,
         float(metrics.get("sales_prior") or 0) / 10000,
         metrics.get("sales_yoy"),
@@ -172,6 +173,12 @@ def _metric_values(metrics: dict[str, Any]) -> list[Any]:
         metrics.get("margin_current"),
         metrics.get("margin_prior"),
         metrics.get("margin_change"),
+        int(metrics.get("ticket_count_current") or 0),
+        int(metrics.get("ticket_count_prior") or 0),
+        metrics.get("ticket_count_yoy"),
+        metrics.get("average_ticket_current"),
+        metrics.get("average_ticket_prior"),
+        metrics.get("average_ticket_yoy"),
     ]
 
 
@@ -195,12 +202,8 @@ def _write_data_row(
         cell = sheet.cell(row_number, column, value)
         cell.border = BORDER
         metric_column = column - identifier_columns
-        if metric_column in (1, 2):
-            cell.number_format = "#,##0"
-        elif metric_column in (4, 5, 7, 8, 10, 11):
-            cell.number_format = "0.00"
-        elif metric_column >= 3:
-            cell.number_format = "0.00%"
+        if 1 <= metric_column <= len(METRIC_NUMBER_FORMATS):
+            cell.number_format = METRIC_NUMBER_FORMATS[metric_column - 1]
         if total:
             cell.font = Font(bold=True)
             cell.fill = PatternFill("solid", fgColor="D9EAF7")

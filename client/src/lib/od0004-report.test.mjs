@@ -11,6 +11,7 @@ import { MODULE_PERMISSION_REQUIREMENTS } from "./module-permissions.ts";
 import {
   buildMonthlyFollowupParams,
   currentFinancialYear,
+  isMonthlyFollowupQueryReady,
 } from "./monthly-followup-report.ts";
 
 const pageSource = readFileSync(
@@ -47,6 +48,45 @@ test("OD0004 queries one financial year and keeps selected business scope", () =
   });
   assert.equal(selected.get("store_id"), "603");
   assert.equal(selected.get("department_id"), "6030117");
+});
+
+test("OD0004 waits for the global store code before its first report request", () => {
+  assert.equal(
+    isMonthlyFollowupQueryReady({
+      selectedGlobalStoreId: 2,
+      resolvedGlobalStoreCode: null,
+      submittedStoreId: "all",
+      hasManualFilters: false,
+    }),
+    false,
+  );
+  assert.equal(
+    isMonthlyFollowupQueryReady({
+      selectedGlobalStoreId: 2,
+      resolvedGlobalStoreCode: "602",
+      submittedStoreId: "all",
+      hasManualFilters: false,
+    }),
+    false,
+  );
+  assert.equal(
+    isMonthlyFollowupQueryReady({
+      selectedGlobalStoreId: 2,
+      resolvedGlobalStoreCode: "602",
+      submittedStoreId: "602",
+      hasManualFilters: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isMonthlyFollowupQueryReady({
+      selectedGlobalStoreId: null,
+      resolvedGlobalStoreCode: null,
+      submittedStoreId: "all",
+      hasManualFilters: false,
+    }),
+    true,
+  );
 });
 
 test("OD0004 is a grouped sales report with an independent permission", () => {

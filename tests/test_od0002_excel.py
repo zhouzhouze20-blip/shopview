@@ -137,18 +137,23 @@ def test_workbook_has_required_sheets_headers_formats_totals_and_notes():
     assert sheet.freeze_panes == "A8"
     assert sheet["A5"].fill.fgColor.rgb.endswith("4472C4")
     assert sheet["A5"].font.color.type == "rgb" and sheet["A5"].font.color.rgb.endswith("FFFFFF")
-    assert sheet["E5"].value == "来客数"
-    assert sheet["H5"].value == "客单"
-    assert sheet["E8"].value == 100
-    assert sheet["E8"].number_format == "#,##0"
+    assert [sheet.cell(5, column).value for column in (5, 8, 11, 14, 17)] == [
+        "销售收入", "毛利额", "毛利率", "来客数", "客单",
+    ]
+    assert sheet["E8"].value == 12
+    assert sheet["E8"].number_format == "0.00"
     assert sheet["G8"].number_format == "0.00%"
-    assert sheet["H8"].value == 1200
-    assert sheet["H8"].number_format == "0.00"
-    assert sheet["K8"].value == 12
+    assert sheet["K8"].value == 0.2
+    assert sheet["K8"].number_format == "0.00%"
+    assert sheet["N8"].value == 100
+    assert sheet["N8"].number_format == "#,##0"
+    assert sheet["Q8"].value == 1200
+    assert sheet["Q8"].number_format == "0.00"
     assert sheet["A10"].value == "合计"
-    assert sheet["E10"].value == 100
-    assert sheet["G10"].value == 0.25
-    assert sheet["K10"].value == 12
+    assert sheet["E10"].value == 12
+    assert sheet["G10"].value == 0.2
+    assert sheet["N10"].value == 100
+    assert sheet["P10"].value == 0.25
     assert sheet["A10"].border.bottom.style is not None
 
     notes = workbook["报表说明"]["B2"].value
@@ -189,7 +194,8 @@ def test_department_category_sheet_has_hierarchy_subtotals_and_total():
     assert sheet["C10"].value.startswith("女装区小计")
     assert sheet["B11"].value.startswith("新世纪二部小计")
     assert sheet["A12"].value == "合计"
-    assert sheet["K12"].value == 24
+    assert sheet["E12"].value == 24
+    assert sheet["N12"].value == 100
     assert sheet.freeze_panes == "A8"
     assert sheet.max_column == 19
     assert sheet["B11"].font.bold is True
@@ -239,9 +245,14 @@ def test_group_sheet_has_department_area_category_before_group_and_twenty_five_c
         "6010101005",
         "L'oreal欧莱雅厅",
     ]
-    assert sheet["K8"].value == 100
+    assert [sheet.cell(5, column).value for column in (11, 14, 17, 20, 23)] == [
+        "销售收入", "毛利额", "毛利率", "来客数", "客单",
+    ]
+    assert sheet["K8"].value == 12
     assert sheet["M8"].number_format == "0.00%"
-    assert sheet["Q8"].value == 12
+    assert sheet["Q8"].value == 0.2
+    assert sheet["T8"].value == 100
+    assert sheet["W8"].value == 1200
     assert sheet.max_column == 25
     assert sheet.freeze_panes == "A8"
 
@@ -285,9 +296,14 @@ def test_special_sale_sheet_has_group_brand_detail_and_twenty_three_columns():
         "00310",
         "Christian dior迪奥",
     ]
-    assert sheet["I8"].value == 100
+    assert [sheet.cell(5, column).value for column in (9, 12, 15, 18, 21)] == [
+        "销售收入", "毛利额", "毛利率", "来客数", "客单",
+    ]
+    assert sheet["I8"].value == 12
     assert sheet["K8"].number_format == "0.00%"
-    assert sheet["O8"].value == 12
+    assert sheet["O8"].value == 0.2
+    assert sheet["R8"].value == 100
+    assert sheet["U8"].value == 1200
     assert sheet.max_column == 23
     assert sheet.freeze_panes == "A8"
 

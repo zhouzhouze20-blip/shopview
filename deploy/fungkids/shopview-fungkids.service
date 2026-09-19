@@ -1,0 +1,24 @@
+[Unit]
+Description=ShopView Fungkids hourly retail staging collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shopview
+WorkingDirectory=/opt/shopview
+EnvironmentFile=/etc/shopview/fungkids.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/shopview/fungkids-browsers
+ExecStart=/opt/shopview/.venv-fungkids/bin/python /opt/shopview/python_app/sync_fungkids_retail.py --data-dir /var/lib/shopview-fungkids
+Restart=on-failure
+RestartSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shopview-fungkids
+
+[Install]
+WantedBy=multi-user.target

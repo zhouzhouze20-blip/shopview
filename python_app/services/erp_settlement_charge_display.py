@@ -1,9 +1,9 @@
 """
-结算单费用明细展示：对齐 ERP Oracle 视图（supsetcharge + manaframe + gr_kmcode）。
+结算单费用明细展示：对齐 ERP Oracle 视图（supsetcharge + manaframe + codecharge）。
 
 Oracle 参考：
   person1 → 票减/非票减；sscflag → 录入/已生成结算单/…；
-  柜组：sscmfid || mfcname；费用名称：[sscid] + gr_kmcode.name（无科目表时用 sscname）。
+  柜组：sscmfid || mfcname；费用名称：[sscid] + codecharge.ccname（无字典表时用 sscname）。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from services.erp_settlement_service import _row_dict, _table_exists
 def _supsetcharge_enriched_sql(db: Session) -> tuple[str, str]:
     """返回 (附加 SELECT 列表达式, JOIN 片段（含换行前缀）)。"""
     has_mf = _table_exists(db, "manaframe")
-    has_km = _table_exists(db, "gr_kmcode")
+    has_codecharge = _table_exists(db, "codecharge")
 
     bb_join = ""
     counter_sql = "TRIM(COALESCE(aa.sscmfid::text, ''))"
@@ -32,11 +32,11 @@ def _supsetcharge_enriched_sql(db: Session) -> tuple[str, str]:
         )
 
     cc_join = ""
-    if has_km:
-        cc_join = "LEFT JOIN gr_kmcode cc ON TRIM(aa.sscid::text) = TRIM(cc.id::text)"
+    if has_codecharge:
+        cc_join = "LEFT JOIN codecharge cc ON TRIM(aa.sscid::text) = TRIM(cc.cccode::text)"
         expense_sql = (
-            "CASE WHEN cc.id IS NOT NULL THEN "
-            "'[' || TRIM(aa.sscid::text) || '] ' || COALESCE(cc.name::text, '') "
+            "CASE WHEN cc.cccode IS NOT NULL THEN "
+            "'[' || TRIM(aa.sscid::text) || '] ' || COALESCE(cc.ccname::text, '') "
             "ELSE '[' || TRIM(COALESCE(aa.sscid::text, '')) || '] ' || COALESCE(aa.sscname::text, '') END"
         )
     else:

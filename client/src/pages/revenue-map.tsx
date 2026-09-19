@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { BackofficeRevenueUnitCard } from "@/components/backoffice-revenue-unit-card";
 import { MultiBusinessUnitCard } from "@/components/multi-business-unit-card";
 import { MobileSpecialSaleMarker } from "@/components/mobile-special-sale-marker";
@@ -28,14 +29,19 @@ import { BACKOFFICE_REVENUE_UNIT_CODE, isBackofficeRevenueUnit } from "@/lib/bac
 import { isMobileSpecialSaleUnit } from "@/lib/mobile-special-sale";
 import { MULTI_BUSINESS_UNIT_CODE, isMultiBusinessUnit } from "@/lib/multi-business-unit";
 import { formatOperationMethod } from "@/lib/operation-method";
+import { findFinancialMonthContaining, getFinancialMonthWindow, localDateFromToday } from "@/lib/financialMonth";
 import { deriveSvgViewBox } from "@/lib/svg-metadata";
 import { getPathVisualCenter } from "@/lib/svg-path-center";
-import { CalendarDays, CircleDollarSign, Download, Link2, Loader2, Minus, Plus, RotateCcw, Settings2, Target } from "lucide-react";
+import { CalendarDays, ChevronDown, CircleDollarSign, Download, Link2, Loader2, Minus, Plus, RotateCcw, Search, Settings2, Target } from "lucide-react";
 
 const money = (value: number) =>
   Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const todayDate = () => new Date().toISOString().slice(0, 10);
+const financialRange = (year: number, month: number | null) => {
+  if (month == null) return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+  const window = getFinancialMonthWindow(year, month);
+  return { startDate: window.start, endDate: window.end };
+};
 const getFloorStoreRef = (floor: { store_id?: string | null; building_code?: string | null }) =>
   floor.store_id?.trim() || floor.building_code?.trim() || "";
 const parseViewBox = (value?: string | null) => {
@@ -215,8 +221,17 @@ function matchStatusBadge(matchStatus?: string | null) {
 }
 
 export default function RevenueMapPage() {
-  const [startDate, setStartDate] = useState(todayDate());
-  const [endDate, setEndDate] = useState(todayDate());
+  const initialFinancialMonth = findFinancialMonthContaining(localDateFromToday());
+  const [financialYear, setFinancialYear] = useState(initialFinancialMonth.year);
+  const [financialMonth, setFinancialMonth] = useState<number | null>(initialFinancialMonth.index);
+  const [appliedPeriod, setAppliedPeriod] = useState({
+    year: initialFinancialMonth.year,
+    month: initialFinancialMonth.index as number | null,
+    ...financialRange(initialFinancialMonth.year, initialFinancialMonth.index),
+  });
+  const [hasQueried, setHasQueried] = useState(false);
+  const startDate = appliedPeriod.startDate;
+  const endDate = appliedPeriod.endDate;
   const [storeFilter, setStoreFilter] = useState("");
   const [floorId, setFloorId] = useState<number | null>(null);
   const [baseMapId, setBaseMapId] = useState<number | null>(null);
@@ -226,6 +241,10 @@ export default function RevenueMapPage() {
   const [selectedUnit, setSelectedUnit] = useState<RevenueMonthlyItem | null>(null);
   const [unmatchedOpen, setUnmatchedOpen] = useState(false);
   const [colorConfigOpen, setColorConfigOpen] = useState(false);
+  const [dailyCompositionOpen, setDailyCompositionOpen] = useState(false);
+  const [salesDetailsOpen, setSalesDetailsOpen] = useState(false);
+  const [feeDetailsOpen, setFeeDetailsOpen] = useState(false);
+  const [nonFujiDetailsOpen, setNonFujiDetailsOpen] = useState(false);
   const [colorConfig, setColorConfig] = useState<RevenueColorConfig>(() => readRevenueColorConfig());
   const [draftColorConfig, setDraftColorConfig] = useState<RevenueColorConfig>(colorConfig);
   const { toast } = useToast();
@@ -240,6 +259,12 @@ export default function RevenueMapPage() {
   } | null>(null);
   const suppressMapClickRef = useRef(false);
 
+  useEffect(() => {
+    setSalesDetailsOpen(false);
+    setFeeDetailsOpen(false);
+    setNonFujiDetailsOpen(false);
+  }, [selectedUnit?.unit_id]);
+
   const floorsQuery = useFloorDictList();
   const baseMapsQuery = useBaseMapsList(floorId ?? undefined);
   const unitVersionsQuery = useUnitMapVersions(floorId ?? undefined, baseMapId ?? undefined);
@@ -249,8 +274,10 @@ export default function RevenueMapPage() {
   const monthlyQuery = useRevenueMonthly({
     startDate,
     endDate,
+    financialYear: appliedPeriod.year,
+    financialMonth: appliedPeriod.month,
     storeId: selectedStoreIdValue,
-    enabled: selectedStoreIdValue != null,
+    enabled: hasQueried && selectedStoreIdValue != null,
   });
   const unmatchedQuery = useRevenueUnmatchedDetails({
     startDate,
@@ -259,8 +286,22 @@ export default function RevenueMapPage() {
     limit: 2000,
     enabled: unmatchedOpen,
   });
-  const detailQuery = useRevenueUnitDetail({ unitId: selectedUnit?.unit_id, startDate, endDate });
-  const extraQuery = useRevenueExtraReceipts({ startDate, endDate, storeId: selectedStoreIdValue, floorId });
+  const detailQuery = useRevenueUnitDetail({
+    unitId: selectedUnit?.unit_id,
+    startDate,
+    endDate,
+    financialYear: appliedPeriod.year,
+    financialMonth: appliedPeriod.month,
+  });
+  const extraQuery = useRevenueExtraReceipts({
+    startDate,
+    endDate,
+    financialYear: appliedPeriod.year,
+    financialMonth: appliedPeriod.month,
+    storeId: selectedStoreIdValue,
+    floorId,
+    enabled: hasQueried && selectedStoreIdValue != null,
+  });
   const unitsQuery = useBusinessUnits({ floorId: floorId ?? undefined });
   const storeBackofficeUnitsQuery = useBusinessUnits({
     storeId: selectedStoreIdValue,
@@ -277,6 +318,7 @@ export default function RevenueMapPage() {
     extraQuery.isFetching ||
     (selectedUnit != null && detailQuery.isFetching) ||
     (unmatchedOpen && unmatchedQuery.isFetching);
+  const revenueResultsReady = hasQueried && !revenueDataFetching && monthlyQuery.data != null;
 
   const storeRows = useMemo(
     () => monthlyQuery.data?.items ?? [],
@@ -438,6 +480,10 @@ export default function RevenueMapPage() {
     setVersionId(active?.id ?? null);
   }, [versions]);
 
+  useEffect(() => {
+    setDailyCompositionOpen(false);
+  }, [selectedUnit?.unit_id]);
+
   const totals = useMemo(() => {
     return rows.reduce(
       (acc, row) => {
@@ -596,6 +642,18 @@ export default function RevenueMapPage() {
   useEffect(() => {
     setMapPan({ x: 0, y: 0 });
   }, [baseMapId, versionId, floorId]);
+
+  const applyFinancialPeriod = () => {
+    setAppliedPeriod({
+      year: financialYear,
+      month: financialMonth,
+      ...financialRange(financialYear, financialMonth),
+    });
+    setHasQueried(true);
+    setSelectedUnit(null);
+    setUnmatchedOpen(false);
+    setDailyCompositionOpen(false);
+  };
 
   const resetMapView = () => {
     setMapZoom(1);
@@ -1095,6 +1153,24 @@ export default function RevenueMapPage() {
       },
       { sales: 0, fee: 0, extra: 0, total: 0 },
     );
+    const nonFujiDetailRows = detailQuery.data ? [
+      ...detailQuery.data.extra_receipts.map((row) => ({
+        key: `auto-${row.id}`,
+        revenueDate: row.revenue_date,
+        type: row.extra_type || "NC6051自动同步",
+        note: row.remark || row.voucher_no || "NC6051自动同步",
+        amount: row.amount,
+        matchStatus: row.match_status,
+      })),
+      ...(detailQuery.data.month_close_extra_details ?? []).map((row) => ({
+        key: `month-close-${row.id}`,
+        revenueDate: row.revenue_date,
+        type: row.source_subject_name || row.source_subject_code || "月结人工绑定",
+        note: row.adjustment_reason || row.source_bill_no || row.source_voucher_id || "月结人工绑定",
+        amount: row.amount,
+        matchStatus: row.match_status,
+      })),
+    ] : [];
     return (
       <aside className="overflow-hidden rounded-md border bg-white shadow-sm">
         <div className="flex items-start justify-between gap-3 border-b bg-white px-3 py-2.5">
@@ -1135,9 +1211,20 @@ export default function RevenueMapPage() {
               <div className="rounded-md border bg-white p-4 text-sm text-muted-foreground">当前月份暂无收益数据</div>
             )}
 
-            <div className="rounded-md border bg-white">
-              <div className="border-b px-3 py-2 text-sm font-semibold">每日收益组成</div>
-              <div className="overflow-x-auto text-xs">
+            <Collapsible open={dailyCompositionOpen} onOpenChange={setDailyCompositionOpen} className="rounded-md border bg-white">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-semibold hover:bg-slate-50"
+                >
+                  <span>每日收益组成</span>
+                  <span className="inline-flex items-center gap-1 text-xs font-normal text-blue-600">
+                    {dailyCompositionOpen ? "收起" : "展开查看"}
+                    <ChevronDown className={`h-4 w-4 transition-transform ${dailyCompositionOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="overflow-x-auto border-t text-xs">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1160,17 +1247,24 @@ export default function RevenueMapPage() {
                     ))}
                   </TableBody>
                 </Table>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
 
-            <div className="rounded-md border bg-white">
-              <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-                <div className="text-sm font-semibold">销售毛利明细</div>
-                <div className="text-xs text-muted-foreground">
-                  {detailQuery.data.sales_details.length + (detailQuery.data.loss_bearing_details?.length ?? 0)} 条
-                </div>
-              </div>
-              <div className="overflow-x-auto text-xs">
+            <Collapsible open={salesDetailsOpen} onOpenChange={setSalesDetailsOpen} className="rounded-md border bg-white">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-slate-50"
+                >
+                  <span className="text-sm font-semibold">销售毛利明细</span>
+                  <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    {detailQuery.data.sales_details.length + (detailQuery.data.loss_bearing_details?.length ?? 0)} 条
+                    <ChevronDown className={`h-4 w-4 transition-transform ${salesDetailsOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="border-t">
+                <div className="overflow-x-auto text-xs">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1200,9 +1294,9 @@ export default function RevenueMapPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
-              {detailQuery.data.loss_bearing_details?.length ? (
-                <div className="border-t bg-amber-50/40">
+                </div>
+                {detailQuery.data.loss_bearing_details?.length ? (
+                  <div className="border-t bg-amber-50/40">
                   <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
                     <div className="text-xs font-semibold text-amber-900">损失承担（已计入销售毛利）</div>
                     <div className="text-xs text-amber-800">{detailQuery.data.loss_bearing_details.length} 条</div>
@@ -1232,16 +1326,25 @@ export default function RevenueMapPage() {
                       </TableBody>
                     </Table>
                   </div>
-                </div>
-              ) : null}
-            </div>
+                  </div>
+                ) : null}
+              </CollapsibleContent>
+            </Collapsible>
 
-            <div className="rounded-md border bg-white">
-              <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-                <div className="text-sm font-semibold">富基收费明细</div>
-                <div className="text-xs text-muted-foreground">{detailQuery.data.fee_details.length} 条</div>
-              </div>
-              <div className="overflow-x-auto text-xs">
+            <Collapsible open={feeDetailsOpen} onOpenChange={setFeeDetailsOpen} className="rounded-md border bg-white">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-slate-50"
+                >
+                  <span className="text-sm font-semibold">富基收费明细</span>
+                  <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    {detailQuery.data.fee_details.length} 条
+                    <ChevronDown className={`h-4 w-4 transition-transform ${feeDetailsOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="overflow-x-auto border-t text-xs">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1271,15 +1374,23 @@ export default function RevenueMapPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
 
-            <div className="rounded-md border bg-white">
-              <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-                <div className="text-sm font-semibold">NC6051 自动收费明细</div>
-                <div className="text-xs text-muted-foreground">{detailQuery.data.extra_receipts.length} 条</div>
-              </div>
-              <div className="overflow-x-auto text-xs">
+            <Collapsible open={nonFujiDetailsOpen} onOpenChange={setNonFujiDetailsOpen} className="rounded-md border bg-white">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-slate-50"
+                >
+                  <span className="text-sm font-semibold">6051非富基收费明细</span>
+                  <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    {nonFujiDetailRows.length} 条
+                    <ChevronDown className={`h-4 w-4 transition-transform ${nonFujiDetailsOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="overflow-x-auto border-t text-xs">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1290,27 +1401,27 @@ export default function RevenueMapPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {detailQuery.data.extra_receipts.length ? (
-                      detailQuery.data.extra_receipts.map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell className="whitespace-nowrap">{row.revenue_date?.slice(0, 10)}</TableCell>
+                    {nonFujiDetailRows.length ? (
+                      nonFujiDetailRows.map((row) => (
+                        <TableRow key={row.key}>
+                          <TableCell className="whitespace-nowrap">{row.revenueDate?.slice(0, 10)}</TableCell>
                           <TableCell>
-                            <div className="font-medium">{row.extra_type || "—"}</div>
-                            <div className="text-xs text-muted-foreground">{row.remark || row.voucher_no || "—"}</div>
+                            <div className="font-medium">{row.type}</div>
+                            <div className="text-xs text-muted-foreground">{row.note}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right font-medium">{money(row.amount)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{matchStatusBadge(row.match_status)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{matchStatusBadge(row.matchStatus)}</TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">暂无 NC6051 自动收费明细</TableCell>
+                        <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">暂无 6051 非富基收费明细</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         ) : (
           <div className="py-10 text-center text-muted-foreground">暂无数据</div>
@@ -1324,13 +1435,11 @@ export default function RevenueMapPage() {
       {renderRevenueColorConfigSheet()}
       {renderUnmatchedDetailsSheet()}
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-44">
-          <h1 className="text-2xl font-bold tracking-tight">收益地图</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">柔和绿色为高收益，暖黄色为中等，柔和红色为低收益或负收益，浅紫色为空置，浅灰色为无数据。</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
+      <div
+        className="flex min-w-0 flex-nowrap items-end gap-2 overflow-x-auto pb-1"
+        data-testid="revenue-map-primary-filters"
+      >
+          <div className="shrink-0 space-y-1">
             <Label className="text-xs">门店</Label>
             <Select
               value={storeFilter}
@@ -1338,6 +1447,7 @@ export default function RevenueMapPage() {
                 setStoreFilter(value);
                 setFloorId(null);
                 setSelectedUnit(null);
+                setHasQueried(false);
               }}
               disabled={storesLoading || !storeOptions.length}
             >
@@ -1353,13 +1463,14 @@ export default function RevenueMapPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1">
+          <div className="shrink-0 space-y-1">
             <Label className="text-xs">楼层</Label>
             <Select
               value={floorId ? String(floorId) : ""}
               onValueChange={(v) => {
                 setFloorId(Number(v));
                 setSelectedUnit(null);
+                setHasQueried(false);
               }}
               disabled={floorsQuery.isLoading || !visibleFloorOptions.length}
             >
@@ -1375,35 +1486,81 @@ export default function RevenueMapPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">开始日期</Label>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                const next = e.target.value || todayDate();
-                setStartDate(next);
-                if (endDate < next) setEndDate(next);
+          <div className="shrink-0 space-y-1">
+            <Label className="text-xs" htmlFor="revenue-map-financial-year">年份</Label>
+            <Select
+              value={String(financialYear)}
+              onValueChange={(value) => {
+                setFinancialYear(Number(value));
+                setHasQueried(false);
               }}
-              className="h-9 w-36"
-            />
+            >
+              <SelectTrigger id="revenue-map-financial-year" className="h-9 w-28">
+                <SelectValue placeholder="选择年份" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 6 }, (_, index) => initialFinancialMonth.year + 1 - index).map((year) => (
+                  <SelectItem key={year} value={String(year)}>{year}年</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">结束日期</Label>
-            <Input
-              type="date"
-              value={endDate}
-              min={startDate}
-              onChange={(e) => setEndDate(e.target.value || startDate || todayDate())}
-              className="h-9 w-36"
-            />
-          </div>
-          <div className="max-w-64 rounded-md border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-            6051 电表、物业、营运收费由后台自动同步，无需手工补收。
-          </div>
-        </div>
       </div>
 
+      <div
+        className="flex min-w-0 flex-nowrap items-end gap-2 overflow-x-auto pb-1"
+        data-testid="revenue-map-period-filters"
+      >
+          <div className="shrink-0 space-y-1">
+            <Label className="text-xs">财务月（不选月份即全年）</Label>
+            <div className="flex flex-nowrap gap-1" role="radiogroup" aria-label="收益地图财务月">
+              <Button
+                type="button"
+                size="sm"
+                className="h-9 px-2.5"
+                variant={financialMonth == null ? "default" : "outline"}
+                onClick={() => {
+                  setFinancialMonth(null);
+                  setHasQueried(false);
+                }}
+              >
+                全年
+              </Button>
+              {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => {
+                const window = getFinancialMonthWindow(financialYear, month);
+                return (
+                  <Button
+                    key={month}
+                    type="button"
+                    size="sm"
+                    className="h-9 px-2.5"
+                    variant={financialMonth === month ? "default" : "outline"}
+                    onClick={() => {
+                      setFinancialMonth(month);
+                      setHasQueried(false);
+                    }}
+                    title={`${window.start} 至 ${window.end}`}
+                  >
+                    {month}月
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+          <Button type="button" className="h-9 shrink-0" onClick={applyFinancialPeriod} disabled={revenueDataFetching}>
+            {revenueDataFetching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Search className="mr-1 h-4 w-4" />}
+            查询
+          </Button>
+      </div>
+
+      {!hasQueried ? (
+        <div className="rounded-md border border-dashed bg-slate-50 px-4 py-8 text-center text-sm text-muted-foreground">
+          请先选择查询条件并点击“查询”，再查看收益数据和地图
+        </div>
+      ) : null}
+
+      {hasQueried ? (
+      <div className="space-y-3" data-testid="revenue-map-results">
       {revenueDataFetching ? (
         <div
           data-testid="revenue-query-status"
@@ -1436,6 +1593,8 @@ export default function RevenueMapPage() {
         </div>
       ) : null}
 
+      {revenueResultsReady ? (
+      <>
       <div className="grid gap-2 md:grid-cols-5">
         <Card className="rounded-md">
           <CardContent className="px-4 py-3">
@@ -1790,6 +1949,10 @@ export default function RevenueMapPage() {
         </CardContent>
       </Card>
 
+      </>
+      ) : null}
+      </div>
+      ) : null}
     </div>
   );
 }

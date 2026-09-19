@@ -17,11 +17,17 @@ test("mobile modules have independent permission codes and matching business dep
   assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-contracts"], ["mobile.contracts.view"]);
   assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-inventory"], ["mobile.inventory.view"]);
   assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-revenue-dashboard"], ["mobile.revenue_dashboard.view"]);
+  assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-rental-receivables"], ["mobile.rental_receivables.view"]);
+  assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-coupon-followups"], ["mobile.coupon_followup.view"]);
+  assert.deepEqual(MODULE_PERMISSION_REQUIREMENTS["mobile-supplier-payments"], ["mobile.supplier_payments.view"]);
 
   assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-sales-dashboard"], ["sales.view"]);
   assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-contracts"], ["contract.view"]);
   assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-inventory"], ["sales.inventory.view"]);
   assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-revenue-dashboard"], ["revenue.dashboard.view"]);
+  assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-rental-receivables"], ["settlement.view"]);
+  assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-coupon-followups"], undefined);
+  assert.deepEqual(MODULE_PERMISSION_DEPENDENCIES["mobile-supplier-payments"], undefined);
 });
 
 test("mobile access requires both the mobile module permission and its business permission", () => {
@@ -39,6 +45,9 @@ test("administrators retain access to every mobile module", () => {
   assert.equal(canAccessModule(admin, "mobile-contracts"), true);
   assert.equal(canAccessModule(admin, "mobile-inventory"), true);
   assert.equal(canAccessModule(admin, "mobile-revenue-dashboard"), true);
+  assert.equal(canAccessModule(admin, "mobile-rental-receivables"), true);
+  assert.equal(canAccessModule(admin, "mobile-coupon-followups"), true);
+  assert.equal(canAccessModule(admin, "mobile-supplier-payments"), true);
 });
 
 test("new roles default to the three baseline mobile permissions only", () => {

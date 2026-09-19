@@ -2,6 +2,7 @@
 系统管理与权限配置 API
 """
 import base64
+import calendar
 import hashlib
 import os
 from collections import defaultdict
@@ -9,7 +10,7 @@ from datetime import date, datetime, time
 from typing import Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import String, cast, or_, text
+from sqlalchemy import String, and_, case, cast, func, or_, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -117,8 +118,14 @@ def _ensure_department_ids_exist(db: Session, department_ids: List[int]) -> None
 
 
 def _sync_user_roles(db: Session, user_id: int, role_ids: List[int]) -> None:
-    db.query(UserRole).filter(UserRole.user_id == user_id).delete()
-    for role_id in role_ids:
+    # Retained assignments keep their store scope and expiry date.
+    requested = set(role_ids)
+    existing = db.query(UserRole).filter(UserRole.user_id == user_id).all()
+    existing_ids = {assignment.role_id for assignment in existing}
+    for assignment in existing:
+        if assignment.role_id not in requested:
+            db.delete(assignment)
+    for role_id in sorted(requested - existing_ids):
         db.add(UserRole(user_id=user_id, role_id=role_id))
 
 
@@ -731,6 +738,272 @@ def _date_end(value: date | None) -> datetime | None:
     return datetime.combine(value, time.max)
 
 
+def _same_time_previous_year(value: datetime) -> datetime:
+    """Return the matching prior-year timestamp, including a safe Feb 29 fallback."""
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
+
+
+def _yoy_percent(current: int, previous: int) -> float | None:
+    if previous == 0:
+        return None
+    return round((current - previous) * 100 / previous, 1)
+
+
+def _build_audit_statistics(db: Session, now: datetime | None = None) -> dict[str, object]:
+    """Build daily and month-to-date audit metrics with like-for-like YoY periods."""
+    generated_at = now or datetime.now()
+    today_start = datetime.combine(generated_at.date(), time.min)
+    month_start = today_start.replace(day=1)
+    previous_month_start = month_start.replace(year=month_start.year - 1)
+    previous_period_end = _same_time_previous_year(generated_at)
+
+    def period_condition(column, started_at: datetime, ended_at: datetime):
+        return and_(column >= started_at, column < ended_at)
+
+    login_identity = func.coalesce(cast(LoginLog.user_id, String), LoginLog.identifier)
+    login_today = period_condition(LoginLog.created_at, today_start, generated_at)
+    login_month = period_condition(LoginLog.created_at, month_start, generated_at)
+    login_previous = period_condition(LoginLog.created_at, previous_month_start, previous_period_end)
+    login_row = (
+        db.query(
+            func.count(func.distinct(case((login_today, login_identity), else_=None))),
+            func.count(case((login_today, 1), else_=None)),
+            func.count(func.distinct(case((login_month, login_identity), else_=None))),
+            func.count(case((login_month, 1), else_=None)),
+            func.count(func.distinct(case((login_previous, login_identity), else_=None))),
+            func.count(case((login_previous, 1), else_=None)),
+        )
+        .filter(
+            LoginLog.login_result == "SUCCESS",
+            or_(login_month, login_previous),
+        )
+        .one()
+    )
+
+    operation_today = period_condition(OperationLog.created_at, today_start, generated_at)
+    operation_month = period_condition(OperationLog.created_at, month_start, generated_at)
+    operation_previous = period_condition(OperationLog.created_at, previous_month_start, previous_period_end)
+    operation_row = (
+        db.query(
+            func.count(func.distinct(case((operation_today, OperationLog.user_id), else_=None))),
+            func.count(case((operation_today, 1), else_=None)),
+            func.count(func.distinct(case((operation_month, OperationLog.user_id), else_=None))),
+            func.count(case((operation_month, 1), else_=None)),
+            func.count(func.distinct(case((operation_previous, OperationLog.user_id), else_=None))),
+            func.count(case((operation_previous, 1), else_=None)),
+        )
+        .filter(or_(operation_month, operation_previous))
+        .one()
+    )
+
+    today = {
+        "login_users": int(login_row[0] or 0),
+        "login_count": int(login_row[1] or 0),
+        "operation_users": int(operation_row[0] or 0),
+        "operation_count": int(operation_row[1] or 0),
+    }
+    month_to_date = {
+        "login_users": int(login_row[2] or 0),
+        "login_count": int(login_row[3] or 0),
+        "operation_users": int(operation_row[2] or 0),
+        "operation_count": int(operation_row[3] or 0),
+    }
+    last_year_same_period = {
+        "login_users": int(login_row[4] or 0),
+        "login_count": int(login_row[5] or 0),
+        "operation_users": int(operation_row[4] or 0),
+        "operation_count": int(operation_row[5] or 0),
+    }
+    yoy = {
+        metric: _yoy_percent(month_to_date[metric], last_year_same_period[metric])
+        for metric in month_to_date
+    }
+    return {
+        "generated_at": generated_at,
+        "today": today,
+        "month_to_date": month_to_date,
+        "last_year_same_period": last_year_same_period,
+        "yoy": yoy,
+    }
+
+
+def _build_audit_usage_breakdown(db: Session, start: datetime, end: datetime, dimension: str) -> list[dict]:
+    """Aggregate in SQL before combining login and operation metrics (no log-page limit)."""
+    operation_filters = (OperationLog.created_at >= start, OperationLog.created_at < end)
+    if dimension == "module":
+        rows = (
+            db.query(
+                OperationLog.resource_code.label("key"),
+                func.max(func.nullif(OperationLog.detail["module_name"].as_string(), "")).label("name"),
+                func.count(OperationLog.id).label("operation_count"),
+                func.count(func.distinct(OperationLog.user_id)).label("usage_users"),
+                func.count(case((OperationLog.action_code == "enter", 1))).label("enter_count"),
+                func.count(case((OperationLog.action_code == "query", 1))).label("query_count"),
+                func.max(OperationLog.created_at).label("last_used_at"),
+            ).filter(*operation_filters).group_by(OperationLog.resource_code).all()
+        )
+        items = [dict(row._mapping) for row in rows]
+        for item in items:
+            item["name"] = item["name"] or item["key"] or "未标注模块"
+    else:
+        # Prefix identities so a fallback login identifier cannot collide with a user ID.
+        identity = case(
+            (LoginLog.user_id.isnot(None), "user:" + cast(LoginLog.user_id, String)),
+            else_="login:" + func.coalesce(LoginLog.identifier, "未知账号"),
+        )
+        login_rows = db.query(
+            identity.label("key"), func.max(LoginLog.user_id).label("user_id"),
+            func.max(LoginLog.identifier).label("identifier"),
+            func.count(LoginLog.id).label("login_count"),
+            func.max(LoginLog.created_at).label("last_used_at"),
+        ).filter(
+            LoginLog.login_result == "SUCCESS", LoginLog.created_at >= start, LoginLog.created_at < end,
+        ).group_by(identity).all()
+        by_key = {}
+        for row in login_rows:
+            by_key[row.key] = dict(row._mapping, operation_count=0, module_count=0)
+        operation_rows = db.query(
+            OperationLog.user_id, func.count(OperationLog.id).label("operation_count"),
+            func.count(func.distinct(OperationLog.resource_code)).label("module_count"),
+            func.max(OperationLog.created_at).label("last_used_at"),
+        ).filter(*operation_filters).group_by(OperationLog.user_id).all()
+        for row in operation_rows:
+            key = f"user:{row.user_id}" if row.user_id is not None else "unknown:operation"
+            item = by_key.setdefault(key, dict(key=key, user_id=row.user_id, identifier=None,
+                                             login_count=0, last_used_at=row.last_used_at))
+            item.update(operation_count=row.operation_count, module_count=row.module_count,
+                        last_used_at=max(item["last_used_at"], row.last_used_at))
+        user_ids = [item["user_id"] for item in by_key.values() if item["user_id"] is not None]
+        users = {row.user_id: row for row in db.query(User.user_id, User.username, User.real_name)
+                 .filter(User.user_id.in_(user_ids)).all()} if user_ids else {}
+        items = list(by_key.values())
+        for item in items:
+            user = users.get(item["user_id"])
+            item["username"] = user.username if user else item["identifier"] or (
+                f"用户 #{item['user_id']}" if item["user_id"] is not None else "未关联用户")
+            item["name"] = (user.real_name if user else None) or item["username"]
+    return sorted(items, key=lambda item: (-item["operation_count"], str(item["key"])))
+
+
+def _build_audit_usage_trend(
+    db: Session,
+    granularity: str,
+    period: str | None = None,
+    now: datetime | None = None,
+    dimension: str = "trend",
+) -> dict[str, object]:
+    """Aggregate successful-login users and audit actions by day or month."""
+    generated_at = now or datetime.now()
+    normalized_granularity = granularity.strip().lower()
+
+    if normalized_granularity == "month":
+        selected_period = period or generated_at.strftime("%Y-%m")
+        try:
+            period_start = datetime.strptime(selected_period, "%Y-%m")
+        except ValueError as exc:
+            raise ValueError("按月统计的 period 必须为 YYYY-MM") from exc
+        if period_start.strftime("%Y-%m") != selected_period:
+            raise ValueError("按月统计的 period 必须为 YYYY-MM")
+        period_end = (
+            period_start.replace(year=period_start.year + 1, month=1)
+            if period_start.month == 12
+            else period_start.replace(month=period_start.month + 1)
+        )
+        current_period_start = generated_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if period_start > current_period_start:
+            raise ValueError("不能选择未来月份")
+        bucket_part = "day"
+        last_bucket = (
+            generated_at.day
+            if period_start == current_period_start
+            else calendar.monthrange(period_start.year, period_start.month)[1]
+        )
+        bucket_numbers = range(1, last_bucket + 1)
+        bucket_value = lambda bucket: f"{period_start.year:04d}-{period_start.month:02d}-{bucket:02d}"
+    elif normalized_granularity == "year":
+        selected_period = period or str(generated_at.year)
+        if len(selected_period) != 4 or not selected_period.isdigit():
+            raise ValueError("按年统计的 period 必须为 YYYY")
+        try:
+            period_start = datetime(int(selected_period), 1, 1)
+        except ValueError as exc:
+            raise ValueError("按年统计的 period 必须为 YYYY") from exc
+        current_period_start = generated_at.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        if period_start > current_period_start:
+            raise ValueError("不能选择未来年份")
+        period_end = period_start.replace(year=period_start.year + 1)
+        bucket_part = "month"
+        bucket_numbers = range(1, (generated_at.month if period_start == current_period_start else 12) + 1)
+        bucket_value = lambda bucket: f"{period_start.year:04d}-{bucket:02d}"
+    else:
+        raise ValueError("granularity 仅支持 month 或 year")
+
+    query_end = min(period_end, generated_at)
+    if dimension not in {"trend", "person", "module"}:
+        raise ValueError("dimension 仅支持 trend、person 或 module")
+    if dimension != "trend":
+        return {
+            "generated_at": generated_at, "granularity": normalized_granularity,
+            "period": selected_period, "dimension": dimension,
+            "items": _build_audit_usage_breakdown(db, period_start, query_end, dimension),
+        }
+
+    login_bucket_expression = func.extract(bucket_part, LoginLog.created_at)
+    login_identity = func.coalesce(cast(LoginLog.user_id, String), LoginLog.identifier)
+    login_rows = (
+        db.query(
+            login_bucket_expression.label("bucket"),
+            func.count(func.distinct(login_identity)).label("usage_users"),
+        )
+        .filter(
+            LoginLog.login_result == "SUCCESS",
+            LoginLog.created_at >= period_start,
+            LoginLog.created_at < query_end,
+        )
+        .group_by(login_bucket_expression)
+        .order_by(login_bucket_expression)
+        .all()
+    )
+    operation_bucket_expression = func.extract(bucket_part, OperationLog.created_at)
+    operation_rows = (
+        db.query(
+            operation_bucket_expression.label("bucket"),
+            func.count(OperationLog.id).label("operation_count"),
+        )
+        .filter(
+            OperationLog.created_at >= period_start,
+            OperationLog.created_at < query_end,
+        )
+        .group_by(operation_bucket_expression)
+        .order_by(operation_bucket_expression)
+        .all()
+    )
+    metrics_by_bucket = {
+        int(row.bucket): {"usage_users": int(row.usage_users or 0), "operation_count": 0}
+        for row in login_rows
+    }
+    for row in operation_rows:
+        bucket = int(row.bucket)
+        metrics_by_bucket.setdefault(bucket, {"usage_users": 0, "operation_count": 0})
+        metrics_by_bucket[bucket]["operation_count"] = int(row.operation_count or 0)
+    series = [
+        {
+            "bucket": bucket_value(bucket),
+            **metrics_by_bucket.get(bucket, {"usage_users": 0, "operation_count": 0}),
+        }
+        for bucket in bucket_numbers
+    ]
+    return {
+        "generated_at": generated_at,
+        "granularity": normalized_granularity,
+        "period": selected_period,
+        "series": series,
+    }
+
+
 def _detect_login_device_type(user_agent: str | None) -> str:
     if not user_agent:
         return "UNKNOWN"
@@ -868,6 +1141,30 @@ async def get_login_logs(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/audit-statistics", response_model=dict)
+async def get_audit_statistics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_system_permission(db, current_user, "system.audit_log.view")
+    return _build_audit_statistics(db)
+
+
+@router.get("/audit-statistics/trend", response_model=dict)
+async def get_audit_statistics_trend(
+    granularity: str = Query("month", description="统计粒度：month 按日、year 按月"),
+    period: str | None = Query(None, description="month 使用 YYYY-MM，year 使用 YYYY"),
+    dimension: str = Query("trend", description="统计维度：trend、person、module"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_system_permission(db, current_user, "system.audit_log.view")
+    try:
+        return _build_audit_usage_trend(db, granularity, period, dimension=dimension)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/operation-logs", response_model=dict)
@@ -1186,11 +1483,7 @@ async def create_system_user(payload: SystemUserCreate, db: Session = Depends(ge
     _sync_user_roles(db, user.user_id, payload.role_ids)
     _sync_user_department_posts(db, user.user_id, [item.model_dump() for item in payload.department_assignments])
 
-    if payload.role_ids:
-        first_role = db.query(Role).filter(Role.id == payload.role_ids[0]).first()
-        if first_role:
-            user.role = first_role.role_code
-
+    # RBAC roles live in user_roles; users.role is a legacy 20-character field.
     db.commit()
     db.refresh(user)
     return _serialize_users(db, [user])[0]
@@ -1222,10 +1515,6 @@ async def update_system_user(user_id: int, payload: SystemUserUpdate, db: Sessio
 
     if payload.role_ids is not None:
         _sync_user_roles(db, user.user_id, payload.role_ids)
-        if payload.role_ids:
-            first_role = db.query(Role).filter(Role.id == payload.role_ids[0]).first()
-            if first_role:
-                user.role = first_role.role_code
 
     if payload.department_assignments is not None:
         _sync_user_department_posts(db, user.user_id, [item.model_dump() for item in payload.department_assignments])
@@ -1562,12 +1851,12 @@ async def get_system_meta(db: Session = Depends(get_db), current_user: User = De
     _require_system_permission(db, current_user, "system.data_policy.manage")
     return {
         "subject_types": ["ROLE", "USER"],
-        "resource_codes": ["business_scope", "counter", "hall", "tenant", "contract", "bill", "revenue", "sales", "settlement"],
+        "resource_codes": ["business_scope", "self_operated_sales", "counter", "hall", "tenant", "contract", "bill", "revenue", "sales", "settlement"],
         "action_codes": ["view", "edit", "approve", "export"],
         "scope_modes": ["ALL", "SELF", "CUSTOM"],
         "effects": ["ALLOW", "DENY"],
         "dimension_types": ["store", "department", "group", "floor", "unit", "supplier", "brand", "category"],
-        "users": [{"id": user.user_id, "name": user.real_name or user.username} for user in db.query(User).order_by(User.user_id.asc()).all()],
+        "users": [{"id": user.user_id, "name": user.real_name or user.username, "username": user.username, "employee_no": user.employee_no} for user in db.query(User).order_by(User.user_id.asc()).all()],
         "roles": [{"id": role.id, "name": role.role_name} for role in db.query(Role).filter(Role.is_active == True).order_by(Role.role_level.desc()).all()],
     }
 

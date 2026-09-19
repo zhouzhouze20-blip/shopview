@@ -67,6 +67,17 @@ const report = {
   definitions: {},
 };
 
+report.target.prior.member_level_consumption[0] = {
+  ...report.target.prior.member_level_consumption[0],
+  buyer_count: 2,
+  buyer_share: 0.1,
+  sales_revenue: 6000,
+  sales_share: 0.075,
+  spend_per_buyer: 3000,
+  purchase_frequency: 1,
+  average_ticket_value: 2000,
+};
+
 
 test("supplier workbook has send-ready sections and styles", () => {
   const workbook = buildSupplierWorkbook(report, "常州购物中心", "销售收入与购买会员数均较同期增长。");
@@ -85,13 +96,29 @@ test("supplier workbook has send-ready sections and styles", () => {
   assert.equal(workbook.Sheets["数据口径"].A14.v.includes("不包含会员姓名"), true);
   assert.equal(workbook.Sheets["会员结构"].A17.v, "会员等级消费分析");
   assert.equal(workbook.Sheets["会员结构"].A19.v, "银星会员");
-  assert.equal(workbook.Sheets["会员结构"].D19.z, "#,##0;[Red]-#,##0");
-  assert.equal(workbook.Sheets["会员结构"].H18.v, "本期客单（元）");
-  assert.equal(workbook.Sheets["会员结构"].H19.v, 2400);
-  assert.equal(workbook.Sheets["会员结构"].I18.v, "同期购买会员");
-  assert.equal(workbook.Sheets["会员结构"].O18.v, "同期客单（元）");
-  assert.equal(workbook.Sheets["会员结构"].O19.v, 2400);
-  assert.equal(workbook.Sheets["会员结构"].O19.z, "#,##0;[Red]-#,##0");
+  assert.deepEqual(
+    Array.from({ length: 22 }, (_, index) => workbook.Sheets["会员结构"][`${String.fromCharCode(65 + index)}18`]?.v),
+    [
+      "会员等级",
+      "本期购买会员", "同期购买会员", "人数同比",
+      "本期人数占比", "同期人数占比", "人数占比同比",
+      "本期销售收入（元）", "同期销售收入（元）", "销售收入同比",
+      "本期销售占比", "同期销售占比", "销售占比同比",
+      "本期会员人均消费（元）", "同期会员人均消费（元）", "人均消费同比",
+      "本期消费频次", "同期消费频次", "消费频次同比",
+      "本期客单（元）", "同期客单（元）", "客单同比",
+    ],
+  );
+  assert.equal(workbook.Sheets["会员结构"].B19.v, 4);
+  assert.equal(workbook.Sheets["会员结构"].C19.v, 2);
+  assert.equal(workbook.Sheets["会员结构"].D19.v, 1);
+  assert.equal(workbook.Sheets["会员结构"].H19.v, 12000);
+  assert.equal(workbook.Sheets["会员结构"].I19.v, 6000);
+  assert.equal(workbook.Sheets["会员结构"].J19.v, 1);
+  assert.equal(workbook.Sheets["会员结构"].T19.v, 2400);
+  assert.equal(workbook.Sheets["会员结构"].U19.v, 2000);
+  assert.equal(workbook.Sheets["会员结构"].V19.v, 0.2);
+  assert.equal(workbook.Sheets["会员结构"].V19.z, "0.0%");
   assert.equal(workbook.Sheets["频次客件"].A6.v, "一次客");
   assert.equal(workbook.Sheets["频次客件"].K6.v, 1.8);
   assert.equal(workbook.Sheets["频次客件"].P6.v, 1.8);

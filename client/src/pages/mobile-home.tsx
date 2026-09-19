@@ -1,4 +1,4 @@
-import { CircleDollarSign, FileText, LayoutGrid, LogOut, PackageSearch, ShieldCheck, TrendingUp } from "lucide-react";
+import { CircleDollarSign, FileText, Gift, HandCoins, LayoutGrid, LogOut, PackageSearch, ShieldCheck, TrendingUp, WalletCards } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,6 +38,30 @@ const MOBILE_MODULES = [
     path: "/mobile/revenue",
     icon: CircleDollarSign,
     iconClassName: "bg-amber-600 text-white",
+  },
+  {
+    id: "mobile-rental-receivables",
+    title: "租赁应收未收",
+    description: "按门店、部门、柜组逐级查看租赁应收明细",
+    path: "/mobile/rental-receivables",
+    icon: HandCoins,
+    iconClassName: "bg-rose-600 text-white",
+  },
+  {
+    id: "mobile-supplier-payments",
+    title: "供应商付款单",
+    description: "查看我负责供应商的付款单状态、金额与结算明细",
+    path: "/mobile/supplier-payments",
+    icon: WalletCards,
+    iconClassName: "bg-emerald-700 text-white",
+  },
+  {
+    id: "mobile-coupon-followups",
+    title: "C券跟进",
+    description: "查看分配给我的黑金、黑钻会员及到店用券状态",
+    path: "/mobile/coupon-followups",
+    icon: Gift,
+    iconClassName: "bg-violet-600 text-white",
   },
 ] as const;
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { MobileSelfOperatedSales } from "@/components/mobile-self-operated-sales";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Building2,
@@ -26,6 +27,13 @@ import { useModuleAccessLog } from "@/hooks/use-module-access-log";
 import { apiGet } from "@/lib/api";
 import { canAccessModule } from "@/lib/module-permissions";
 import { buildMobileSalesDatePresets } from "@/lib/mobile-sales-date-presets";
+import { refreshMobileSalesQueries } from "@/lib/mobile-sales-refresh";
+import {
+  buildMobileFinancialMonthDates,
+  buildMobileFinancialMonthRequest,
+  financialMonthRowKey,
+  type FinancialMonthSalesRow,
+} from "@/lib/mobile-sales-financial-month";
 import {
   buildProductTicketParams,
   getReceiptProductDisplay,
@@ -257,6 +265,8 @@ function SummaryRow({
   priorProfit,
   margin,
   tickets,
+  financialMonthSales,
+  financialMonthLoading,
   pricedSalesAmount,
   showPricedSalesAmount = false,
   dense = false,
@@ -270,11 +280,19 @@ function SummaryRow({
   priorProfit?: number;
   margin: number;
   tickets: number;
+  financialMonthSales?: FinancialMonthSalesRow;
+  financialMonthLoading: boolean;
   pricedSalesAmount?: number;
   showPricedSalesAmount?: boolean;
   dense?: boolean;
   onClick: () => void;
 }) {
+  const financialMonthAmount = (value?: number) => {
+    if (financialMonthLoading) return "加载中…";
+    if (value == null) return "—";
+    return dense ? tenThousands(value) : currency(value);
+  };
+
   return (
     <button
       type="button"
@@ -288,56 +306,45 @@ function SummaryRow({
         </div>
         <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
       </div>
-      <div className={`grid grid-cols-2 gap-2 ${dense ? "mt-1.5" : "mt-2"}`}>
-        <div className="min-w-0 rounded-lg bg-slate-50 px-2 py-1.5">
-          {dense ? (
-            <div>
-              <div className="text-[10px] leading-3 text-slate-400">销售收入</div>
-              <div className="mt-0.5 grid grid-cols-2 gap-2 text-[10px] leading-4 text-slate-400">
-                <div className="min-w-0 whitespace-nowrap">
-                  本期 <span className="text-[11px] font-semibold tabular-nums text-slate-950">{tenThousands(sales)}</span>
-                </div>
-                <div className="min-w-0 whitespace-nowrap text-right">
-                  同期 <span className="text-[11px] font-medium tabular-nums text-slate-600">{tenThousands(priorSales)}</span>
-                </div>
-              </div>
+      <div className={`grid grid-cols-3 gap-1.5 ${dense ? "mt-1.5" : "mt-2"}`}>
+        <div className="min-w-0 rounded-lg bg-slate-50 px-1.5 py-1.5">
+          <div className="text-[10px] leading-3 text-slate-400">销售收入</div>
+          <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>本期</span>
+              <span className="whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-950">{dense ? tenThousands(sales) : currency(sales)}</span>
             </div>
-          ) : (
-            <>
-              <div className="text-[9px] leading-3 text-slate-400">销售收入</div>
-              <div className="truncate text-sm font-semibold leading-5 tabular-nums text-slate-950">{currency(sales)}</div>
-            </>
-          )}
-          {!dense ? (
-            <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
-              同期销售 <span className="font-medium tabular-nums text-slate-600">{currency(priorSales)}</span>
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>同期</span>
+              <span className="whitespace-nowrap text-[11px] font-medium tabular-nums text-slate-600">{dense ? tenThousands(priorSales) : currency(priorSales)}</span>
             </div>
-          ) : null}
+          </div>
         </div>
-        <div className="min-w-0 rounded-lg bg-slate-50 px-2 py-1.5">
-          {dense ? (
-            <div>
-              <div className="text-[10px] leading-3 text-slate-400">净毛利</div>
-              <div className="mt-0.5 grid grid-cols-2 gap-2 text-[10px] leading-4 text-slate-400">
-                <div className="min-w-0 whitespace-nowrap">
-                  本期 <span className="text-[11px] font-semibold tabular-nums text-slate-950">{tenThousands(profit)}</span>
-                </div>
-                <div className="min-w-0 whitespace-nowrap text-right">
-                  同期 <span className="text-[11px] font-medium tabular-nums text-slate-600">{tenThousands(priorProfit)}</span>
-                </div>
-              </div>
+        <div className="min-w-0 rounded-lg bg-slate-50 px-1.5 py-1.5">
+          <div className="text-[10px] leading-3 text-slate-400">净毛利</div>
+          <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>本期</span>
+              <span className="whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-950">{dense ? tenThousands(profit) : currency(profit)}</span>
             </div>
-          ) : (
-            <>
-              <div className="text-[9px] leading-3 text-slate-400">净毛利</div>
-              <div className="truncate text-sm font-semibold leading-5 tabular-nums text-slate-950">{currency(profit)}</div>
-            </>
-          )}
-          {!dense ? (
-            <div className="mt-0.5 truncate text-[9px] leading-3 text-slate-400">
-              同期毛利 <span className="font-medium tabular-nums text-slate-600">{currency(priorProfit)}</span>
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>同期</span>
+              <span className="whitespace-nowrap text-[11px] font-medium tabular-nums text-slate-600">{dense ? tenThousands(priorProfit) : currency(priorProfit)}</span>
             </div>
-          ) : null}
+          </div>
+        </div>
+        <div className="min-w-0 rounded-lg bg-teal-50/60 px-1.5 py-1.5">
+          <div className="text-[10px] leading-3 text-slate-500">本财务月销售额</div>
+          <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>本期</span>
+              <span className="whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-950">{financialMonthAmount(financialMonthSales?.effective_sales)}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              <span>同期</span>
+              <span className="whitespace-nowrap text-[11px] font-medium tabular-nums text-slate-600">{financialMonthAmount(financialMonthSales?.same_period_effective_sales)}</span>
+            </div>
+          </div>
         </div>
       </div>
       {showPricedSalesAmount ? (
@@ -346,7 +353,7 @@ function SummaryRow({
           <span className="font-semibold tabular-nums">{currency(pricedSalesAmount)}</span>
         </div>
       ) : null}
-      <div className={`grid grid-cols-3 divide-x divide-slate-100 rounded-lg border border-slate-100 text-center ${dense ? "mt-1.5 py-1" : "mt-2 py-1.5"}`}>
+      <div className={`grid grid-cols-[1fr_1fr_0.8fr_1.5fr] divide-x divide-slate-100 rounded-lg border border-slate-100 text-center ${dense ? "mt-1.5 py-1" : "mt-2 py-1.5"}`}>
         <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
           <div>销售同比</div>
           <div className={`truncate font-semibold tabular-nums ${yoyClass(sales, priorSales)}`}>{formatYoy(sales, priorSales)}</div>
@@ -358,6 +365,12 @@ function SummaryRow({
         <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
           <div>小票数</div>
           <div className="truncate font-medium tabular-nums text-slate-700">{decimal(tickets)}</div>
+        </div>
+        <div className={`min-w-0 px-1 leading-3 text-slate-400 ${dense ? "text-[10px]" : "text-[9px]"}`}>
+          <div className="whitespace-nowrap">本财务月销售同比</div>
+          <div className={`whitespace-nowrap font-semibold tabular-nums ${financialMonthSales ? yoyClass(financialMonthSales.effective_sales, financialMonthSales.same_period_effective_sales) : "text-slate-500"}`}>
+            {financialMonthLoading ? "加载中…" : financialMonthSales ? formatYoy(financialMonthSales.effective_sales, financialMonthSales.same_period_effective_sales) : "—"}
+          </div>
         </div>
       </div>
     </button>
@@ -424,12 +437,14 @@ function valueText(value: unknown): string {
 }
 
 export default function MobileSalesDashboardPage() {
+  const queryClient = useQueryClient();
   const { user, menuUser, logout } = useAuth();
   const [, setLocation] = useLocation();
   const hasAccess = canAccessModule(menuUser, "mobile-sales-dashboard");
   const today = todayString();
   const datePresets = buildMobileSalesDatePresets(today);
   const [level, setLevel] = useState<MobileLevel>("stores");
+  const [selfOperatedActive, setSelfOperatedActive] = useState(false);
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [draftStartDate, setDraftStartDate] = useState(today);
@@ -447,6 +462,29 @@ export default function MobileSalesDashboardPage() {
   const [dateFiltersOpen, setDateFiltersOpen] = useState(false);
   const [includeRentalAndBackofficeSales, setIncludeRentalAndBackofficeSales] = useState(false);
   const showPricedSalesAmount = isCosmeticsRetailPriceScope(selectedStore, selectedDepartment);
+  const financialMonthDates = buildMobileFinancialMonthDates(endDate);
+  const financialMonthEndpoint = buildMobileFinancialMonthRequest({
+    endDate,
+    level,
+    storeId: selectedStore?.store_id,
+    departmentCode: selectedDepartment?.department_code,
+    keyword: groupKeyword,
+    includeRentalAndBackofficeSales,
+  });
+  const financialMonthQuery = useQuery<FinancialMonthSalesRow[]>({
+    queryKey: ["mobile-sales-financial-month", financialMonthEndpoint],
+    queryFn: () => getSalesDashboardData(financialMonthEndpoint!, apiGet),
+    enabled: hasAccess && financialMonthEndpoint !== null,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+  const financialMonthRows = useMemo(
+    () => new Map(
+      (financialMonthQuery.isError ? [] : financialMonthQuery.data ?? [])
+        .map((row) => [financialMonthRowKey(level, row), row]),
+    ),
+    [financialMonthQuery.data, financialMonthQuery.isError, level],
+  );
 
   const { recordQuery } = useModuleAccessLog({
     moduleId: "mobile-sales-dashboard",
@@ -807,6 +845,10 @@ export default function MobileSalesDashboardPage() {
       setDateFiltersOpen(true);
       return;
     }
+    void refreshMobileSalesQueries(queryClient, {
+      level,
+      datesChanged: nextStart !== startDate || nextEnd !== endDate,
+    });
     setDateError("");
     setDraftStartDate(nextStart);
     setDraftEndDate(nextEnd);
@@ -979,7 +1021,9 @@ export default function MobileSalesDashboardPage() {
           </CardContent>
         </Card> : null}
 
+        {!selfOperatedActive && <>
         <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
+          {level === "stores" && <div className="px-3 pt-2 text-[10px] text-slate-500">百货门店汇总 · 自营公司在下方单列</div>}
           <div className="grid grid-cols-2 divide-x divide-slate-100">
             <OverviewMetric
               label="销售收入"
@@ -1034,6 +1078,21 @@ export default function MobileSalesDashboardPage() {
             ) : null}
             {activeQuery.isFetching ? <Loader2 className="h-5 w-5 animate-spin text-blue-600" /> : null}
           </div>
+
+          {["stores", "departments", "groups"].includes(level) ? (
+            <div className="mb-2 px-1 text-[9px] leading-4 text-slate-400">
+              <div>本财务月 {financialMonthDates.start_date} 至 {financialMonthDates.end_date}</div>
+              <div>同比去年 {financialMonthDates.prior_start_date} 至 {financialMonthDates.prior_end_date}；截至所选结束日期</div>
+              {financialMonthQuery.isError ? (
+                <div className="text-amber-700" role="status">
+                  本财务月同比加载失败，暂显示“—”。
+                  <button type="button" className="ml-1 underline" onClick={() => void financialMonthQuery.refetch()}>重试</button>
+                </div>
+              ) : !financialMonthEndpoint ? (
+                <div>去年同日尚未进入对应财务月，暂不计算同比。</div>
+              ) : null}
+            </div>
+          ) : null}
 
           {level === "groups" ? (
             <div className="relative mb-3">
@@ -1094,6 +1153,8 @@ export default function MobileSalesDashboardPage() {
               (storesQuery.data ?? []).map((row) => (
                 <SummaryRow
                   key={row.store_id}
+                  financialMonthSales={financialMonthRows.get(financialMonthRowKey("stores", row))}
+                  financialMonthLoading={financialMonthQuery.isLoading}
                   title={row.store_name || row.store_id}
                   code={row.store_id}
                   sales={row.effective_sales}
@@ -1124,6 +1185,8 @@ export default function MobileSalesDashboardPage() {
               (departmentsQuery.data ?? []).map((row) => (
                 <SummaryRow
                   key={`${row.department_code}:${row.department_name}`}
+                  financialMonthSales={financialMonthRows.get(financialMonthRowKey("departments", row))}
+                  financialMonthLoading={financialMonthQuery.isLoading}
                   title={row.department_name || "未归属部门"}
                   code={row.department_code || "未设置部门编码"}
                   sales={row.effective_sales}
@@ -1156,6 +1219,8 @@ export default function MobileSalesDashboardPage() {
               (groupsQuery.data ?? []).map((row) => (
                 <SummaryRow
                   key={row.group_code}
+                  financialMonthSales={financialMonthRows.get(financialMonthRowKey("groups", row))}
+                  financialMonthLoading={financialMonthQuery.isLoading}
                   title={row.group_name || row.group_code}
                   code={row.group_code}
                   sales={row.effective_sales}
@@ -1297,6 +1362,13 @@ export default function MobileSalesDashboardPage() {
             )}
           </div>
         </section>
+        </>}
+        {level === "stores" && <MobileSelfOperatedSales onDrilldownChange={(active) => {
+          setSelfOperatedActive(active);
+          requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "instant" }));
+        }} startDate={startDate} endDate={endDate} onUseImportedDates={(start, end) => {
+          setStartDate(start); setEndDate(end); setDraftStartDate(start); setDraftEndDate(end);
+        }} />}
 
         <div className="flex items-center justify-center gap-2 py-2 text-xs text-slate-400">
           <ShieldCheck className="h-4 w-4" /> 手机端模块权限与业务数据范围共同控制

@@ -1,4 +1,7 @@
 export const SALES_DASHBOARD_TIMEOUT_MS = 30_000;
+// Database long-range work is capped at 90s and the gateway at 100s.
+// The browser waits a little longer so a gateway response is surfaced instead of a client abort.
+export const SALES_DASHBOARD_LONG_RANGE_TIMEOUT_MS = 105_000;
 
 export class SalesDashboardTimeoutError extends Error {
   constructor(message = "销售看板数据请求超时") {
@@ -38,6 +41,25 @@ export function salesDashboardRangeDays(startDate: string, endDate: string): num
   return Math.floor((end - start) / 86_400_000) + 1;
 }
 
+export function salesDashboardRequestTimeoutMs(endpoint: string): number {
+  try {
+    const url = new URL(endpoint, "http://shopview.local");
+    const startDate = url.searchParams.get("start_date") ?? "";
+    const endDate = url.searchParams.get("end_date") ?? "";
+    const rangeDays = salesDashboardRangeDays(startDate, endDate);
+    if (
+      url.pathname.startsWith("/api/sales/summary/") &&
+      rangeDays > 0 &&
+      startDate.slice(0, 7) !== endDate.slice(0, 7)
+    ) {
+      return SALES_DASHBOARD_LONG_RANGE_TIMEOUT_MS;
+    }
+  } catch {
+    // Malformed/opaque endpoints retain the conservative default timeout.
+  }
+  return SALES_DASHBOARD_TIMEOUT_MS;
+}
+
 type SalesDashboardRequester = <T>(endpoint: string, options?: RequestInit) => Promise<T>;
 
 export async function getSalesDashboardData<T>(
@@ -47,7 +69,7 @@ export async function getSalesDashboardData<T>(
     timeoutMs?: number;
   } = {},
 ): Promise<T> {
-  const timeoutMs = options.timeoutMs ?? SALES_DASHBOARD_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? salesDashboardRequestTimeoutMs(endpoint);
   const controller = new AbortController();
   const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 

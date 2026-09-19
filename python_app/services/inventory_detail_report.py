@@ -147,6 +147,11 @@ def build_inventory_filter_sql(filters: Mapping[str, Any], params: dict[str, Any
     fuzzy("goods_name", ("gb.gbcname",))
     fuzzy("barcode", ("gb.gbbarcode",))
 
+    department_code = str(filters.get("department_code") or "").strip()
+    if department_code:
+        params["department_code"] = department_code
+        clauses.append("area_node.mfcode = :department_code")
+
     exact_group = str(filters.get("exact_group") or "").strip()
     if exact_group:
         params["exact_group"] = exact_group
@@ -622,6 +627,92 @@ def load_inventory_detail_report(
         "source_note": (
             "沿用原 ERP SQL 的商品、柜组售价内连接口径；"
             "VIEW_MFRAME_ALL 由 manaframe 三级父级关系替代。"
+        ),
+    }
+
+
+def load_inventory_departments(
+    db: Session,
+    *,
+    scope_sql: str,
+    scope_params: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    # Use the same department hierarchy, positive-stock basis and row scope as
+    # the inventory detail. Supplier/group-only users must not see other stock.
+    params = dict(scope_params)
+    base_sql = inventory_base_sql(build_inventory_filter_sql({}, params), scope_sql)
+    rows = db.execute(
+        text(f"""
+            WITH inventory AS ({base_sql})
+            SELECT area_code AS value, MAX(area_display) AS label,
+                   area_code AS code, MAX(area_name) AS name
+            FROM inventory
+            WHERE NULLIF(TRIM(BOTH FROM area_code), '') IS NOT NULL
+            GROUP BY area_code
+            ORDER BY area_code
+        """),
+        params,
+    ).mappings().all()
+    return [_mapping(row) for row in rows]
+
+
+def load_inventory_department_summary(
+    db: Session,
+    *,
+    department_code: str,
+    scope_sql: str,
+    scope_params: Mapping[str, Any],
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    department_code = department_code.strip()
+    if not department_code:
+        raise ValueError("部门编码不能为空")
+    params = dict(scope_params)
+    filter_sql = build_inventory_filter_sql({"department_code": department_code}, params)
+    base_sql = inventory_base_sql(filter_sql, scope_sql)
+    grouped_sql = f"""
+        WITH inventory AS ({base_sql}), grouped_inventory AS (
+            SELECT store_code, supplier_code, group_code,
+                   MAX(store_display) AS store_display,
+                   MAX(supplier_display) AS supplier_display,
+                   MAX(group_name) AS group_name,
+                   MAX(group_display) AS group_display,
+                   SUM(inventory_quantity) AS inventory_quantity,
+                   SUM(retail_amount) AS retail_amount
+            FROM inventory
+            GROUP BY store_code, supplier_code, group_code
+        )
+    """
+    summary = db.execute(
+        text(f"""
+            {grouped_sql}
+            SELECT COUNT(*) AS total_count,
+                   COALESCE(SUM(inventory_quantity), 0) AS inventory_quantity,
+                   COALESCE(SUM(retail_amount), 0) AS retail_amount
+            FROM grouped_inventory
+        """),
+        params,
+    ).mappings().one()
+    rows = db.execute(
+        text(f"""
+            {grouped_sql}
+            SELECT * FROM grouped_inventory
+            ORDER BY store_code, supplier_code, group_code
+            LIMIT :limit OFFSET :offset
+        """),
+        {**params, "limit": limit, "offset": offset},
+    ).mappings().all()
+    return {
+        "department_code": department_code,
+        "rows": [_mapping(row) for row in rows],
+        "summary": _mapping(summary),
+        "limit": limit,
+        "offset": offset,
+        "source_note": (
+            "仅统计当前账号数据范围内的正库存，按供应商和柜组汇总；"
+            "零售价金额沿用柜组库存明细的零售金额（retail_amount）口径。"
+            "钻取显示所选柜组在当前范围内的全部正库存明细。"
         ),
     }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -12,6 +12,7 @@ from routers.brand_member_analysis import (
     BRAND_MEMBER_ANALYSIS_PERMISSION,
     BrandMemberAnalysisRequest,
     BrandMemberConclusionRequest,
+    BrandMemberCrossShoppingRequest,
     _group_options_for_user,
     _require_target_group_scope,
     brand_member_conclusion,
@@ -19,15 +20,25 @@ from routers.brand_member_analysis import (
 )
 from services.brand_member_analysis import (
     BRAND_MEMBER_QUERY_TIMEOUT_SECONDS,
+    MEMBER_TICKET_BATCH_SIZE,
+    SALE_HEADER_DATE_GUARD_DAYS,
+    _load_cross_shopping_rows,
     _load_department_rank,
+    _load_historical_target_members,
     _load_inflow_sources,
+    _load_member_history_tickets,
+    _load_member_period_tickets,
     _load_old_customer_funnel,
+    _load_period,
+    _load_target_period_members,
     _period_classification_ctes,
     _load_member_level_consumption,
     _load_purchase_frequency_analysis,
     build_comparison,
     build_rule_conclusion,
     list_group_options,
+    load_brand_member_cross_shopping,
+    load_brand_member_inflow_sources,
     normalize_ai_conclusion_terms,
     sanitize_ai_snapshot,
     validate_ai_conclusion,
@@ -103,6 +114,26 @@ def test_request_rejects_target_as_competitor():
             current_end=date(2025, 1, 31),
             prior_start=date(2024, 1, 1),
             prior_end=date(2024, 1, 31),
+        )
+
+
+def test_cross_shopping_request_normalizes_codes_and_validates_period():
+    request = BrandMemberCrossShoppingRequest(
+        store_code=" 601 ",
+        target_group_code=" g1 ",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    )
+
+    assert request.store_code == "601"
+    assert request.target_group_code == "G1"
+
+    with pytest.raises(ValidationError, match="结束日期不能早于开始日期"):
+        BrandMemberCrossShoppingRequest(
+            store_code="601",
+            target_group_code="G1",
+            start_date=date(2026, 8, 31),
+            end_date=date(2026, 8, 1),
         )
 
 
@@ -226,7 +257,7 @@ def test_classification_member_expression_matches_lookup_index():
     assert "NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no" in compact
 
 
-def test_inflow_sources_lookup_only_internal_members_and_uses_exact_group_code():
+def test_target_period_members_use_receipt_level_positive_purchase():
     class EmptyMappings:
         def mappings(self):
             return self
@@ -236,9 +267,438 @@ def test_inflow_sources_lookup_only_internal_members_and_uses_exact_group_code()
 
     class CaptureDb:
         sql = ""
+        params = {}
 
         def execute(self, statement, params):
             self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    db = CaptureDb()
+
+    assert _load_target_period_members(
+        db,
+        store_code="601",
+        target_group_code="6010101168",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    ) == []
+
+    compact = " ".join(db.sql.split())
+    assert "target_member_receipts AS MATERIALIZED" in compact
+    assert "GROUP BY member_no, s.sglbillno" in compact
+    assert "HAVING BOOL_OR(sales_revenue > 0)" in compact
+    assert "s.sglhsrq BETWEEN :start_date AND :end_date" in compact
+    assert db.params == {
+        "store_code": "601",
+        "target_group_code": "6010101168",
+        "start_date": date(2026, 8, 1),
+        "end_date": date(2026, 8, 31),
+    }
+
+
+def test_member_period_tickets_are_batched_and_use_the_member_period_index_shape():
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        calls = []
+
+        def execute(self, statement, params):
+            self.calls.append((str(statement), params))
+            return EmptyMappings()
+
+    db = CaptureDb()
+    members = [f"M{index}" for index in range(MEMBER_TICKET_BATCH_SIZE + 1)]
+
+    assert _load_member_period_tickets(
+        db,
+        store_code="601",
+        member_nos=members,
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    ) == []
+
+    assert len(db.calls) == 2
+    compact = " ".join(db.calls[0][0].split())
+    assert "h.mkt = :store_code" in compact
+    assert "= ANY(CAST(:member_nos AS text[]))" in compact
+    assert "h.rqsj >= :header_start" in compact
+    assert "h.rqsj < :header_end" in compact
+    assert "h.billno::text AS billno" in compact
+    assert len(db.calls[0][1]["member_nos"]) == MEMBER_TICKET_BATCH_SIZE
+    assert db.calls[0][1]["header_start"] == date(2026, 8, 1) - timedelta(
+        days=SALE_HEADER_DATE_GUARD_DAYS
+    )
+    assert db.calls[0][1]["header_end"] == date(2026, 8, 31) + timedelta(
+        days=SALE_HEADER_DATE_GUARD_DAYS + 1
+    )
+
+
+def test_cross_shopping_aggregates_only_resolved_period_tickets(monkeypatch):
+    from services import brand_member_analysis
+
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_target_period_members",
+        lambda *args, **kwargs: ["M1", "M2"],
+    )
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_member_period_tickets",
+        lambda *args, **kwargs: [
+            {"billno": "1001", "member_no": "M1"},
+            {"billno": "1002", "member_no": "M2"},
+        ],
+    )
+    db = CaptureDb()
+
+    assert _load_cross_shopping_rows(
+        db,
+        store_code="601",
+        target_group_code="6010101168",
+        target_department_code="6010101",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    ) == []
+
+    compact = " ".join(db.sql.split())
+    assert "period_member_heads AS MATERIALIZED" in compact
+    assert "CAST(:ticket_billnos AS text[])" in compact
+    assert "lines.sglbillno = CAST(heads.billno AS numeric)" in compact
+    assert "UPPER(TRIM(BOTH FROM dept.mfcode)) <> :target_department_code" not in compact
+    assert "UPPER(TRIM(BOTH FROM groups.mfcode)) <> :target_group_code" in compact
+    assert "WHERE department_code = :target_department_code" in compact
+    assert "WHERE department_code <> :target_department_code" in compact
+    assert "AS same_department_buyer_count" in compact
+    assert "AS same_department_sales_revenue" in compact
+    assert "other_member_group_receipts AS MATERIALIZED" in compact
+    assert "GROUP BY heads.member_no, heads.billno" in compact
+    assert "BOOL_OR(receipt_sales_revenue > 0) AS had_positive_purchase" in compact
+    assert "COUNT(DISTINCT member_no) AS department_buyer_count" in compact
+    assert "COUNT(*) AS group_buyer_count" in compact
+    assert "SUM(sales_revenue)" in compact
+    assert db.params == {
+        "store_code": "601",
+        "target_group_code": "6010101168",
+        "target_department_code": "6010101",
+        "start_date": date(2026, 8, 1),
+        "end_date": date(2026, 8, 31),
+        "target_member_count": 2,
+        "ticket_billnos": ["1001", "1002"],
+        "ticket_member_nos": ["M1", "M2"],
+    }
+
+
+def test_cross_shopping_builds_department_and_group_drilldown(monkeypatch):
+    from services import brand_member_analysis
+
+    class CaptureDb:
+        calls = []
+
+        def execute(self, statement, params):
+            self.calls.append((str(statement), params))
+
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "load_group_meta",
+        lambda *args, **kwargs: {
+            "group_code": "G1",
+            "group_name": "目标品牌",
+            "department_code": "D1",
+            "department_name": "目标部门",
+            "scope_store_id": "1",
+        },
+    )
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_cross_shopping_rows",
+        lambda *args, **kwargs: [
+            {
+                "same_department_buyer_count": 4,
+                "same_department_sales_revenue": 1200,
+                "target_member_count": 20,
+                "other_department_buyer_count": 8,
+                "total_sales_revenue": 5000,
+                "department_code": "D2",
+                "department_name": "二部",
+                "department_buyer_count": 8,
+                "department_sales_revenue": 5000,
+                "group_code": "G2",
+                "group_name": "其他品牌",
+                "group_buyer_count": 6,
+                "group_sales_revenue": 3500,
+            },
+            {
+                "same_department_buyer_count": 4,
+                "same_department_sales_revenue": 1200,
+                "target_member_count": 20,
+                "other_department_buyer_count": 8,
+                "total_sales_revenue": 5000,
+                "department_code": "D2",
+                "department_name": "二部",
+                "department_buyer_count": 8,
+                "department_sales_revenue": 5000,
+                "group_code": "G3",
+                "group_name": "另一个品牌",
+                "group_buyer_count": 3,
+                "group_sales_revenue": 1500,
+            },
+            {
+                "department_code": "D1",
+                "department_name": "目标部门",
+                "department_buyer_count": 4,
+                "department_sales_revenue": 1200,
+                "group_code": "G4",
+                "group_name": "本部门其他品牌",
+                "group_buyer_count": 4,
+                "group_sales_revenue": 1200,
+            },
+        ],
+    )
+
+    db = CaptureDb()
+    result = load_brand_member_cross_shopping(
+        db,
+        store_code="601",
+        target_group_code="G1",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    )
+
+    assert result["target_member_count"] == 20
+    assert result["other_department_buyer_count"] == 8
+    assert result["sales_revenue"] == 5000
+    assert result["target"] == {
+        "group_code": "G1",
+        "group_name": "目标品牌",
+        "department_code": "D1",
+        "department_name": "目标部门",
+    }
+    assert result["same_department_buyer_count"] == 4
+    assert result["same_department_sales_revenue"] == 1200
+    assert result["departments"][1] == {
+        "department_code": "D1", "department_name": "目标部门",
+        "buyer_count": 4, "sales_revenue": 1200,
+        "groups": [{"group_code": "G4", "group_name": "本部门其他品牌",
+                    "buyer_count": 4, "sales_revenue": 1200}],
+    }
+    assert result["departments"][:1] == [
+        {
+            "department_code": "D2",
+            "department_name": "二部",
+            "buyer_count": 8,
+            "sales_revenue": 5000,
+            "groups": [
+                {
+                    "group_code": "G2",
+                    "group_name": "其他品牌",
+                    "buyer_count": 6,
+                    "sales_revenue": 3500,
+                },
+                {
+                    "group_code": "G3",
+                    "group_name": "另一个品牌",
+                    "buyer_count": 3,
+                    "sales_revenue": 1500,
+                },
+            ],
+        }
+    ]
+    assert db.calls == [
+        (
+            f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'",
+            {},
+        )
+    ]
+
+
+def test_inflow_sources_are_exposed_as_an_explicit_on_demand_report(monkeypatch):
+    from services import brand_member_analysis
+
+    class CaptureDb:
+        calls = []
+
+        def execute(self, statement, params):
+            self.calls.append((str(statement), params))
+
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "load_group_meta",
+        lambda *args, **kwargs: {
+            "group_code": "G1",
+            "group_name": "目标品牌",
+            "department_code": "D1",
+            "department_name": "目标部门",
+            "scope_store_id": "1",
+        },
+    )
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_internal_period_members",
+        lambda *args, **kwargs: [("M1", "same_department_inflow")],
+    )
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_inflow_sources",
+        lambda *args, **kwargs: [{"group_code": "G2", "buyer_count": 1}],
+    )
+
+    db = CaptureDb()
+    result = load_brand_member_inflow_sources(
+        db,
+        store_code="601",
+        target_group_code="G1",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+    )
+
+    assert result["inflow_member_count"] == 1
+    assert result["inflow_sources"] == [{"group_code": "G2", "buyer_count": 1}]
+    assert result["target"]["group_code"] == "G1"
+    assert "scope_store_id" not in result["target"]
+    assert db.calls == [
+        (
+            f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'",
+            {},
+        )
+    ]
+
+
+def test_period_reuses_internal_members_without_exposing_member_numbers(monkeypatch):
+    from services import brand_member_analysis
+
+    base = {
+        "sales_revenue": 100,
+        "positive_revenue": 100,
+        "refund_revenue": 0,
+        "ticket_count": 2,
+        "member_buyer_count": 2,
+        "member_sales_revenue": 100,
+        "member_ticket_count": 2,
+        "nonmember_sales_revenue": 0,
+        "refund_only_member_sales_revenue": 0,
+        "spend_per_buyer": 50,
+        "purchase_frequency": 1,
+    }
+    rows = [
+        {
+            **base,
+            "segment_code": code,
+            "segment_label": label,
+            "segment_buyer_count": len(member_nos),
+            "segment_sales_revenue": 50 if member_nos else 0,
+            "segment_ticket_count": len(member_nos),
+            "segment_member_nos": member_nos,
+        }
+        for code, label, member_nos in (
+            ("brand_returning", "品牌老客", ["OLD-1"]),
+            ("same_department_inflow", "同部门流入", ["INTERNAL-1"]),
+            ("cross_department_inflow", "跨部门流入", ["INTERNAL-2"]),
+            ("external_new", "外部招新", ["NEW-1"]),
+        )
+    ]
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(brand_member_analysis, "_rows", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(brand_member_analysis, "_load_department_rank", lambda *args: {})
+    monkeypatch.setattr(brand_member_analysis, "_load_old_customer_funnel", lambda *args: {})
+    monkeypatch.setattr(brand_member_analysis, "_load_purchase_frequency_analysis", lambda *args: [])
+    monkeypatch.setattr(brand_member_analysis, "_load_member_level_consumption", lambda *args: [])
+
+    def capture_inflow(_db, _params, members):
+        captured["members"] = members
+        return []
+
+    monkeypatch.setattr(brand_member_analysis, "_load_inflow_sources", capture_inflow)
+
+    result = _load_period(
+        object(),
+        store_code="601",
+        target_group_code="G1",
+        target_department_code="D1",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 7, 31),
+    )
+
+    assert captured["members"] == [
+        ("INTERNAL-1", "same_department_inflow"),
+        ("INTERNAL-2", "cross_department_inflow"),
+    ]
+    assert all("segment_member_nos" not in segment for segment in result["segments"])
+
+
+def test_member_history_tickets_use_the_member_date_index_shape():
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    db = CaptureDb()
+    assert _load_member_history_tickets(
+        db,
+        store_code="601",
+        member_nos=["M1", "M2"],
+        header_end=date(2026, 2, 1),
+    ) == []
+    compact = " ".join(db.sql.split())
+    assert "h.mkt = :store_code" in compact
+    assert "= ANY(CAST(:member_nos AS text[]))" in compact
+    assert "h.rqsj < :header_end" in compact
+    assert db.params == {
+        "store_code": "601",
+        "member_nos": ["M1", "M2"],
+        "header_end": date(2026, 2, 1),
+    }
+
+
+def test_inflow_sources_lookup_only_internal_members_and_uses_exact_group_code(monkeypatch):
+    from services import brand_member_analysis
+
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
             return EmptyMappings()
 
     db = CaptureDb()
@@ -249,16 +709,35 @@ def test_inflow_sources_lookup_only_internal_members_and_uses_exact_group_code()
         "start_date": date(2026, 1, 1),
         "end_date": date(2026, 6, 30),
     }
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_member_history_tickets",
+        lambda *args, **kwargs: [
+            {"billno": "1001", "member_no": "M1"},
+            {"billno": "1002", "member_no": "M2"},
+        ],
+    )
 
-    assert _load_inflow_sources(db, params) == []
+    assert _load_inflow_sources(
+        db,
+        params,
+        [
+            ("M1", "same_department_inflow"),
+            ("M2", "cross_department_inflow"),
+        ],
+    ) == []
     compact = " ".join(db.sql.split())
-    internal_heads = compact.split("internal_member_heads AS MATERIALIZED (", 1)[1].split(
-        "), source_sales AS MATERIALIZED (", 1
-    )[0]
-    assert "CROSS JOIN LATERAL" in internal_heads
-    assert "NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL" in internal_heads
-    assert "OFFSET 0" in internal_heads
+    assert "internal_member_heads AS MATERIALIZED" in compact
+    assert "CAST(:ticket_billnos AS text[])" in compact
+    assert "s.sglbillno = CAST(heads.billno AS numeric)" in compact
     assert "ON mf.mfcode = s.sglmfid" in compact
+    assert "classified AS MATERIALIZED" not in compact
+    assert db.params["ticket_billnos"] == ["1001", "1002"]
+    assert db.params["ticket_member_nos"] == ["M1", "M2"]
+    assert db.params["ticket_segment_codes"] == [
+        "same_department_inflow",
+        "cross_department_inflow",
+    ]
 
 
 def test_member_level_consumption_uses_salehead_customer_type_and_standard_levels():
@@ -377,7 +856,43 @@ def test_department_rank_uses_exact_composite_index_predicates():
     assert db.params == params
 
 
-def test_old_customer_funnel_scans_period_lines_by_valid_store_groups():
+def test_historical_target_members_keep_the_exact_sales_date_cutoff():
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        sql = ""
+        params = {}
+
+        def execute(self, statement, params):
+            self.sql = str(statement)
+            self.params = params
+            return EmptyMappings()
+
+    db = CaptureDb()
+    params = {
+        "store_code": "601",
+        "target_group_code": "6010101052",
+        "target_department_code": "6010101",
+        "start_date": date(2026, 1, 1),
+        "end_date": date(2026, 6, 30),
+    }
+
+    assert _load_historical_target_members(db, params) == []
+    compact = " ".join(db.sql.split())
+    assert "s.sglmarket = :store_code" in compact
+    assert "s.sglmfid = :target_group_code" in compact
+    assert "s.sglhsrq < :start_date" in compact
+    assert "COALESCE(s.sglxssr, 0) > 0" in compact
+
+
+def test_old_customer_funnel_scans_only_resolved_member_tickets(monkeypatch):
+    from services import brand_member_analysis
+
     class OneRowMappings:
         def mappings(self):
             return self
@@ -399,6 +914,19 @@ def test_old_customer_funnel_scans_period_lines_by_valid_store_groups():
             self.params = params
             return OneRowMappings()
 
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_historical_target_members",
+        lambda *args, **kwargs: [f"M{index}" for index in range(10)],
+    )
+    monkeypatch.setattr(
+        brand_member_analysis,
+        "_load_member_period_tickets",
+        lambda *args, **kwargs: [
+            {"billno": "1001", "member_no": "M1"},
+            {"billno": "1002", "member_no": "M2"},
+        ],
+    )
     db = CaptureDb()
     params = {
         "store_code": "601",
@@ -416,12 +944,19 @@ def test_old_customer_funnel_scans_period_lines_by_valid_store_groups():
     }
     compact = " ".join(db.sql.split())
     assert "store_groups AS MATERIALIZED" in compact
-    assert "period_goods AS MATERIALIZED" in compact
-    assert "period_receipts AS MATERIALIZED" in compact
-    assert "GROUP BY goods.billno, goods.store_code" in compact
+    assert "ticket_map AS MATERIALIZED" in compact
+    assert "period_goods AS MATERIALIZED" not in compact
+    assert "FROM ticket_map tickets" in compact
+    assert "s.sglbillno = CAST(tickets.billno AS numeric)" in compact
     assert "s.sglhsrq BETWEEN :start_date AND :end_date" in compact
-    assert "JOIN period_receipts receipts ON receipts.billno = h.billno" in compact
-    assert db.params == {**params, "store_prefix": "601%"}
+    assert "GROUP BY tickets.member_no" in compact
+    assert db.params == {
+        **params,
+        "store_prefix": "601%",
+        "historical_member_nos": [f"M{index}" for index in range(10)],
+        "ticket_billnos": ["1001", "1002"],
+        "ticket_member_nos": ["M1", "M2"],
+    }
 
 
 def test_report_uses_a_scoped_timeout_for_heavy_history_queries(monkeypatch):
@@ -451,11 +986,13 @@ def test_report_uses_a_scoped_timeout_for_heavy_history_queries(monkeypatch):
             "department_name": "一部",
         },
     )
-    monkeypatch.setattr(
-        brand_member_analysis,
-        "_load_period",
-        lambda *args, **kwargs: empty_period,
-    )
+    period_calls = []
+
+    def capture_period(*args, **kwargs):
+        period_calls.append(kwargs)
+        return empty_period
+
+    monkeypatch.setattr(brand_member_analysis, "_load_period", capture_period)
     monkeypatch.setattr(
         brand_member_analysis,
         "_competitor_metrics",
@@ -479,8 +1016,12 @@ def test_report_uses_a_scoped_timeout_for_heavy_history_queries(monkeypatch):
             f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'",
             {},
         ),
-        ("SET LOCAL enable_bitmapscan = off", {}),
     ]
+    assert [call["include_inflow_sources"] for call in period_calls] == [False, False]
+
+
+def test_brand_member_analysis_allows_full_year_query_runtime():
+    assert BRAND_MEMBER_QUERY_TIMEOUT_SECONDS == 300
 
 
 def test_comparison_uses_absolute_prior_for_signed_revenue_rate():

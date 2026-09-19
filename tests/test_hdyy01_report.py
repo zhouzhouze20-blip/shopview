@@ -1,7 +1,9 @@
 import asyncio
 import os
+import re
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -369,7 +371,9 @@ def test_query_identifies_members_by_nonempty_card_and_both_ticket_keys():
     assert "nullif(trim(both from coalesce(h.hykh, '')), '') is not null" in compact
     assert "h.billno = s.sglbillno" in compact
     assert "trim(both from h.mkt) = s.store_code" in compact
-    assert "select distinct h.billno" in compact
+    assert "join lateral" in compact
+    assert "select h.billno from salehead h" in compact
+    assert "limit 1" in compact
     assert "case when mt.billno is not null then coalesce(s.sglxssr, 0) else 0 end" in compact
 
 
@@ -379,7 +383,7 @@ def test_query_limits_member_identification_to_scoped_base_ticket_keys():
 
     assert "scoped_ticket_keys as" in compact
     assert "select distinct sglmarket::text as store_code, sglbillno" in compact
-    assert "join scoped_ticket_keys s" in compact
+    assert "from scoped_ticket_keys s" in compact
     assert "null::bigint as unmatched_member_ticket_count" in compact
 
 
@@ -448,7 +452,7 @@ def test_query_uses_left_organization_and_code_hierarchy_joins_and_filters():
     assert "s.sglwmid is null or s.sglwmid <> '5'" in compact
     assert ":excluded_department_codes" in compact
     assert scope in sql
-    assert "s.sglmarket::text = :selected_store" in compact
+    assert "s.sglmarket = :selected_store" in compact
     assert "upper(trim(both from coalesce(dept.mfcode, ''))) = upper(:selected_department)" in compact
     assert params["scope_allow_group"] == ["G01"]
     assert set(params["excluded_department_codes"]) == set(EXCLUDED_DEPARTMENT_CODES)
@@ -664,7 +668,7 @@ class FakeDb:
         return FakeResult(self.rows)
 
 
-def test_load_report_executes_one_bound_statement_and_builds_payload():
+def test_load_report_sets_timeout_executes_bound_query_and_builds_payload():
     db = FakeDb([report_row()])
 
     payload = load_hdyy01_report(
@@ -677,8 +681,11 @@ def test_load_report_executes_one_bound_statement_and_builds_payload():
         selected_department=" 6030117 ",
     )
 
-    assert len(db.calls) == 1
-    sql, params = db.calls[0]
+    assert len(db.calls) == 2
+    timeout_sql, timeout_params = db.calls[0]
+    assert timeout_sql == "SET LOCAL statement_timeout = '60s'"
+    assert timeout_params == {}
+    sql, params = db.calls[1]
     assert ":start_date" in sql and ":allowed_groups" in sql
     assert params["start_date"] == START
     assert params["allowed_groups"] == ["G01"]
@@ -687,6 +694,18 @@ def test_load_report_executes_one_bound_statement_and_builds_payload():
     assert payload["selected_store"] == "603"
     assert payload["selected_department"] == "6030117"
     assert payload["rows"][0]["sales_amount"] == 100.0
+
+
+def test_nginx_gives_hdyy01_time_to_finish_or_return_database_timeout():
+    source = (Path(__file__).parents[1] / "config" / "nginx.conf").read_text()
+    match = re.search(
+        r"location \^~ /api/sales/reports/hdyy01 \{(?P<body>.*?)\n\s*\}",
+        source,
+        re.DOTALL,
+    )
+
+    assert match is not None
+    assert "proxy_read_timeout 70s;" in match.group("body")
 
 
 @pytest.mark.skipif(

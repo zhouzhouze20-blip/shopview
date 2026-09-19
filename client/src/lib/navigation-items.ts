@@ -1,5 +1,5 @@
 import type React from "react";
-import { Activity, BarChart3, Building2, Calculator, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, FolderClosed, HardHat, Settings, Shield, Target, TicketPercent, Truck, Users, Warehouse } from "lucide-react";
+import { Activity, BarChart3, Building2, Calculator, CheckCircle2, CircleDollarSign, CreditCard, FileSpreadsheet, FileText, FolderClosed, HardHat, Settings, Shield, Target, TicketPercent, TrendingUp, Truck, Users, Warehouse } from "lucide-react";
 
 export interface NavigationItem {
   id: string;
@@ -49,6 +49,7 @@ export const navigationItems: NavigationItem[] = [
     icon: BarChart3,
     subItems: [
       { id: "sales-dashboard", name: "销售看板", icon: BarChart3 },
+      { id: "self-operated-sales-import", name: "自营销售导入", icon: FileSpreadsheet },
       { id: "category-performance", name: "品类主管绩效", icon: Target },
       {
         id: "activity-analysis-group",
@@ -56,6 +57,10 @@ export const navigationItems: NavigationItem[] = [
         icon: TicketPercent,
         subItems: [
           { id: "activity-analysis", name: "通用活动分析", icon: TicketPercent },
+          { id: "coupon-campaigns", name: "活动建档与分析", icon: TicketPercent },
+          { id: "coupon-live", name: "秋v卡券跟进", icon: TicketPercent },
+          { id: "new-century-campaign-analysis", name: "新世纪活动分析", icon: TrendingUp },
+          { id: "birthday-coupon-analysis", name: "中心L/C券分析", icon: CircleDollarSign },
           { id: "points-activity-analysis", name: "中心年中庆活动", icon: Calculator },
           { id: "star-diamond-analysis", name: "中心星钻会员", icon: Users },
         ],
@@ -82,6 +87,7 @@ export const navigationItems: NavigationItem[] = [
               { id: "od0002-sales-gross-profit", name: "OD0002 门店销售毛利汇总表", icon: FileSpreadsheet },
               { id: "od0004-monthly-followup", name: "OD0004 销售逐月跟进表", icon: FileSpreadsheet },
               { id: "od0005-micro-mall-brand-sales", name: "OD0005 微商城品牌销售统计", icon: FileSpreadsheet },
+              { id: "new-century-payment-report", name: "支付方式销售毛利报表", icon: FileSpreadsheet },
               { id: "hdyy01-group-operation-analysis", name: "HDYY01柜组经营分析表", icon: FileSpreadsheet },
             ],
           },
@@ -134,6 +140,7 @@ export const navigationItems: NavigationItem[] = [
       { id: "inventory-detail", name: "实时库存查询", icon: FileSpreadsheet },
       { id: "historical-inventory-detail", name: "历史库存明细报表", icon: FileSpreadsheet },
       { id: "inventory-movement-detail", name: "进销存明细报表", icon: FileSpreadsheet },
+      { id: "inventory-turnover", name: "商品周转财务月报", icon: FileSpreadsheet },
     ],
   },
   {
@@ -153,6 +160,9 @@ export const navigationItems: NavigationItem[] = [
       },
       { id: "joint-renewal-revenue", name: "联营续签收益分析", icon: FileSpreadsheet },
       { id: "joint-settlement", name: "联营结算单管理", icon: FileSpreadsheet },
+      { id: "cosmetics-payment-matching", name: "化妆品付款配票", icon: FileSpreadsheet },
+      { id: "joint-payment-confirmation", name: "联营付款单确认", icon: CheckCircle2 },
+      { id: "rental-receivables", name: "租赁应收未收", icon: CircleDollarSign },
       {
         id: "activity-settlement",
         name: "活动结算",

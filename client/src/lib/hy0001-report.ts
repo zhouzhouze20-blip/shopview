@@ -48,6 +48,9 @@ export type Hy0001Response = {
   manager_summary: Array<{
     manager_name: string;
     key_brand_count: number;
+    current_premium_buyers: number;
+    prior_premium_buyers: number;
+    premium_buyer_yoy: number | null;
     current_premium_sales: number;
     prior_premium_sales: number;
     premium_sales_yoy: number | null;

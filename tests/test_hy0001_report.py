@@ -3,6 +3,7 @@ import inspect
 from pathlib import Path
 
 from openpyxl import load_workbook
+import pytest
 
 from python_app.services.hy0001_excel import build_hy0001_workbook_file
 from python_app.services.hy0001_report import (
@@ -94,6 +95,9 @@ def test_report_adds_formal_manager_column_and_safe_yoy():
     assert report["rows"][0]["manager_name"] == "张三"
     assert report["rows"][0]["levels"][0]["sales_yoy"] == 0.25
     assert report["rows"][0]["levels"][2]["sales_yoy"] is None
+    assert report["manager_summary"][0]["current_premium_buyers"] == 10
+    assert report["manager_summary"][0]["prior_premium_buyers"] == 9
+    assert report["manager_summary"][0]["premium_buyer_yoy"] == pytest.approx(1 / 9)
     assert report["manager_summary"][0]["current_premium_sales"] == 300
     assert report["manager_summary"][0]["prior_premium_sales"] == 180
 
@@ -123,9 +127,13 @@ def test_export_matches_reference_structure_and_uses_formula_summary():
     assert detail["R4"].font.color.rgb == "FF008000"
     assert len(detail.conditional_formatting) == 8
     summary = workbook["主管汇总"]
-    assert summary["C2"].value.startswith("=SUMIF('明细'!")
+    assert summary["C1"].value == "本期黑金+黑钻人数"
+    assert "$P$4:$P$4" in summary["C2"].value
+    assert "$S$4:$S$4" in summary["C2"].value
+    assert summary["F2"].value.startswith("=SUMIF('明细'!")
     assert summary["E2"].font.color.rgb == "FFC00000"
-    assert len(summary.conditional_formatting) == 1
+    assert summary["H2"].font.color.rgb == "FFC00000"
+    assert len(summary.conditional_formatting) == 2
     export_file.close()
 
 

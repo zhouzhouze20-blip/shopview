@@ -1,3 +1,5 @@
+import InventoryTurnoverPage from "./sales-reports/inventory-turnover";
+import NewCenturyPaymentReportPage from "./sales-reports/new-century-payment-report";
 import { useState, useEffect, useRef, useMemo, useCallback, Component, ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,8 +15,13 @@ import FloorsPage from "./floors";
 import ContractsPage from "./contracts";
 import ContractUnitBindingsPage from "./contract-unit-bindings";
 import SalesDashboardPage from "./sales-dashboard";
+import SelfOperatedSalesImportPage from "./self-operated-sales-import";
 import CategoryPerformancePage from "./category-performance";
 import ActivityAnalysisPage from "./activity-analysis";
+import CouponCampaignsPage from "./activity-analysis/campaigns";
+import CouponLivePage from "./activity-analysis/coupon-live";
+import NewCenturyCampaignPage from "./activity-analysis/new-century-campaign";
+import BirthdayCouponAnalysisPage from "./activity-analysis/birthday-coupon";
 import VoucherMatchPage from "./activity-analysis/voucher-match";
 import ConfirmedRevenueDailyPage from "./activity-analysis/confirmed-revenue-daily";
 import CouponMonthlyBalancePage from "./activity-analysis/coupon-monthly-balance";
@@ -39,6 +46,9 @@ import RevenueMapPage from "./revenue-map";
 import RevenueDashboardPage from "./revenue-dashboard";
 import JointRenewalRevenueReportPage from "./joint-renewal-revenue-report";
 import JointSettlementStatementsPage from "./joint-settlement-statements";
+import CosmeticsPaymentMatchingPage from "./cosmetics-payment-matching";
+import JointPaymentConfirmationPage from "./joint-payment-confirmation";
+import RentalReceivablesPage from "./rental-receivables";
 import ManaframePage from "./manaframe";
 import SuppliersPage from "./suppliers";
 import SystemConfigPage from "./system-config";
@@ -159,8 +169,13 @@ const MODULE_LABELS: Record<string, string> = {
   contracts: "合同台账",
   "contract-unit-bindings": "合同柜位绑定",
   "sales-dashboard": "销售看板",
+  "self-operated-sales-import": "自营销售导入",
   "category-performance": "品类主管绩效",
   "activity-analysis": "活动分析",
+  "coupon-campaigns": "活动建档与分析",
+  "coupon-live": "秋v卡券跟进",
+  "new-century-campaign-analysis": "新世纪活动分析",
+  "birthday-coupon-analysis": "中心L/C券分析",
   "points-activity-analysis": "中心年中庆活动",
   "voucher-match": "凭证匹配",
   "confirmed-revenue-daily": "确认收入占比",
@@ -170,12 +185,14 @@ const MODULE_LABELS: Record<string, string> = {
   "commodity-sales-detail": "商品销售明细",
   "inventory-detail": "实时库存查询",
   "historical-inventory-detail": "历史库存明细报表",
+  "inventory-turnover": "商品周转财务月报",
   "inventory-movement-detail": "进销存明细报表",
   "settled-gross-profit-ranking": "结算后销售毛利排行表",
   "od0002-sales-gross-profit": "OD0002 门店销售毛利汇总表",
   "daily-sales-followup": "OD0001 销售逐日跟进表",
   "od0003-center-sales-followup": "OD0003 中心销售跟进表",
   "od0004-monthly-followup": "OD0004 销售逐月跟进表",
+  "new-century-payment-report": "新世纪支付方式销售毛利报表",
   "od0005-micro-mall-brand-sales": "OD0005 微商城品牌销售统计",
   "non-rental-monthly-revenue": "非租赁品牌月度收益表",
   "store-other-business-income": "门店其他业务收入",
@@ -186,6 +203,9 @@ const MODULE_LABELS: Record<string, string> = {
   "revenue-dashboard": "收益看板",
   "joint-renewal-revenue": "联营续签合同收益影响分析",
   "joint-settlement": "联营结算单管理",
+  "cosmetics-payment-matching": "化妆品付款配票",
+  "joint-payment-confirmation": "联营付款单确认",
+  "rental-receivables": "租赁应收未收",
   floors: "楼层定义",
   "base-maps": "底图管理",
   "unit-map-versions": "柜位图版本",
@@ -712,10 +732,20 @@ export default function MainDashboard() {
         return <ContractUnitBindingsPage />;
       case "sales-dashboard":
         return <SalesDashboardPage />;
+      case "self-operated-sales-import":
+        return <SelfOperatedSalesImportPage />;
       case "category-performance":
         return <CategoryPerformancePage />;
       case "activity-analysis":
         return <ActivityAnalysisPage />;
+      case "coupon-campaigns":
+        return <CouponCampaignsPage />;
+      case "coupon-live":
+        return <CouponLivePage />;
+      case "new-century-campaign-analysis":
+        return <NewCenturyCampaignPage />;
+      case "birthday-coupon-analysis":
+        return <BirthdayCouponAnalysisPage />;
       case "points-activity-analysis":
         return <PointsActivityAnalysisPage />;
       case "voucher-match":
@@ -732,6 +762,8 @@ export default function MainDashboard() {
         return <CommoditySalesDetailReportPage />;
       case "inventory-detail":
         return <InventoryDetailReportPage />;
+      case "inventory-turnover":
+        return <InventoryTurnoverPage />;
       case "historical-inventory-detail":
         return <HistoricalInventoryDetailReportPage />;
       case "inventory-movement-detail":
@@ -746,6 +778,8 @@ export default function MainDashboard() {
         return <Od0003CenterSalesFollowupPage />;
       case "od0004-monthly-followup":
         return <Od0004MonthlyFollowupPage />;
+      case "new-century-payment-report":
+        return <NewCenturyPaymentReportPage />;
       case "od0005-micro-mall-brand-sales":
         return <Od0005MicroMallBrandSalesPage />;
       case "non-rental-monthly-revenue":
@@ -770,6 +804,12 @@ export default function MainDashboard() {
         return <DecorationsPage initialTab="todos" />;
       case "joint-settlement":
         return <JointSettlementStatementsPage />;
+      case "cosmetics-payment-matching":
+        return <CosmeticsPaymentMatchingPage />;
+      case "joint-payment-confirmation":
+        return <JointPaymentConfirmationPage />;
+      case "rental-receivables":
+        return <RentalReceivablesPage />;
       case "user-role-scope":
         return <SystemConfigPage initialTab="users" />;
       case "users":

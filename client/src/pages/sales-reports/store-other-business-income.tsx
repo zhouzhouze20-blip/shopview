@@ -233,7 +233,7 @@ export default function StoreOtherBusinessIncomePage() {
       <Card>
         <CardHeader><CardTitle className="text-base">查询条件</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div className="space-y-2">
               <Label>会计年度</Label>
               <Select value={String(draft.financialYear)} onValueChange={(value) => setDraft((current) => ({ ...current, financialYear: Number(value) }))}>
@@ -241,6 +241,17 @@ export default function StoreOtherBusinessIncomePage() {
                 <SelectContent>
                   {Array.from({ length: 6 }, (_, index) => defaults.financialYear - index).map((year) => (
                     <SelectItem key={year} value={String(year)}>{year}年</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>截止会计期间</Label>
+              <Select value={String(draft.endPeriod)} onValueChange={(value) => setDraft((current) => ({ ...current, endPeriod: Number(value) }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((period) => (
+                    <SelectItem key={period} value={String(period)}>{String(period).padStart(2, "0")}期</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

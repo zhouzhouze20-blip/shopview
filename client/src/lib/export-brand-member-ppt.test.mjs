@@ -197,6 +197,17 @@ test("shopping center department four and new century department six use the men
   assert.equal(supplierPptTemplateVariant(departmentReport("新世纪五部"), "常州新世纪商城"), "default");
 });
 
+test("cosmetics departments use the cosmetics PPT template before department-one routing", () => {
+  const departmentReport = (departmentName, groupName = report.target.group_name) => ({
+    ...report,
+    target: { ...report.target, group_name: groupName, department_name: departmentName },
+  });
+
+  assert.equal(supplierPptTemplateVariant(departmentReport("中心一部(化妆)", "Lancome兰蔻厅"), "常州购物中心"), "default");
+  assert.equal(supplierPptTemplateVariant(departmentReport("购物中心一部（化妆品）"), "常州购物中心"), "default");
+  assert.equal(supplierPptTemplateVariant(departmentReport("新世纪一部(化妆)"), "常州新世纪商城"), "default");
+});
+
 test("shopping center and new century department one use the luxury PPT template", () => {
   const departmentReport = (departmentName) => ({
     ...report,

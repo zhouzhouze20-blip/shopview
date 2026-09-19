@@ -9,11 +9,41 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Activity, ArrowRight, FileText, Plus, RefreshCw, Route, Shield, Users, Building2, Filter, Search } from "lucide-react";
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  LabelList,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Building2,
+  Eye,
+  FileText,
+  Filter,
+  LogIn,
+  MousePointerClick,
+  Plus,
+  RefreshCw,
+  Route,
+  Search,
+  Shield,
+  Users,
+} from "lucide-react";
 import {
   buildRolePermissionTree,
   collectPermissionTreeIds,
@@ -26,7 +56,9 @@ import {
   type SystemConfigTab,
 } from "@/lib/system-config-query-scope";
 import { formatOperationQueryConditions } from "@/lib/operation-log-detail";
-import { buildSalesBrowseJourneys } from "@/lib/sales-browse-journey";
+import { buildSalesBrowseJourneys, type SalesBrowseJourney } from "@/lib/sales-browse-journey";
+import { AuditUsageBreakdown, type AuditUsageBreakdownItem } from "@/components/audit-usage-breakdown";
+import { buildAuditUsageTrendUrl, type AuditUsageDimension } from "@/lib/audit-usage-trend";
 
 interface StoreOption {
   storeId: number;
@@ -100,6 +132,36 @@ interface UserItem {
 interface MetaOption {
   id: number;
   name: string;
+  username?: string;
+  employee_no?: string | null;
+}
+
+function PolicySubjectPicker({ options, value, onChange, isUser }: {
+  options: MetaOption[]; value: string; onChange: (value: string) => void; isUser: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selected = options.find(item => String(item.id) === value);
+  const label = (item: MetaOption) => isUser ? `${item.name}（${item.employee_no || item.username || item.id}）` : item.name;
+  const filtered = options.filter(item => [item.name, item.employee_no, item.username].some(
+    field => field?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
+  return <Popover open={open} onOpenChange={(next) => { setOpen(next); setSearch(""); }}>
+    <PopoverTrigger asChild><Button type="button" variant="outline" role="combobox" aria-label="授权主体" aria-expanded={open} className="w-full justify-between font-normal">
+      <span className="truncate">{selected ? label(selected) : "选择主体"}</span><Search className="ml-2 h-4 w-4 shrink-0 text-slate-400" />
+    </Button></PopoverTrigger>
+    <PopoverContent align="start" collisionPadding={12} className="z-[100] w-[var(--radix-popover-trigger-width)] overflow-hidden border-slate-200 bg-white p-0 text-slate-950 shadow-xl">
+      <Command shouldFilter={false} className="h-auto bg-white text-slate-950 [&_[cmdk-input-wrapper]]:shrink-0 [&_[cmdk-input-wrapper]]:border-slate-200 [&_[cmdk-item]]:cursor-pointer [&_[cmdk-item]]:data-[selected=true]:bg-slate-100 [&_[cmdk-item]]:data-[selected=true]:text-slate-950">
+        <CommandInput value={search} onValueChange={setSearch} placeholder={isUser ? "搜索姓名、工号或账号" : "搜索角色名称"} />
+        <CommandList className="max-h-[min(280px,calc(var(--radix-popover-content-available-height)-48px))] overflow-y-auto overscroll-contain bg-white">
+          <CommandEmpty>没有匹配的{isUser ? "用户" : "角色"}</CommandEmpty>
+          {!search && <CommandItem value="clear" onSelect={() => { onChange(""); setOpen(false); }}>清空选择</CommandItem>}
+          {filtered.map(item => <CommandItem key={item.id} value={String(item.id)} onSelect={() => { onChange(String(item.id)); setOpen(false); setSearch(""); }}>
+            {label(item)}{String(item.id) === value && <span className="ml-auto text-teal-700">已选</span>}
+          </CommandItem>)}
+        </CommandList>
+      </Command>
+    </PopoverContent>
+  </Popover>;
 }
 
 interface DataPolicyItem {
@@ -250,6 +312,35 @@ interface OperationLogItem {
   created_at: string;
 }
 
+interface AuditMetricValues {
+  login_users: number;
+  login_count: number;
+  operation_users: number;
+  operation_count: number;
+}
+
+interface AuditStatistics {
+  generated_at: string;
+  today: AuditMetricValues;
+  month_to_date: AuditMetricValues;
+  last_year_same_period: AuditMetricValues;
+  yoy: Record<keyof AuditMetricValues, number | null>;
+}
+
+interface AuditUsageTrendPoint {
+  bucket: string;
+  usage_users: number;
+  operation_count: number;
+}
+
+interface AuditUsageTrend {
+  generated_at: string;
+  granularity: "month" | "year";
+  period: string;
+  series: AuditUsageTrendPoint[];
+  items?: AuditUsageBreakdownItem[];
+}
+
 const loginDeviceLabel: Record<string, string> = {
   MOBILE: "手机端",
   DESKTOP: "电脑端",
@@ -381,6 +472,23 @@ const formatDateTime = (value?: string | null) => {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("zh-CN", { hour12: false });
 };
+
+const formatYoy = (value: number | null | undefined) => {
+  if (value === null || value === undefined) return "去年同期无数据";
+  if (value > 0) return `同比 +${value}%`;
+  return `同比 ${value}%`;
+};
+
+const getCurrentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const formatTrendBucket = (bucket: string, granularity: "month" | "year") => (
+  granularity === "month"
+    ? `${Number(bucket.slice(-2))}日`
+    : `${Number(bucket.slice(-2))}月`
+);
 
 /** 与后端 scope 匹配一致（authz._norm），用于勾选状态比较 */
 const normScopeCode = (value: string) => String(value ?? "").trim().toUpperCase();
@@ -523,6 +631,11 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
   const [auditEndDate, setAuditEndDate] = useState("");
   const [loginResultFilter, setLoginResultFilter] = useState("ALL");
   const [operationActionFilter, setOperationActionFilter] = useState("ALL");
+  const [auditUsageDimension, setAuditUsageDimension] = useState<AuditUsageDimension>("trend");
+  const [auditTrendGranularity, setAuditTrendGranularity] = useState<"month" | "year">("month");
+  const [auditTrendMonth, setAuditTrendMonth] = useState(getCurrentMonth);
+  const [auditTrendYear, setAuditTrendYear] = useState(() => String(new Date().getFullYear()));
+  const [salesJourneyDetail, setSalesJourneyDetail] = useState<SalesBrowseJourney | null>(null);
   const [activeScopeDepartmentKey, setActiveScopeDepartmentKey] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
@@ -605,6 +718,26 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
     queryKey: ["/api/system/contract-permissions"],
     queryFn: () => apiGet<ContractPermissionUser[]>("/api/system/contract-permissions"),
     enabled: queryScope.contractPermissions,
+  });
+
+  const { data: auditStatistics, isFetching: auditStatisticsFetching } = useQuery<AuditStatistics>({
+    queryKey: ["/api/system/audit-statistics"],
+    queryFn: () => apiGet<AuditStatistics>("/api/system/audit-statistics"),
+    enabled: tab === "audit-logs",
+  });
+
+  const auditTrendPeriod = auditTrendGranularity === "month" ? auditTrendMonth : auditTrendYear;
+  const auditTrendPeriodValid = auditTrendGranularity === "month"
+    ? /^\d{4}-\d{2}$/.test(auditTrendPeriod)
+    : /^\d{4}$/.test(auditTrendPeriod);
+  const {
+    data: auditUsageTrend,
+    isFetching: auditUsageTrendFetching,
+    isError: auditUsageTrendError,
+  } = useQuery<AuditUsageTrend>({
+    queryKey: ["/api/system/audit-statistics/trend", auditTrendGranularity, auditTrendPeriod, auditUsageDimension],
+    queryFn: () => apiGet<AuditUsageTrend>(buildAuditUsageTrendUrl(auditTrendGranularity, auditTrendPeriod, auditUsageDimension)),
+    enabled: tab === "audit-logs" && auditTrendPeriodValid,
   });
 
   const loginLogsQueryString = buildQueryString({
@@ -1714,6 +1847,225 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 font-semibold text-slate-900">
+                      <BarChart3 className="h-5 w-5 text-blue-700" />
+                      使用情况统计
+                    </div>
+                    <p className="mt-1 text-sm text-slate-500">
+                      登录人数按成功登录用户去重；月度同比为本月截至当前时刻与去年同期对比。
+                    </p>
+                  </div>
+                  {auditStatisticsFetching ? <span className="text-xs text-slate-500">统计中...</span> : null}
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+                  {[
+                    {
+                      label: "今日登录人数",
+                      value: auditStatistics?.today.login_users,
+                      note: "成功登录去重",
+                      icon: LogIn,
+                    },
+                    {
+                      label: "今日操作次数",
+                      value: auditStatistics?.today.operation_count,
+                      note: "全部审计动作",
+                      icon: MousePointerClick,
+                    },
+                    {
+                      label: "本月登录人数",
+                      value: auditStatistics?.month_to_date.login_users,
+                      note: formatYoy(auditStatistics?.yoy.login_users),
+                      yoy: auditStatistics?.yoy.login_users,
+                      icon: Users,
+                    },
+                    {
+                      label: "本月登录次数",
+                      value: auditStatistics?.month_to_date.login_count,
+                      note: formatYoy(auditStatistics?.yoy.login_count),
+                      yoy: auditStatistics?.yoy.login_count,
+                      icon: LogIn,
+                    },
+                    {
+                      label: "本月操作人数",
+                      value: auditStatistics?.month_to_date.operation_users,
+                      note: formatYoy(auditStatistics?.yoy.operation_users),
+                      yoy: auditStatistics?.yoy.operation_users,
+                      icon: Users,
+                    },
+                    {
+                      label: "本月操作次数",
+                      value: auditStatistics?.month_to_date.operation_count,
+                      note: formatYoy(auditStatistics?.yoy.operation_count),
+                      yoy: auditStatistics?.yoy.operation_count,
+                      icon: MousePointerClick,
+                    },
+                  ].map(({ label, value, note, yoy, icon: MetricIcon }) => (
+                    <div key={label} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center justify-between gap-2 text-sm text-slate-600">
+                        <span>{label}</span>
+                        <MetricIcon className="h-4 w-4 text-slate-400" />
+                      </div>
+                      <div className="mt-2 text-2xl font-bold text-slate-950">{value ?? "—"}</div>
+                      <div className={[
+                        "mt-1 text-xs",
+                        yoy == null ? "text-slate-500" : yoy > 0 ? "text-emerald-600" : yoy < 0 ? "text-rose-600" : "text-slate-500",
+                      ].join(" ")}>
+                        {note}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <Tabs value={auditUsageDimension} onValueChange={(value) => setAuditUsageDimension(value as AuditUsageDimension)} className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <TabsList aria-label="使用统计维度" className="h-auto flex-wrap justify-start">
+                        <TabsTrigger value="trend">{auditTrendGranularity === "month" ? "每日使用趋势" : "每月使用趋势"}</TabsTrigger>
+                        <TabsTrigger value="person">按人统计</TabsTrigger>
+                        <TabsTrigger value="module">按使用模块统计</TabsTrigger>
+                      </TabsList>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {auditUsageDimension === "trend"
+                          ? "使用人数按成功登录用户去重，操作次数为全部审计动作；当前周期统计到今天。"
+                          : auditUsageDimension === "person"
+                            ? "按账号汇总成功登录和全部审计动作；模块数按资源编码去重，最近使用含登录及操作。当前周期统计到今天。"
+                            : "按模块资源编码汇总全部审计动作；使用人数按操作用户去重（不含未关联用户），进入和查询为操作次数的子集。当前周期统计到今天。"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select
+                        value={auditTrendGranularity}
+                        onValueChange={(value) => setAuditTrendGranularity(value as "month" | "year")}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="month">按月统计</SelectItem>
+                          <SelectItem value="year">按年统计</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {auditTrendGranularity === "month" ? (
+                        <Input
+                          aria-label="选择统计月份"
+                          className="w-40"
+                          type="month"
+                          max={getCurrentMonth()}
+                          value={auditTrendMonth}
+                          onChange={(event) => setAuditTrendMonth(event.target.value)}
+                        />
+                      ) : (
+                        <Input
+                          aria-label="选择统计年份"
+                          className="w-32"
+                          type="number"
+                          min="2000"
+                          max={new Date().getFullYear()}
+                          value={auditTrendYear}
+                          onChange={(event) => setAuditTrendYear(event.target.value)}
+                        />
+                      )}
+                      {auditUsageTrendFetching ? <span className="text-xs text-slate-500">加载统计...</span> : null}
+                    </div>
+                  </div>
+
+                  <TabsContent value={auditUsageDimension}>
+                  {!auditTrendPeriodValid ? (
+                    <div className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+                      请选择有效的{auditTrendGranularity === "month" ? "月份" : "四位年份"}。
+                    </div>
+                  ) : auditUsageTrendError ? (
+                    <div className="mt-4 rounded-md bg-rose-50 p-3 text-sm text-rose-700">
+                      使用统计加载失败，请稍后刷新重试。
+                    </div>
+                  ) : auditUsageTrendFetching && !auditUsageTrend ? (
+                    <div className="py-12 text-center text-sm text-slate-500" role="status">正在加载统计...</div>
+                  ) : auditUsageDimension !== "trend" ? (
+                    <AuditUsageBreakdown key={auditUsageDimension} dimension={auditUsageDimension} items={auditUsageTrend?.items ?? []} />
+                  ) : (
+                    <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.7fr)]">
+                      <div className="h-[330px] min-w-0 rounded-lg border border-slate-100 p-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={auditUsageTrend?.series ?? []} margin={{ top: 24, right: 12, left: 4, bottom: 4 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis
+                              dataKey="bucket"
+                              fontSize={12}
+                              tickFormatter={(value) => formatTrendBucket(String(value), auditTrendGranularity)}
+                            />
+                            <YAxis yAxisId="users" allowDecimals={false} fontSize={12} />
+                            <YAxis yAxisId="operations" orientation="right" allowDecimals={false} fontSize={12} />
+                            <Tooltip
+                              labelFormatter={(value) => formatTrendBucket(String(value), auditTrendGranularity)}
+                              formatter={(value) => Number(value).toLocaleString("zh-CN")}
+                            />
+                            <Legend />
+                            <Bar
+                              yAxisId="operations"
+                              dataKey="operation_count"
+                              name="操作次数"
+                              fill="#60a5fa"
+                              radius={[4, 4, 0, 0]}
+                            >
+                              <LabelList
+                                dataKey="operation_count"
+                                position="insideTop"
+                                fill="#ffffff"
+                                fontSize={10}
+                                formatter={(value: unknown) => Number(value).toLocaleString("zh-CN")}
+                              />
+                            </Bar>
+                            <Line
+                              yAxisId="users"
+                              type="monotone"
+                              dataKey="usage_users"
+                              name="使用人数"
+                              stroke="#7c3aed"
+                              strokeWidth={2.5}
+                              dot={{ r: 2.5 }}
+                            >
+                              <LabelList
+                                dataKey="usage_users"
+                                position="top"
+                                offset={8}
+                                fill="#6d28d9"
+                                fontSize={11}
+                                fontWeight={600}
+                              />
+                            </Line>
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <div className="max-h-[330px] overflow-auto rounded-lg border border-slate-200">
+                        <Table>
+                          <TableHeader className="sticky top-0 bg-white">
+                            <TableRow>
+                              <TableHead>{auditTrendGranularity === "month" ? "日期" : "月份"}</TableHead>
+                              <TableHead className="text-right">使用人数</TableHead>
+                              <TableHead className="text-right">操作次数</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {(auditUsageTrend?.series ?? []).map((item) => (
+                              <TableRow key={item.bucket}>
+                                <TableCell>{formatTrendBucket(item.bucket, auditTrendGranularity)}</TableCell>
+                                <TableCell className="text-right tabular-nums">{item.usage_users}</TableCell>
+                                <TableCell className="text-right tabular-nums">{item.operation_count}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+                  </TabsContent>
+                </Tabs>
+              </div>
+
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[180px_minmax(220px,1fr)_160px_160px_180px_120px]">
                 <Select value={auditLogType} onValueChange={(value) => setAuditLogType(value as "login" | "operation")}>
                   <SelectTrigger>
@@ -1766,6 +2118,8 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
                 <Button
                   variant="outline"
                   onClick={() => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/system/audit-statistics"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/system/audit-statistics/trend"] });
                     queryClient.invalidateQueries({ queryKey: ["/api/system/login-logs"] });
                     queryClient.invalidateQueries({ queryKey: ["/api/system/operation-logs"] });
                   }}
@@ -1793,32 +2147,19 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
 
                   <div className="mt-4 space-y-3">
                     {salesBrowseJourneys.slice(0, 10).map((journey) => (
-                      <div key={journey.key} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-medium text-slate-900">{journey.userName}</span>
-                          <span className="text-xs text-slate-500">
+                      <div key={journey.key} className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="font-medium text-slate-900">{journey.userName}</span>
+                            <Badge variant="secondary">{journey.steps.length} 个步骤</Badge>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
                             {formatDateTime(journey.startedAt)} 至 {formatDateTime(journey.endedAt)}
-                          </span>
+                          </div>
                         </div>
-                        <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
-                          {journey.steps.map((step, index) => (
-                            <div key={step.logId} className="flex shrink-0 items-center gap-2">
-                              {index > 0 ? <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" /> : null}
-                              <div className={[
-                                "min-w-32 rounded-lg border px-3 py-2",
-                                step.kind === "return"
-                                  ? "border-amber-200 bg-amber-50"
-                                  : step.kind === "ticket"
-                                    ? "border-violet-200 bg-violet-50"
-                                    : "border-slate-200 bg-slate-50",
-                              ].join(" ")}>
-                                <div className="text-[11px] text-slate-500">{formatDateTime(step.time)}</div>
-                                <div className="mt-1 text-xs font-medium text-slate-700">{step.label}</div>
-                                {step.value ? <div className="mt-0.5 max-w-48 truncate text-sm font-semibold text-slate-950" title={step.value}>{step.value}</div> : null}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                        <Button variant="outline" size="sm" className="shrink-0" onClick={() => setSalesJourneyDetail(journey)}>
+                          <Eye className="mr-2 h-4 w-4" />点击查看明细
+                        </Button>
                       </div>
                     ))}
                     {!salesBrowseJourneys.length ? (
@@ -1912,6 +2253,50 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={salesJourneyDetail !== null} onOpenChange={(open) => !open && setSalesJourneyDetail(null)}>
+        <DialogContent className="max-h-[85vh] max-w-6xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Route className="h-5 w-5 text-teal-700" />
+              销售看板浏览明细
+            </DialogTitle>
+          </DialogHeader>
+          {salesJourneyDetail ? (
+            <div className="space-y-4">
+              <div className="flex flex-col gap-1 rounded-lg bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="font-medium text-slate-900">{salesJourneyDetail.userName}</span>
+                <span className="text-xs text-slate-500">
+                  {formatDateTime(salesJourneyDetail.startedAt)} 至 {formatDateTime(salesJourneyDetail.endedAt)}
+                </span>
+              </div>
+              <div className="flex items-stretch gap-2 overflow-x-auto pb-2">
+                {salesJourneyDetail.steps.map((step, index) => (
+                  <div key={step.logId} className="flex shrink-0 items-center gap-2">
+                    {index > 0 ? <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" /> : null}
+                    <div className={[
+                      "min-w-36 rounded-lg border px-3 py-2",
+                      step.kind === "return"
+                        ? "border-amber-200 bg-amber-50"
+                        : step.kind === "ticket"
+                          ? "border-violet-200 bg-violet-50"
+                          : "border-slate-200 bg-slate-50",
+                    ].join(" ")}>
+                      <div className="text-[11px] text-slate-500">{formatDateTime(step.time)}</div>
+                      <div className="mt-1 text-xs font-medium text-slate-700">{step.label}</div>
+                      {step.value ? (
+                        <div className="mt-0.5 max-w-56 whitespace-normal break-words text-sm font-semibold text-slate-950">
+                          {step.value}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={contractPermissionDialogOpen} onOpenChange={setContractPermissionDialogOpen}>
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
@@ -2474,20 +2859,16 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
             </div>
             <div>
               <Label>授权主体</Label>
-              <Select value={policyForm.subject_id || "none"} onValueChange={(value) => setPolicyForm((prev) => ({ ...prev, subject_id: value === "none" ? "" : value }))}>
-                <SelectTrigger><SelectValue placeholder="选择主体" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">选择主体</SelectItem>
-                  {currentSubjectOptions.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <PolicySubjectPicker key={`${policyDialogOpen}-${policyForm.subject_type}`} options={currentSubjectOptions}
+                value={policyForm.subject_id} isUser={policyForm.subject_type === "USER"}
+                onChange={(value) => setPolicyForm(prev => ({ ...prev, subject_id: value }))} />
             </div>
             <div>
               <Label>资源</Label>
               <Select value={policyForm.resource_code} onValueChange={(value) => setPolicyForm((prev) => ({ ...prev, resource_code: value }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {meta?.resource_codes.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  {meta?.resource_codes.map((item) => <SelectItem key={item} value={item}>{item === "self_operated_sales" ? "自营公司销售（独立范围）" : item}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -2535,6 +2916,9 @@ export default function SystemConfigPage({ initialTab = "users" }: SystemConfigP
               <span className="text-sm">启用策略</span>
             </div>
           </div>
+          {policyForm.resource_code === "self_operated_sales" && <div className="rounded-lg bg-teal-50 p-3 text-sm text-teal-900">
+            自营公司范围独立于百货业务范围。范围模式选 ALL 可查看服装及餐饮；选 CUSTOM 时，部门范围填写 CLOTHING（服装）或 BAKERY（餐饮），门店范围填写 SELF_OPERATED 可查看整个自营公司。
+          </div>}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>门店范围</Label>

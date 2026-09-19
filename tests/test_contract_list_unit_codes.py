@@ -100,6 +100,17 @@ class ContractListUnitCodesTest(unittest.TestCase):
         sql = "\n".join(db.sql).lower()
         self.assertIn("cm.sjcgdate", sql)
 
+    def test_contract_group_range_end_uses_main_contract_end_date(self):
+        db = _FakeDb()
+        scope = SimpleNamespace(all_access=True, allow={}, deny={})
+
+        with patch.object(contracts_router, "_table_exists", return_value=True):
+            contracts_router._load_contract_list_items(db, scope, limit=100)
+
+        sql = "\n".join(db.sql).lower()
+        self.assertIn("cm.cmlapdate as range_end_date", sql)
+        self.assertNotIn("max(cmf.cmflapdate) as range_end_date", sql)
+
     def test_contract_type_join_keeps_case_distinct_codes_separate(self):
         join_sql = contracts_router._contract_type_join_sql(True)
 

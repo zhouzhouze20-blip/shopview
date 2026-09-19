@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Any, Iterable
@@ -29,7 +29,15 @@ PURCHASE_FREQUENCY_DEFINITIONS = (
     ("repeat_purchase", "多次客", 2),
 )
 
-BRAND_MEMBER_QUERY_TIMEOUT_SECONDS = 120
+# Full-year brand-member analysis includes historical classification and inflow
+# attribution queries. Production evidence shows the latter can exceed 120s.
+BRAND_MEMBER_QUERY_TIMEOUT_SECONDS = 300
+
+# salehead.rqsj is used only as an index-friendly coarse window. The exact
+# business-period check remains on salegoodslist.sglhsrq so month-end posting
+# differences do not change the report amount.
+SALE_HEADER_DATE_GUARD_DAYS = 31
+MEMBER_TICKET_BATCH_SIZE = 500
 
 AI_FORBIDDEN_TERMS = (
     "同比",
@@ -400,6 +408,351 @@ def load_group_meta(db: Session, store_code: str, group_code: str) -> dict[str, 
     )
 
 
+def _load_cross_shopping_rows(
+    db: Session,
+    *,
+    store_code: str,
+    target_group_code: str,
+    target_department_code: str,
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    """Aggregate same-period purchases by target-brand buyers in other groups."""
+    target_members = _load_target_period_members(
+        db,
+        store_code=store_code,
+        target_group_code=target_group_code,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not target_members:
+        return [
+            {
+                "target_member_count": 0,
+                "other_department_buyer_count": 0,
+                "total_sales_revenue": 0,
+            }
+        ]
+
+    tickets = _load_member_period_tickets(
+        db,
+        store_code=store_code,
+        member_nos=target_members,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not tickets:
+        return [
+            {
+                "target_member_count": len(target_members),
+                "other_department_buyer_count": 0,
+                "total_sales_revenue": 0,
+            }
+        ]
+
+    return _rows(
+        db,
+        """
+        WITH period_member_heads AS MATERIALIZED (
+          SELECT ticket.billno, ticket.member_no
+          FROM UNNEST(
+            CAST(:ticket_billnos AS text[]),
+            CAST(:ticket_member_nos AS text[])
+          ) AS ticket(billno, member_no)
+        ),
+        other_member_group_receipts AS MATERIALIZED (
+          SELECT
+            heads.member_no,
+            heads.billno,
+            UPPER(TRIM(BOTH FROM dept.mfcode)) AS department_code,
+            COALESCE(NULLIF(TRIM(BOTH FROM dept.mfcname), ''), TRIM(BOTH FROM dept.mfcode)) AS department_name,
+            UPPER(TRIM(BOTH FROM groups.mfcode)) AS group_code,
+            COALESCE(NULLIF(TRIM(BOTH FROM groups.mfcname), ''), TRIM(BOTH FROM groups.mfcode)) AS group_name,
+            SUM(COALESCE(lines.sglxssr, 0)) AS receipt_sales_revenue
+          FROM period_member_heads heads
+          JOIN salegoodslist lines
+            ON lines.sglbillno = CAST(heads.billno AS numeric)
+           AND lines.sglmarket = :store_code
+           AND lines.sglhsrq BETWEEN :start_date AND :end_date
+          JOIN manaframe groups
+            ON UPPER(TRIM(BOTH FROM groups.mfcode))
+               = UPPER(TRIM(BOTH FROM COALESCE(lines.sglmfid, '')))
+          JOIN manaframe dept
+            ON UPPER(TRIM(BOTH FROM dept.mfcode))
+               = UPPER(TRIM(BOTH FROM COALESCE(groups.mfpcode, '')))
+          WHERE UPPER(TRIM(BOTH FROM groups.mfcode)) <> :target_group_code
+          GROUP BY
+            heads.member_no,
+            heads.billno,
+            department_code,
+            department_name,
+            group_code,
+            group_name
+        ),
+        other_member_group_sales AS MATERIALIZED (
+          SELECT
+            member_no,
+            department_code,
+            department_name,
+            group_code,
+            group_name,
+            SUM(receipt_sales_revenue) AS sales_revenue,
+            BOOL_OR(receipt_sales_revenue > 0) AS had_positive_purchase
+          FROM other_member_group_receipts
+          GROUP BY member_no, department_code, department_name, group_code, group_name
+        ),
+        qualified_group_sales AS MATERIALIZED (
+          SELECT *
+          FROM other_member_group_sales
+          WHERE had_positive_purchase IS TRUE
+        ),
+        target_totals AS (
+          SELECT CAST(:target_member_count AS bigint) AS target_member_count
+        ),
+        other_totals AS (
+          SELECT
+            COUNT(DISTINCT member_no) FILTER (
+              WHERE department_code <> :target_department_code
+            ) AS other_department_buyer_count,
+            COALESCE(SUM(sales_revenue) FILTER (
+              WHERE department_code <> :target_department_code
+            ), 0) AS total_sales_revenue,
+            COUNT(DISTINCT member_no) FILTER (
+              WHERE department_code = :target_department_code
+            ) AS same_department_buyer_count,
+            COALESCE(SUM(sales_revenue) FILTER (
+              WHERE department_code = :target_department_code
+            ), 0) AS same_department_sales_revenue
+          FROM qualified_group_sales
+        ),
+        department_totals AS (
+          SELECT
+            department_code,
+            department_name,
+            COUNT(DISTINCT member_no) AS department_buyer_count,
+            COALESCE(SUM(sales_revenue), 0) AS department_sales_revenue
+          FROM qualified_group_sales
+          GROUP BY department_code, department_name
+        ),
+        group_totals AS (
+          SELECT
+            department_code,
+            department_name,
+            group_code,
+            group_name,
+            COUNT(*) AS group_buyer_count,
+            COALESCE(SUM(sales_revenue), 0) AS group_sales_revenue
+          FROM qualified_group_sales
+          GROUP BY department_code, department_name, group_code, group_name
+        )
+        SELECT
+          target_totals.target_member_count,
+          other_totals.other_department_buyer_count,
+          other_totals.total_sales_revenue,
+          other_totals.same_department_buyer_count,
+          other_totals.same_department_sales_revenue,
+          departments.department_code,
+          departments.department_name,
+          departments.department_buyer_count,
+          departments.department_sales_revenue,
+          groups.group_code,
+          groups.group_name,
+          groups.group_buyer_count,
+          groups.group_sales_revenue
+        FROM target_totals
+        CROSS JOIN other_totals
+        LEFT JOIN department_totals departments ON TRUE
+        LEFT JOIN group_totals groups
+          ON groups.department_code = departments.department_code
+        ORDER BY
+          departments.department_sales_revenue DESC NULLS LAST,
+          departments.department_buyer_count DESC NULLS LAST,
+          departments.department_name,
+          groups.group_sales_revenue DESC NULLS LAST,
+          groups.group_buyer_count DESC NULLS LAST,
+          groups.group_name
+        """,
+        {
+            "store_code": store_code.strip(),
+            "target_group_code": _clean_code(target_group_code),
+            "target_department_code": _clean_code(target_department_code),
+            "start_date": start_date,
+            "end_date": end_date,
+            "target_member_count": len(target_members),
+            "ticket_billnos": [str(ticket["billno"]) for ticket in tickets],
+            "ticket_member_nos": [str(ticket["member_no"]) for ticket in tickets],
+        },
+    )
+
+
+def _load_target_period_members(
+    db: Session,
+    *,
+    store_code: str,
+    target_group_code: str,
+    start_date: date,
+    end_date: date,
+) -> list[str]:
+    rows = _rows(
+        db,
+        """
+        WITH target_member_receipts AS MATERIALIZED (
+          SELECT
+            NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no,
+            s.sglbillno AS billno,
+            SUM(COALESCE(s.sglxssr, 0)) AS sales_revenue
+          FROM salegoodslist s
+          JOIN salehead h
+            ON h.billno = s.sglbillno
+           AND h.mkt = s.sglmarket
+          WHERE s.sglmarket = :store_code
+            AND s.sglmfid = :target_group_code
+            AND s.sglhsrq BETWEEN :start_date AND :end_date
+            AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+          GROUP BY member_no, s.sglbillno
+        )
+        SELECT member_no
+        FROM target_member_receipts
+        GROUP BY member_no
+        HAVING BOOL_OR(sales_revenue > 0)
+        ORDER BY member_no
+        """,
+        {
+            "store_code": store_code.strip(),
+            "target_group_code": _clean_code(target_group_code),
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    return [str(row["member_no"]) for row in rows if row.get("member_no")]
+
+
+def _load_member_period_tickets(
+    db: Session,
+    *,
+    store_code: str,
+    member_nos: Iterable[str],
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    """Resolve only the period receipt map before touching sale detail rows."""
+    members = list(dict.fromkeys(str(member_no) for member_no in member_nos if member_no))
+    if not members:
+        return []
+
+    header_start = start_date - timedelta(days=SALE_HEADER_DATE_GUARD_DAYS)
+    header_end = end_date + timedelta(days=SALE_HEADER_DATE_GUARD_DAYS + 1)
+    tickets: list[dict[str, Any]] = []
+    for offset in range(0, len(members), MEMBER_TICKET_BATCH_SIZE):
+        batch = members[offset : offset + MEMBER_TICKET_BATCH_SIZE]
+        tickets.extend(
+            _rows(
+                db,
+                """
+                SELECT
+                  h.billno::text AS billno,
+                  NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no
+                FROM salehead h
+                WHERE h.mkt = :store_code
+                  AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '')
+                      = ANY(CAST(:member_nos AS text[]))
+                  AND h.rqsj >= :header_start
+                  AND h.rqsj < :header_end
+                  AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+                """,
+                {
+                    "store_code": store_code.strip(),
+                    "member_nos": batch,
+                    "header_start": header_start,
+                    "header_end": header_end,
+                },
+            )
+        )
+    return tickets
+
+
+def load_brand_member_cross_shopping(
+    db: Session,
+    *,
+    store_code: str,
+    target_group_code: str,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    target = load_group_meta(db, store_code, target_group_code)
+    if target is None:
+        raise ValueError("目标柜组不存在，或不属于所选门店")
+    department_code = str(target.get("department_code") or "").strip()
+    if not department_code:
+        raise ValueError("目标柜组缺少部门归属，暂时无法计算跨部门消费")
+
+    db.execute(
+        text(f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'"),
+        {},
+    )
+    rows = _load_cross_shopping_rows(
+        db,
+        store_code=store_code,
+        target_group_code=target_group_code,
+        target_department_code=department_code,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    first = rows[0] if rows else {}
+    departments: list[dict[str, Any]] = []
+    departments_by_code: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        row_department_code = str(row.get("department_code") or "")
+        row_group_code = str(row.get("group_code") or "")
+        if not row_department_code or not row_group_code:
+            continue
+        department = departments_by_code.get(row_department_code)
+        if department is None:
+            department = {
+                "department_code": row_department_code,
+                "department_name": row.get("department_name") or row_department_code,
+                "buyer_count": int(float(row.get("department_buyer_count") or 0)),
+                "sales_revenue": row.get("department_sales_revenue") or 0,
+                "groups": [],
+            }
+            departments_by_code[row_department_code] = department
+            departments.append(department)
+        department["groups"].append(
+            {
+                "group_code": row_group_code,
+                "group_name": row.get("group_name") or row_group_code,
+                "buyer_count": int(float(row.get("group_buyer_count") or 0)),
+                "sales_revenue": row.get("group_sales_revenue") or 0,
+            }
+        )
+
+    public_target = {key: value for key, value in target.items() if key != "scope_store_id"}
+    return {
+        "scope": {
+            "store_code": store_code.strip(),
+            "target_group_code": _clean_code(target_group_code),
+        },
+        "target": public_target,
+        "period": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "target_member_count": int(float(first.get("target_member_count") or 0)),
+        "other_department_buyer_count": int(
+            float(first.get("other_department_buyer_count") or 0)
+        ),
+        "sales_revenue": first.get("total_sales_revenue") or 0,
+        "same_department_buyer_count": int(float(first.get("same_department_buyer_count") or 0)),
+        "same_department_sales_revenue": first.get("same_department_sales_revenue") or 0,
+        "departments": departments,
+        "definitions": {
+            "target_members": "期间目标柜组至少发生一笔正向销售的非空会员卡号数",
+            "other_department_consumption": "同一门店、同一期间内目标部门以外柜组的消费",
+            "same_department_consumption": "同一门店、同一期间内本部门其他柜组的消费，排除目标柜组自身",
+            "buyer_count": "在对应部门或柜组至少发生一笔正向销售的目标品牌会员数，按会员去重",
+            "sales_revenue": "上述会员在对应部门或柜组的 salegoodslist.sglxssr 正负数净额",
+        },
+    }
+
+
 def _period_classification_ctes() -> str:
     return """
     target_lines AS MATERIALIZED (
@@ -481,7 +834,9 @@ def _period_classification_ctes() -> str:
         ) line
         WHERE h.mkt = :store_code
           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
+          AND h.rqsj < :history_header_end
           AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        ORDER BY h.rqsj DESC, h.billno DESC
         LIMIT 1 OFFSET 0
       ) found
     ),
@@ -508,7 +863,9 @@ def _period_classification_ctes() -> str:
         ) line
         WHERE h.mkt = :store_code
           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = pm.member_no
+          AND h.rqsj < :history_header_end
           AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        ORDER BY h.rqsj DESC, h.billno DESC
         LIMIT 1 OFFSET 0
       ) found
     ),
@@ -758,6 +1115,7 @@ def _load_period(
     target_department_code: str,
     start_date: date,
     end_date: date,
+    include_inflow_sources: bool = True,
 ) -> dict[str, Any]:
     segment_values = ", ".join(
         f"('{code}', '{label}', {sort_order})" for code, label, sort_order in SEGMENT_DEFINITIONS
@@ -768,6 +1126,7 @@ def _load_period(
         "target_department_code": _clean_code(target_department_code),
         "start_date": start_date,
         "end_date": end_date,
+        "history_header_end": start_date + timedelta(days=SALE_HEADER_DATE_GUARD_DAYS),
     }
     rows = _rows(
         db,
@@ -801,7 +1160,8 @@ def _load_period(
             segment_code AS code,
             COUNT(*) AS buyer_count,
             COALESCE(SUM(sales_revenue), 0) AS sales_revenue,
-            COALESCE(SUM(ticket_count), 0) AS ticket_count
+            COALESCE(SUM(ticket_count), 0) AS ticket_count,
+            ARRAY_AGG(member_no ORDER BY member_no) AS member_nos
           FROM classified
           GROUP BY segment_code
         )
@@ -828,7 +1188,8 @@ def _load_period(
           defs.sort_order,
           COALESCE(totals.buyer_count, 0) AS segment_buyer_count,
           COALESCE(totals.sales_revenue, 0) AS segment_sales_revenue,
-          COALESCE(totals.ticket_count, 0) AS segment_ticket_count
+          COALESCE(totals.ticket_count, 0) AS segment_ticket_count,
+          COALESCE(totals.member_nos, ARRAY[]::text[]) AS segment_member_nos
         FROM summary
         CROSS JOIN member_summary
         CROSS JOIN refund_only
@@ -856,6 +1217,7 @@ def _load_period(
         "average_item_price": 0,
     }
     segments: list[dict[str, Any]] = []
+    internal_members: list[tuple[str, str]] = []
     if rows:
         first = rows[0]
         for key in tuple(summary):
@@ -865,9 +1227,15 @@ def _load_period(
         for row in rows:
             buyer_count = float(row.get("segment_buyer_count") or 0)
             sales_revenue = float(row.get("segment_sales_revenue") or 0)
+            segment_code = str(row.get("segment_code") or "")
+            if segment_code in {"same_department_inflow", "cross_department_inflow"}:
+                internal_members.extend(
+                    (str(member_no), segment_code)
+                    for member_no in (row.get("segment_member_nos") or [])
+                )
             segments.append(
                 {
-                    "code": row.get("segment_code"),
+                    "code": segment_code,
                     "label": row.get("segment_label"),
                     "buyer_count": int(buyer_count),
                     "sales_revenue": sales_revenue,
@@ -904,7 +1272,11 @@ def _load_period(
         "member_level_consumption": _load_member_level_consumption(db, params),
         "purchase_frequency_analysis": purchase_frequency_analysis,
         "old_customer_funnel": funnel,
-        "inflow_sources": _load_inflow_sources(db, params),
+        "inflow_sources": (
+            _load_inflow_sources(db, params, internal_members)
+            if include_inflow_sources
+            else []
+        ),
     }
 
 
@@ -945,24 +1317,39 @@ def _load_department_rank(db: Session, params: dict[str, Any]) -> dict[str, Any]
 
 
 def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    historical_members = _load_historical_target_members(db, params)
+    empty = {
+        "historical_target_member_count": len(historical_members),
+        "store_visit_count": 0,
+        "department_visit_count": 0,
+        "target_repurchase_count": 0,
+    }
+    if not historical_members:
+        return empty
+
+    tickets = _load_member_period_tickets(
+        db,
+        store_code=str(params["store_code"]),
+        member_nos=historical_members,
+        start_date=params["start_date"],
+        end_date=params["end_date"],
+    )
+    if not tickets:
+        return empty
+
     funnel_params = {
         **params,
         "store_prefix": f"{str(params['store_code']).strip()}%",
+        "historical_member_nos": historical_members,
+        "ticket_billnos": [str(ticket["billno"]) for ticket in tickets],
+        "ticket_member_nos": [str(ticket["member_no"]) for ticket in tickets],
     }
     row = _row(
         db,
         """
         WITH old_members AS MATERIALIZED (
-          SELECT DISTINCT NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no
-          FROM salehead h
-          JOIN salegoodslist s
-            ON s.sglbillno = h.billno
-           AND s.sglmarket = h.mkt
-          WHERE s.sglmarket = :store_code
-            AND s.sglmfid = :target_group_code
-            AND s.sglhsrq < :start_date
-            AND COALESCE(s.sglxssr, 0) > 0
-            AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+          SELECT member_no
+          FROM UNNEST(CAST(:historical_member_nos AS text[])) old(member_no)
         ),
         store_groups AS MATERIALIZED (
           SELECT
@@ -972,40 +1359,28 @@ def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, 
           WHERE TRIM(BOTH FROM mf.mfcode) LIKE :store_prefix
             AND LENGTH(TRIM(BOTH FROM mf.mfcode)) = 10
         ),
-        period_goods AS MATERIALIZED (
-          SELECT
-            s.sglbillno AS billno,
-            s.sglmarket AS store_code,
-            UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, ''))) AS group_code
-          FROM salegoodslist s
-          WHERE s.sglmarket = :store_code
-            AND s.sglhsrq BETWEEN :start_date AND :end_date
-            AND COALESCE(s.sglxssr, 0) > 0
-        ),
-        period_receipts AS MATERIALIZED (
-          SELECT
-            goods.billno,
-            goods.store_code,
-            BOOL_OR(groups.department_code = :target_department_code) AS visited_department,
-            BOOL_OR(goods.group_code = :target_group_code) AS repurchased_target
-          FROM period_goods goods
-          JOIN store_groups groups ON groups.group_code = goods.group_code
-          GROUP BY goods.billno, goods.store_code
+        ticket_map AS MATERIALIZED (
+          SELECT ticket.billno, ticket.member_no
+          FROM UNNEST(
+            CAST(:ticket_billnos AS text[]),
+            CAST(:ticket_member_nos AS text[])
+          ) AS ticket(billno, member_no)
         ),
         period_activity AS MATERIALIZED (
           SELECT
-            old.member_no,
+            tickets.member_no,
             TRUE AS visited_store,
-            BOOL_OR(receipts.visited_department) AS visited_department,
-            BOOL_OR(receipts.repurchased_target) AS repurchased_target
-          FROM old_members old
-          JOIN salehead h
-            ON h.mkt = :store_code
-           AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = old.member_no
-          JOIN period_receipts receipts
-            ON receipts.billno = h.billno
-           AND receipts.store_code = h.mkt
-          GROUP BY old.member_no
+            BOOL_OR(groups.department_code = :target_department_code) AS visited_department,
+            BOOL_OR(groups.group_code = :target_group_code) AS repurchased_target
+          FROM ticket_map tickets
+          JOIN salegoodslist s
+            ON s.sglbillno = CAST(tickets.billno AS numeric)
+           AND s.sglmarket = :store_code
+           AND s.sglhsrq BETWEEN :start_date AND :end_date
+           AND COALESCE(s.sglxssr, 0) > 0
+          JOIN store_groups groups
+            ON groups.group_code = UPPER(TRIM(BOTH FROM COALESCE(s.sglmfid, '')))
+          GROUP BY tickets.member_no
         )
         SELECT
           COUNT(*) AS historical_target_member_count,
@@ -1018,39 +1393,78 @@ def _load_old_customer_funnel(db: Session, params: dict[str, Any]) -> dict[str, 
         funnel_params,
     )
     return row or {
-        "historical_target_member_count": 0,
+        "historical_target_member_count": len(historical_members),
         "store_visit_count": 0,
         "department_visit_count": 0,
         "target_repurchase_count": 0,
     }
 
 
-def _load_inflow_sources(db: Session, params: dict[str, Any]) -> list[dict[str, Any]]:
+def _load_historical_target_members(
+    db: Session,
+    params: dict[str, Any],
+) -> list[str]:
+    rows = _rows(
+        db,
+        """
+        SELECT DISTINCT
+          NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no
+        FROM salegoodslist s
+        JOIN salehead h
+          ON h.billno = s.sglbillno
+         AND h.mkt = s.sglmarket
+        WHERE s.sglmarket = :store_code
+          AND s.sglmfid = :target_group_code
+          AND s.sglhsrq < :start_date
+          AND COALESCE(s.sglxssr, 0) > 0
+          AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+        ORDER BY member_no
+        """,
+        params,
+    )
+    return [str(row["member_no"]) for row in rows if row.get("member_no")]
+
+
+def _load_inflow_sources(
+    db: Session,
+    params: dict[str, Any],
+    internal_members: Iterable[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    members = list(internal_members)
+    if not members:
+        return []
+
+    member_segments = dict(members)
+    history_header_end = params.get("history_header_end") or params[
+        "start_date"
+    ] + timedelta(days=SALE_HEADER_DATE_GUARD_DAYS)
+    tickets = _load_member_history_tickets(
+        db,
+        store_code=str(params["store_code"]),
+        member_nos=member_segments,
+        header_end=history_header_end,
+    )
+    if not tickets:
+        return []
+
+    source_params = {
+        **params,
+        "ticket_billnos": [str(ticket["billno"]) for ticket in tickets],
+        "ticket_member_nos": [str(ticket["member_no"]) for ticket in tickets],
+        "ticket_segment_codes": [
+            member_segments[str(ticket["member_no"])] for ticket in tickets
+        ],
+    }
     return _rows(
         db,
-        f"""
-        WITH
-        {_period_classification_ctes()},
-        internal_members AS MATERIALIZED (
-          SELECT member_no, segment_code
-          FROM classified
-          WHERE segment_code IN ('same_department_inflow', 'cross_department_inflow')
-        ),
-        internal_member_heads AS MATERIALIZED (
-          SELECT
-            h.billno,
-            h.store_code,
-            members.member_no,
-            members.segment_code
-          FROM internal_members members
-          CROSS JOIN LATERAL (
-            SELECT h.billno, h.mkt AS store_code
-            FROM salehead h
-            WHERE h.mkt = :store_code
-              AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') = members.member_no
-              AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
-            OFFSET 0
-          ) h
+        """
+        WITH internal_member_heads AS MATERIALIZED (
+          SELECT ticket.billno, ticket.member_no, ticket.segment_code
+          FROM UNNEST(
+            CAST(:ticket_billnos AS text[]),
+            CAST(:ticket_member_nos AS text[]),
+            CAST(:ticket_segment_codes AS text[])
+          ) AS ticket(billno, member_no, segment_code)
         ),
         source_sales AS MATERIALIZED (
           SELECT
@@ -1062,14 +1476,10 @@ def _load_inflow_sources(db: Session, params: dict[str, Any]) -> list[dict[str, 
             SUM(COALESCE(s.sglxssr, 0)) AS historical_sales,
             BOOL_OR(COALESCE(s.sglxssr, 0) > 0) AS had_positive_purchase
           FROM internal_member_heads heads
-          CROSS JOIN LATERAL (
-            SELECT s.sglmfid, s.sglxssr
-            FROM salegoodslist s
-            WHERE s.sglbillno = heads.billno
-              AND s.sglmarket = heads.store_code
-              AND s.sglhsrq < :start_date
-            OFFSET 0
-          ) s
+          JOIN salegoodslist s
+            ON s.sglbillno = CAST(heads.billno AS numeric)
+           AND s.sglmarket = :store_code
+           AND s.sglhsrq < :start_date
           LEFT JOIN manaframe mf
             ON mf.mfcode = s.sglmfid
           LEFT JOIN manaframe dept
@@ -1101,8 +1511,131 @@ def _load_inflow_sources(db: Session, params: dict[str, Any]) -> list[dict[str, 
         ORDER BY buyer_count DESC, historical_sales DESC
         LIMIT 10
         """,
+        source_params,
+    )
+
+
+def _load_member_history_tickets(
+    db: Session,
+    *,
+    store_code: str,
+    member_nos: Iterable[str],
+    header_end: date,
+) -> list[dict[str, Any]]:
+    members = list(dict.fromkeys(str(member_no) for member_no in member_nos if member_no))
+    if not members:
+        return []
+
+    tickets: list[dict[str, Any]] = []
+    for offset in range(0, len(members), MEMBER_TICKET_BATCH_SIZE):
+        batch = members[offset : offset + MEMBER_TICKET_BATCH_SIZE]
+        tickets.extend(
+            _rows(
+                db,
+                """
+                SELECT
+                  h.billno::text AS billno,
+                  NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '') AS member_no
+                FROM salehead h
+                WHERE h.mkt = :store_code
+                  AND NULLIF(UPPER(TRIM(BOTH FROM COALESCE(h.hykh, ''))), '')
+                      = ANY(CAST(:member_nos AS text[]))
+                  AND h.rqsj < :header_end
+                  AND NULLIF(TRIM(BOTH FROM COALESCE(h.hykh, '')), '') IS NOT NULL
+                """,
+                {
+                    "store_code": store_code.strip(),
+                    "member_nos": batch,
+                    "header_end": header_end,
+                },
+            )
+        )
+    return tickets
+
+
+def _load_internal_period_members(
+    db: Session,
+    *,
+    store_code: str,
+    target_group_code: str,
+    target_department_code: str,
+    start_date: date,
+    end_date: date,
+) -> list[tuple[str, str]]:
+    params = {
+        "store_code": store_code.strip(),
+        "target_group_code": _clean_code(target_group_code),
+        "target_department_code": _clean_code(target_department_code),
+        "start_date": start_date,
+        "end_date": end_date,
+        "history_header_end": start_date + timedelta(days=SALE_HEADER_DATE_GUARD_DAYS),
+    }
+    rows = _rows(
+        db,
+        f"""
+        WITH {_period_classification_ctes()}
+        SELECT member_no, segment_code
+        FROM classified
+        WHERE segment_code IN ('same_department_inflow', 'cross_department_inflow')
+        ORDER BY member_no
+        """,
         params,
     )
+    return [
+        (str(row["member_no"]), str(row["segment_code"]))
+        for row in rows
+        if row.get("member_no") and row.get("segment_code")
+    ]
+
+
+def load_brand_member_inflow_sources(
+    db: Session,
+    *,
+    store_code: str,
+    target_group_code: str,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    target = load_group_meta(db, store_code, target_group_code)
+    if target is None:
+        raise ValueError("目标柜组不存在，或不属于所选门店")
+    department_code = str(target.get("department_code") or "").strip()
+    if not department_code:
+        raise ValueError("目标柜组缺少部门归属，暂时无法计算内部流入来源")
+
+    db.execute(
+        text(f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'"),
+        {},
+    )
+    internal_members = _load_internal_period_members(
+        db,
+        store_code=store_code,
+        target_group_code=target_group_code,
+        target_department_code=department_code,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    params = {
+        "store_code": store_code.strip(),
+        "target_group_code": _clean_code(target_group_code),
+        "target_department_code": _clean_code(department_code),
+        "start_date": start_date,
+        "end_date": end_date,
+        "history_header_end": start_date + timedelta(days=SALE_HEADER_DATE_GUARD_DAYS),
+    }
+    sources = _load_inflow_sources(db, params, internal_members)
+    public_target = {key: value for key, value in target.items() if key != "scope_store_id"}
+    return {
+        "scope": {
+            "store_code": store_code.strip(),
+            "target_group_code": _clean_code(target_group_code),
+        },
+        "target": public_target,
+        "period": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "inflow_member_count": len(internal_members),
+        "inflow_sources": sources,
+        "definition": "本期同部门与跨部门流入会员，按开始日期前历史销售收入最高的一个来源柜组归属",
+    }
 
 
 def _competitor_metrics(
@@ -1269,10 +1802,6 @@ def load_brand_member_analysis(
         text(f"SET LOCAL statement_timeout = '{BRAND_MEMBER_QUERY_TIMEOUT_SECONDS}s'"),
         {},
     )
-    # PostgreSQL substantially overestimates rows for the parameterized member
-    # expression lookup and otherwise builds a large bitmap once per member.
-    # Plain index scans match this report's small, permission-scoped member set.
-    db.execute(text("SET LOCAL enable_bitmapscan = off"), {})
 
     current = _load_period(
         db,
@@ -1281,6 +1810,7 @@ def load_brand_member_analysis(
         target_department_code=department_code,
         start_date=current_start,
         end_date=current_end,
+        include_inflow_sources=False,
     )
     prior = _load_period(
         db,
@@ -1289,6 +1819,10 @@ def load_brand_member_analysis(
         target_department_code=department_code,
         start_date=prior_start,
         end_date=prior_end,
+        # The page and both supplier exports only present current-period source
+        # attribution. Avoid repeating the most expensive historical scan for
+        # a payload field that has no consumer.
+        include_inflow_sources=False,
     )
     competitors = _competitor_metrics(
         db,

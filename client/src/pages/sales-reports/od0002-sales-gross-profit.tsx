@@ -23,6 +23,7 @@ import {
   getOd0002QueryMessage,
   OD0002_ALL_STORES,
   OD0002_ALL_DEPARTMENTS,
+  OD0002_METRIC_GROUP_LABELS,
   OD0002_TABS,
   paginateRows,
   previousYearDate,
@@ -76,12 +77,6 @@ function yoyColorClass(value: number | null): string {
 }
 
 const metricCells = (metrics: Od0002Metric) => [
-  { value: formatCount(metrics.ticket_count_current), rawValue: metrics.ticket_count_current, isYoy: false },
-  { value: formatCount(metrics.ticket_count_prior), rawValue: metrics.ticket_count_prior, isYoy: false },
-  { value: formatPercent(metrics.ticket_count_yoy), rawValue: metrics.ticket_count_yoy, isYoy: true },
-  { value: formatMoneyYuan(metrics.average_ticket_current), rawValue: metrics.average_ticket_current, isYoy: false },
-  { value: formatMoneyYuan(metrics.average_ticket_prior), rawValue: metrics.average_ticket_prior, isYoy: false },
-  { value: formatPercent(metrics.average_ticket_yoy), rawValue: metrics.average_ticket_yoy, isYoy: true },
   { value: formatMoneyWan(metrics.sales_current), rawValue: metrics.sales_current, isYoy: false },
   { value: formatMoneyWan(metrics.sales_prior), rawValue: metrics.sales_prior, isYoy: false },
   { value: formatPercent(metrics.sales_yoy), rawValue: metrics.sales_yoy, isYoy: true },
@@ -91,6 +86,12 @@ const metricCells = (metrics: Od0002Metric) => [
   { value: formatPercent(metrics.margin_current), rawValue: metrics.margin_current, isYoy: false },
   { value: formatPercent(metrics.margin_prior), rawValue: metrics.margin_prior, isYoy: false },
   { value: formatPercent(metrics.margin_change), rawValue: metrics.margin_change, isYoy: true },
+  { value: formatCount(metrics.ticket_count_current), rawValue: metrics.ticket_count_current, isYoy: false },
+  { value: formatCount(metrics.ticket_count_prior), rawValue: metrics.ticket_count_prior, isYoy: false },
+  { value: formatPercent(metrics.ticket_count_yoy), rawValue: metrics.ticket_count_yoy, isYoy: true },
+  { value: formatMoneyYuan(metrics.average_ticket_current), rawValue: metrics.average_ticket_current, isYoy: false },
+  { value: formatMoneyYuan(metrics.average_ticket_prior), rawValue: metrics.average_ticket_prior, isYoy: false },
+  { value: formatPercent(metrics.average_ticket_yoy), rawValue: metrics.average_ticket_yoy, isYoy: true },
 ];
 
 function HierarchyValue({ name, code }: { name?: string | null; code?: string | null }) {
@@ -337,14 +338,10 @@ export default function Od0002SalesGrossProfitPage() {
                     <TableHead rowSpan={2}>部门</TableHead>
                     <TableHead rowSpan={2}>区域</TableHead>
                     <TableHead rowSpan={2}>品类</TableHead>
-                    <TableHead colSpan={3} className="text-center">来客数</TableHead>
-                    <TableHead colSpan={3} className="text-center">客单</TableHead>
-                    <TableHead colSpan={3} className="text-center">销售收入</TableHead>
-                    <TableHead colSpan={3} className="text-center">毛利</TableHead>
-                    <TableHead colSpan={3} className="text-center">毛利率</TableHead>
+                    {OD0002_METRIC_GROUP_LABELS.map((label) => <TableHead key={label} colSpan={3} className="text-center">{label}</TableHead>)}
                   </TableRow>
                   <TableRow>
-                    {Array.from({ length: 5 }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
+                    {Array.from({ length: OD0002_METRIC_GROUP_LABELS.length }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -401,14 +398,10 @@ export default function Od0002SalesGrossProfitPage() {
                     {(activeTab === "groups" || activeTab === "special_sales") && <TableHead rowSpan={2}>部门</TableHead>}
                     <TableHead rowSpan={2}>{activeTab === "groups" || activeTab === "special_sales" ? "柜组" : "维度"}</TableHead>
                     {activeTab === "special_sales" && <TableHead rowSpan={2}>品牌</TableHead>}
-                    <TableHead colSpan={3} className="text-center">来客数</TableHead>
-                    <TableHead colSpan={3} className="text-center">客单</TableHead>
-                    <TableHead colSpan={3} className="text-center">销售收入</TableHead>
-                    <TableHead colSpan={3} className="text-center">毛利</TableHead>
-                    <TableHead colSpan={3} className="text-center">毛利率</TableHead>
+                    {OD0002_METRIC_GROUP_LABELS.map((label) => <TableHead key={label} colSpan={3} className="text-center">{label}</TableHead>)}
                   </TableRow>
                   <TableRow>
-                    {Array.from({ length: 5 }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
+                    {Array.from({ length: OD0002_METRIC_GROUP_LABELS.length }, () => ["本期", "同期", "同比"]).flat().map((label, index) => <TableHead key={`${label}-${index}`} className="text-right">{label}</TableHead>)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>

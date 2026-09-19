@@ -13,6 +13,7 @@ import {
   formatMoneyYuan,
   formatPercent,
   getOd0002QueryMessage,
+  OD0002_METRIC_GROUP_LABELS,
   OD0002_TABS,
   paginateRows,
   previousYearDate,
@@ -146,6 +147,13 @@ test("OD0002 formats ticket counts as integers and average tickets in yuan", () 
   assert.equal(formatMoneyYuan(null), "—");
 });
 
+test("OD0002 keeps visitor count and average ticket as the final metric groups", () => {
+  assert.deepEqual(
+    OD0002_METRIC_GROUP_LABELS,
+    ["销售收入", "毛利", "毛利率", "来客数", "客单"],
+  );
+});
+
 test("formatPercent renders ratios with two decimal places and null as dash", () => {
   assert.equal(formatPercent(0.12345), "12.35%");
   assert.equal(formatPercent(-0.2), "-20.00%");
@@ -256,8 +264,7 @@ test("OD0002 page source contains the endpoint, controls, states, quality hints,
   assert.match(source, /<TableFooter>/);
   assert.match(source, />合计</);
   assert.match(source, /metricCells\(activeTotal\)/);
-  assert.match(source, />来客数</);
-  assert.match(source, />客单</);
+  assert.match(source, /OD0002_METRIC_GROUP_LABELS\.map/);
   assert.match(source, /formatCount\(metrics\.ticket_count_current\)/);
   assert.match(source, /formatMoneyYuan\(metrics\.average_ticket_current\)/);
 });

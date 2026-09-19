@@ -16,6 +16,13 @@ export type RevenueDashboardExportItem = {
   group_name: string;
   unit_codes?: string | null;
   unit_count: number;
+  raw_sales_gross_profit_amount: number;
+  raw_fee_amount: number;
+  raw_extra_amount: number;
+  sales_adjustment_amount: number;
+  fee_adjustment_amount: number;
+  extra_adjustment_amount: number;
+  close_adjustment_amount: number;
   sales_gross_profit_amount: number;
   fee_amount: number;
   extra_amount: number;
@@ -94,8 +101,13 @@ export function buildRevenueDashboardExportData(
     "柜组",
     "图上经营单元",
     "销售毛利（不含税）",
-    "去税收费汇总",
-    "其他收益",
+    "富基收费（调整前）",
+    "富基收费对应月结调整",
+    "富基收费（调整后）",
+    "NC非富基收费（调整前）",
+    "NC非富基对应月结调整",
+    "NC非富基收费（调整后）",
+    "月结调整合计",
     "总收益",
     "收费分类校验差额",
   ];
@@ -125,8 +137,13 @@ export function buildRevenueDashboardExportData(
       item.group_name || "未归属柜组",
       item.unit_codes || "",
       amount(item.sales_gross_profit_amount),
+      amount(item.raw_fee_amount),
+      amount(item.fee_adjustment_amount),
       amount(item.fee_amount),
+      amount(item.raw_extra_amount),
+      amount(item.extra_adjustment_amount),
       amount(item.extra_amount),
+      amount(item.close_adjustment_amount),
       amount(item.total_amount),
       moneyDifference(amount(item.fee_amount) - feeBreakdownTotal),
       ...feeColumns.map((column) => amount(breakdown.get(column))),
@@ -160,7 +177,7 @@ export function buildRevenueDashboardExportData(
       "柜组",
       "收费项目编码",
       "收费项目",
-      "不含税金额",
+      "看板收费金额",
     ],
     ...sortedItems.flatMap((item) =>
       (item.fee_breakdown || []).map((fee) => [
@@ -353,7 +370,7 @@ export function buildRevenueDashboardExportData(
     filename: `收益看板_柜组最明细_${startDate}_${endDate}.xlsx`,
     feeColumns,
     summaryRows: [
-      [...staticHeaders, ...feeColumns.map((column) => `${column}（不含税）`)],
+      [...staticHeaders, ...feeColumns.map((column) => `${column}（看板口径）`)],
       ...detailRows,
       totalRow,
     ],
@@ -363,18 +380,20 @@ export function buildRevenueDashboardExportData(
     notesRows: [
       ["收益看板导出说明"],
       ["查询日期", `${startDate} 至 ${endDate}`],
-      ["日期口径", "销售毛利按财务日期；收费按付款日期；其他收益按确认收益日期"],
+      ["日期口径", "销售毛利按财务日期；收费按付款日期且剔除票减及保证金；其他收益按财务期间"],
       ["数据范围", "仅导出当前账号数据权限范围内的数据"],
       ["明细粒度", "一行一个门店 / 部门 / 柜组"],
       ["销售毛利", "不含税；包含已计入销售毛利的损失承担"],
-      ["去税收费汇总", "不含税；仅统计已关联付款日期的收费；不含已计入销售毛利的损失承担"],
+      ["富基收费", "调整前金额单独展示；未月结期间为去税金额，已确认月结期间使用含税原金额"],
       ["未付款收费", "未关联结算付款日期或租赁付款日期的收费不进入本次导出"],
-      ["收费明细列", "按收费项目编码和名称动态展开，不含税金额"],
-      ["其他收益", "已确认的 NC6051 非富基收费；另附按科目汇总和逐笔摘要明细"],
+      ["收费排除项", "票减收费、履约保证金及设备保证金不进入富基收费收益"],
+      ["收费明细列", "按收费项目编码和名称动态展开；月结期间另含月结调整项目"],
+      ["NC非富基收费", "调整前金额单独展示，包括已确认的 NC6051 电表、物业、营运等"],
+      ["月结调整", "NC6051控制数－富基收费－NC非富基收费；保留原收费和NC明细，不直接覆盖"],
       ["其他收益科目汇总", "按门店、部门、NC科目和收益类型汇总，金额保留两位小数"],
       ["其他收益摘要明细", "按门店、部门、科目、确认日期排序；保留摘要、NC凭证、柜位归属和来源明细键"],
-      ["总收益", "销售毛利（不含税） + 去税收费汇总 + 其他收益"],
-      ["收费分类校验差额", "去税收费汇总 - 各收费明细列合计；正常应为 0"],
+      ["总收益", "销售毛利（不含税） + 富基收费（调整前） + NC非富基收费（调整前） + 月结调整"],
+      ["收费分类校验差额", "富基收费（调整后） - 各收费明细列合计；正常应为 0"],
     ],
   };
 }
@@ -467,7 +486,7 @@ export function buildRevenueDashboardWorkbook(
     { wch: 16 },
     { wch: 24 },
     { wch: 28 },
-    ...Array.from({ length: 5 + data.feeColumns.length }, () => ({ wch: 18 })),
+    ...Array.from({ length: 10 + data.feeColumns.length }, () => ({ wch: 18 })),
   ];
   XLSX.utils.book_append_sheet(workbook, summarySheet, "柜组收益明细");
 

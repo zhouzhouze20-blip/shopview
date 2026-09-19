@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#08102d" />
+  <title>活动配置 · 烟花互动大屏</title>
+  <link rel="stylesheet" href="/shared.css" />
+  <link rel="stylesheet" href="/admin.css" />
+</head>
+<body class="admin-page">
+  <div class="admin-glow admin-glow-one" aria-hidden="true"></div>
+  <div class="admin-glow admin-glow-two" aria-hidden="true"></div>
+
+  <header class="admin-header">
+    <div class="admin-brand">
+      <span class="admin-logo">✦</span>
+      <div>
+        <p>INTERACTIVE FIREWORKS</p>
+        <strong>烟花互动活动后台</strong>
+      </div>
+    </div>
+    <div class="admin-header-actions">
+      <span class="room-chip">场次 <b id="roomLabel">lobby</b></span>
+      <button id="logoutButton" class="text-button hidden" type="button">退出后台</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <section id="loginPanel" class="login-panel admin-card">
+      <div class="login-icon">✦</div>
+      <p class="admin-eyebrow">ADMIN ACCESS</p>
+      <h1>进入活动配置后台</h1>
+      <p>输入启动服务时设置的管理员令牌，配置只对当前活动场次生效。</p>
+      <form id="loginForm" class="login-form">
+        <label>
+          <span>管理员令牌</span>
+          <input id="tokenInput" type="password" autocomplete="current-password" placeholder="请输入 ADMIN_TOKEN" required />
+        </label>
+        <button class="primary-button" type="submit">进入后台</button>
+      </form>
+      <small>令牌仅保存在当前浏览器会话，不会写入活动数据库。</small>
+    </section>
+
+    <div id="dashboard" class="dashboard hidden">
+      <section class="dashboard-intro">
+        <div>
+          <p class="admin-eyebrow">ACTIVITY CONTROL CENTER</p>
+          <h1>活动配置</h1>
+          <p>保存后，大屏和手机端将通过实时连接立即更新。</p>
+        </div>
+        <button id="refreshButton" class="secondary-button" type="button">刷新状态</button>
+      </section>
+
+      <section class="stats-grid" aria-label="活动实时状态">
+        <article class="stat-card"><span>历史祝福</span><strong id="wishCount">0</strong><small>条已上屏</small></article>
+        <article class="stat-card"><span>手机参与者</span><strong id="participantCount">0</strong><small>人在线</small></article>
+        <article class="stat-card"><span>活动大屏</span><strong id="displayCount">0</strong><small>块在线</small></article>
+        <article class="stat-card status-card"><span>提交状态</span><strong id="submissionStatus">开放</strong><small id="submissionStatusTip">祝福立即上屏</small></article>
+      </section>
+
+      <form id="configForm" class="config-layout">
+        <div class="config-column">
+          <section class="admin-card config-section">
+            <div class="section-heading">
+              <div><span>01</span><h2>大屏展示</h2></div>
+              <p>配置品牌、主标题和待机引导文案。</p>
+            </div>
+            <div class="field-grid two-columns">
+              <label class="field"><span>活动品牌</span><input id="brand" maxlength="20" required /></label>
+              <label class="field"><span>英文眉题</span><input id="displayKicker" maxlength="60" required /></label>
+            </div>
+            <label class="field"><span>大屏主标题</span><input id="displayTitle" maxlength="40" required /></label>
+            <div class="field-grid two-columns">
+              <label class="field"><span>待机主文案</span><input id="idleTitle" maxlength="40" required /></label>
+              <label class="field"><span>待机说明</span><input id="idleSubtitle" maxlength="60" required /></label>
+            </div>
+          </section>
+
+          <section class="admin-card config-section">
+            <div class="section-heading">
+              <div><span>02</span><h2>手机参与页</h2></div>
+              <p>配置扫码进入后看到的标题、说明和快捷祝福。</p>
+            </div>
+            <div class="field-grid two-columns">
+              <label class="field"><span>手机页标题</span><input id="mobileTitle" maxlength="30" required /></label>
+              <label class="field"><span>手机页说明</span><input id="mobileSubtitle" maxlength="60" required /></label>
+            </div>
+            <label class="field">
+              <span>快捷祝福模板 <small>每行一条，最多 6 条</small></span>
+              <textarea id="templates" rows="5" placeholder="万事顺遂，平安喜乐"></textarea>
+            </label>
+          </section>
+
+          <section class="admin-card config-section">
+            <div class="section-heading">
+              <div><span>03</span><h2>互动规则</h2></div>
+              <p>控制是否允许提交，以及内容长度和基础屏蔽词。</p>
+            </div>
+            <label class="switch-field">
+              <span><strong>开放祝福提交</strong><small>关闭后手机端仍可访问，但不能发射祝福。</small></span>
+              <input id="submissionsEnabled" type="checkbox" />
+              <i aria-hidden="true"></i>
+            </label>
+            <div class="field-grid two-columns compact-fields">
+              <label class="field"><span>祝福最大字数</span><input id="maxWishLength" type="number" min="1" max="80" required /></label>
+              <label class="field"><span>昵称最大字数</span><input id="maxNameLength" type="number" min="1" max="20" required /></label>
+            </div>
+            <label class="field">
+              <span>基础屏蔽词 <small>每行一个，最多 100 个</small></span>
+              <textarea id="blockedWords" rows="6" placeholder="赌博&#10;诈骗"></textarea>
+            </label>
+          </section>
+        </div>
+
+        <aside class="admin-sidebar">
+          <section class="admin-card action-card">
+            <p class="admin-eyebrow">LIVE PREVIEW</p>
+            <h2>预览活动</h2>
+            <p>在新标签页打开当前场次的双端页面。</p>
+            <a id="displayLink" class="preview-link" href="#" target="_blank" rel="noopener"><span>大屏展示</span><b>打开 ↗</b></a>
+            <a id="joinLink" class="preview-link" href="#" target="_blank" rel="noopener"><span>手机参与页</span><b>打开 ↗</b></a>
+          </section>
+
+          <section class="admin-card save-card">
+            <span id="saveState" class="save-state">配置已加载</span>
+            <button id="saveButton" class="primary-button" type="submit">保存并实时生效</button>
+            <small>保存不会清除已有祝福。</small>
+          </section>
+
+          <section class="admin-card danger-card">
+            <p class="admin-eyebrow">DATA CONTROL</p>
+            <h2>祝福数据</h2>
+            <p>清空当前场次的全部历史祝福。系统会先自动生成数据库备份。</p>
+            <button id="clearWishesButton" class="danger-button" type="button">清空当前场次祝福</button>
+          </section>
+        </aside>
+      </form>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/admin.js"></script>
+</body>
+</html>

@@ -91,6 +91,67 @@ export interface BrandMemberPeriod {
   inflow_sources: BrandMemberInflowSource[];
 }
 
+export interface BrandMemberCrossShoppingGroup {
+  group_code: string;
+  group_name: string;
+  buyer_count: number;
+  sales_revenue: number;
+}
+
+export interface BrandMemberCrossShoppingDepartment {
+  department_code: string;
+  department_name: string;
+  buyer_count: number;
+  sales_revenue: number;
+  groups: BrandMemberCrossShoppingGroup[];
+}
+
+export interface BrandMemberCrossShoppingReport {
+  scope: {
+    store_code: string;
+    target_group_code: string;
+  };
+  target: {
+    group_code: string;
+    group_name: string;
+    department_code: string;
+    department_name: string;
+  };
+  period: { start_date: string; end_date: string };
+  target_member_count: number;
+  other_department_buyer_count: number;
+  same_department_buyer_count: number;
+  same_department_sales_revenue: number;
+  sales_revenue: number;
+  departments: BrandMemberCrossShoppingDepartment[];
+  definitions: {
+    target_members: string;
+    other_department_consumption: string;
+    same_department_consumption: string;
+    buyer_count: string;
+    sales_revenue: string;
+  };
+}
+
+export type BrandMemberCrossShoppingSort = "sales_revenue" | "buyer_count";
+
+export interface BrandMemberInflowSourcesReport {
+  scope: {
+    store_code: string;
+    target_group_code: string;
+  };
+  target: {
+    group_code: string;
+    group_name: string;
+    department_code: string;
+    department_name: string;
+  };
+  period: { start_date: string; end_date: string };
+  inflow_member_count: number;
+  inflow_sources: BrandMemberInflowSource[];
+  definition: string;
+}
+
 export interface BrandMemberCompetitor {
   group_code: string;
   group_name: string;
@@ -220,6 +281,26 @@ export function brandMemberRequest(filters: BrandMemberFilters) {
     prior_start: filters.priorStart,
     prior_end: filters.priorEnd,
   };
+}
+
+export function brandMemberCrossShoppingRequest(filters: BrandMemberFilters) {
+  return {
+    store_code: filters.storeCode,
+    target_group_code: filters.targetGroupCode,
+    start_date: filters.currentStart,
+    end_date: filters.currentEnd,
+  };
+}
+
+export function sortBrandMemberCrossShoppingRows<
+  T extends { buyer_count: number; sales_revenue: number },
+>(rows: T[], sortBy: BrandMemberCrossShoppingSort) {
+  const secondary = sortBy === "sales_revenue" ? "buyer_count" : "sales_revenue";
+  return [...rows].sort((left, right) => {
+    const primaryDifference = Number(right[sortBy] || 0) - Number(left[sortBy] || 0);
+    if (primaryDifference !== 0) return primaryDifference;
+    return Number(right[secondary] || 0) - Number(left[secondary] || 0);
+  });
 }
 
 export function buildAiSnapshot(report: BrandMemberReport) {
